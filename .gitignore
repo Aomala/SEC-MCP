@@ -12,6 +12,7 @@ env/
 
 .vscode/
 .idea/
+.cursor/
 
 .env
 

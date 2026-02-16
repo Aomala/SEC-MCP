@@ -4,22 +4,37 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sec-mcp"
-version = "0.1.0"
-description = "MCP server for SEC filing analysis with BERT-based NLP"
+version = "0.2.0"
+description = "MCP server for SEC filing analysis — direct EDGAR API + MongoDB + modern UI"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
+    # MCP protocol server
     "fastmcp>=2.0",
-    "edgartools>=3.0",
-    "transformers>=4.40",
-    "torch>=2.0",
+    # Direct SEC EDGAR HTTP client (replaces edgartools)
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    # Data processing
+    "pandas>=2.0",
     "pydantic>=2.0",
     "pydantic-settings>=2.0",
-    "sentencepiece",
+    # Web server
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    # MongoDB persistence
+    "pymongo[srv]>=4.6",
+    # Claude API for narrative explanations
+    "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]
+# NLP models — heavy (~2.5GB), only needed for local use
+nlp = [
+    "transformers>=4.40",
+    "torch>=2.0",
+    "sentencepiece",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
