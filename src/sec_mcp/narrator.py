@@ -130,7 +130,7 @@ def explain_financials(
     data: dict,
     *,
     focus: str | None = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
     max_tokens: int = 2000,
 ) -> str:
     """Generate a readable narrative explanation of financial data.
@@ -172,7 +172,7 @@ def explain_comparison(
     results: list[dict],
     *,
     focus: str | None = None,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = "claude-sonnet-4-6",
     max_tokens: int = 3000,
 ) -> str:
     """Generate a readable comparison narrative for multiple companies."""

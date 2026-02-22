@@ -41,36 +41,59 @@ from sec_mcp.edgar_client import (
 )
 from sec_mcp.financials import extract_financials, extract_financials_batch
 from sec_mcp.models import CombinedAnalysis
-from sec_mcp.nlp.sentiment import SentimentAnalyzer
-from sec_mcp.nlp.summarizer import FilingSummarizer
-from sec_mcp.nlp.ner import EntityExtractor
+import logging
 
 mcp = FastMCP(name="SEC-MCP")
+log = logging.getLogger(__name__)
 
-# Lazy singletons — NLP models load on first use
-_sentiment: SentimentAnalyzer | None = None
-_summarizer: FilingSummarizer | None = None
-_ner: EntityExtractor | None = None
+# Lazy singletons — NLP models load on first use, with Claude fallback
+_sentiment = None
+_summarizer = None
+_ner = None
 
 
-def _get_sentiment() -> SentimentAnalyzer:
+def _get_sentiment():
     global _sentiment
     if _sentiment is None:
-        _sentiment = SentimentAnalyzer()
+        try:
+            from sec_mcp.nlp.sentiment import SentimentAnalyzer
+            analyzer = SentimentAnalyzer()
+            analyzer._load()  # Force model download/load to detect ImportError early
+            _sentiment = analyzer
+        except (ImportError, OSError) as exc:
+            log.info("Local sentiment model unavailable (%s), using Claude fallback", exc)
+            from sec_mcp.nlp.claude_fallback import ClaudeSentimentAnalyzer
+            _sentiment = ClaudeSentimentAnalyzer()
     return _sentiment
 
 
-def _get_summarizer() -> FilingSummarizer:
+def _get_summarizer():
     global _summarizer
     if _summarizer is None:
-        _summarizer = FilingSummarizer()
+        try:
+            from sec_mcp.nlp.summarizer import FilingSummarizer
+            summarizer = FilingSummarizer()
+            summarizer._load()
+            _summarizer = summarizer
+        except (ImportError, OSError) as exc:
+            log.info("Local summarizer unavailable (%s), using Claude fallback", exc)
+            from sec_mcp.nlp.claude_fallback import ClaudeFilingSummarizer
+            _summarizer = ClaudeFilingSummarizer()
     return _summarizer
 
 
-def _get_ner() -> EntityExtractor:
+def _get_ner():
     global _ner
     if _ner is None:
-        _ner = EntityExtractor()
+        try:
+            from sec_mcp.nlp.ner import EntityExtractor
+            extractor = EntityExtractor()
+            extractor._load()
+            _ner = extractor
+        except (ImportError, OSError) as exc:
+            log.info("Local NER model unavailable (%s), using Claude fallback", exc)
+            from sec_mcp.nlp.claude_fallback import ClaudeEntityExtractor
+            _ner = ClaudeEntityExtractor()
     return _ner
 
 

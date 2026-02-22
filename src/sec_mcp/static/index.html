@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SEC Terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/static/app.css?v=6"/>
+</head>
+<body>
+<div class="app">
+  <div class="cp">
+    <div class="cp-hdr">
+      <div class="cp-logo">S</div>
+      <div>
+        <h1>SEC Terminal</h1>
+        <div class="cp-sub">Live EDGAR Analysis</div>
+      </div>
+      <div class="spacer"></div>
+      <span class="tag">LIVE</span>
+      <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light/dark mode">&#x263E;</button>
+    </div>
+    <div class="chat" id="chat">
+      <div class="welcome" id="welcome">
+        <div class="w-ico">&#x25C8;</div>
+        <h2>Financial Intelligence</h2>
+        <p>Any public company — US domestic or foreign filer. Financials, filings, and AI analysis.</p>
+        <div class="pills">
+          <span class="pill" onclick="q('Apple')">AAPL</span>
+          <span class="pill" onclick="q('NVDA 10-Q')">NVDA Quarterly</span>
+          <span class="pill" onclick="q('compare AAPL vs MSFT')">AAPL vs MSFT</span>
+          <span class="pill" onclick="q('Toyota')">Toyota 20-F</span>
+          <span class="pill" onclick="q('ASML')">ASML (FPI)</span>
+          <span class="pill" onclick="q('TSLA risk factors')">TSLA Risks</span>
+        </div>
+        <div class="w-note">
+          <span class="w-note-ico">&#x1F30D;</span>
+          Foreign filers (20-F / 6-K / 40-F) are fully supported
+        </div>
+      </div>
+    </div>
+    <div class="inp-row">
+      <input id="inp" placeholder="Ticker, company name, or question..." autocomplete="off"/>
+      <button class="snd" id="btn" onclick="send()">&#8594;</button>
+    </div>
+  </div>
+
+  <div class="ap" id="apanel">
+    <div class="ap-toolbar" id="ap-toolbar">
+      <div class="srch"><span class="mag">&#x1F50E;</span>
+        <input id="asrch" placeholder="Search ticker or company..." oninput="debSearch(this.value)" autocomplete="off"/>
+        <div class="sr-drop" id="sr-drop"></div>
+      </div>
+      <span class="fpi-indicator" id="fpi-indicator" title="Foreign Private Issuer — files 20-F/6-K instead of 10-K/10-Q">FPI</span>
+      <div class="tb-sep"></div>
+      <span class="tb-label">View</span>
+      <select id="sel-tool" class="sel" onchange="onToolSel()">
+        <option value="dashboard">Dashboard</option>
+        <option value="mda">MD&amp;A</option>
+        <option value="risk_factors">Risk Factors</option>
+        <option value="business">Business Overview</option>
+        <option value="entity">Entity Profile</option>
+        <option value="executive_compensation">Exec Compensation</option>
+      </select>
+      <div class="tb-sep"></div>
+      <span class="tb-label">Form</span>
+      <select id="sel-form" class="sel" onchange="onFormSel()">
+        <option value="">All Types</option>
+        <optgroup label="US Domestic">
+          <option value="10-K">10-K — Annual</option>
+          <option value="10-Q">10-Q — Quarterly</option>
+        </optgroup>
+        <optgroup label="Foreign Private Issuer (FPI)">
+          <option value="20-F">20-F — Annual (FPI)</option>
+          <option value="6-K">6-K — Interim (FPI)</option>
+          <option value="40-F">40-F — Annual (Canada)</option>
+        </optgroup>
+      </select>
+      <span class="tb-label">Period</span>
+      <select id="sel-period" class="sel" onchange="onPeriodSel()"><option value="">Select Period</option></select>
+      <button class="cb-toggle" id="cb-btn" onclick="toggleCb()"><span class="cb-dot"></span>AI Assistant</button>
+    </div>
+    <div class="ap-content" id="ap-content">
+      <div class="ap-empty" id="ap-empty">
+        <div>
+          <div class="ico">&#x25C8;</div>
+          <p>Query any public company to begin analysis</p>
+          <p class="ap-empty-sub">Supports US (10-K/10-Q) and foreign filers (20-F/6-K/40-F)</p>
+        </div>
+      </div>
+    </div>
+    <button class="chat-fab" id="chat-fab" onclick="toggleCb()" title="AI Assistant">&#x1F4AC;</button>
+  </div>
+
+  <div class="cb" id="cbpanel">
+    <div class="cb-hdr">
+      <h3>AI Assistant</h3>
+      <span class="cb-badge">CLAUDE</span>
+      <button class="cb-close" onclick="toggleCb()" title="Close panel">&#x2715;</button>
+    </div>
+    <div class="cb-msgs" id="cb-msgs">
+      <div class="cb-welcome" id="cb-welcome">
+        <div class="cb-wico">&#x1F4CA;</div>
+        <p><strong>Ask anything</strong> about the data on screen</p>
+        <p style="font-size:11px;margin-top:6px">Executive summaries, comparisons, insights</p>
+        <div class="cb-chips">
+          <span class="cb-chip" onclick="cbQ('Give me an executive summary')">Executive Summary</span>
+          <span class="cb-chip" onclick="cbQ('What are the key risks?')">Key Risks</span>
+          <span class="cb-chip" onclick="cbQ('How is revenue trending?')">Revenue Trend</span>
+          <span class="cb-chip" onclick="cbQ('Analyze the balance sheet')">Balance Sheet</span>
+        </div>
+      </div>
+    </div>
+    <div class="cb-inp-row">
+      <input class="cb-inp" id="cb-inp" placeholder="Ask about this company..." autocomplete="off"/>
+      <button class="cb-send" id="cb-send" onclick="sendCb()">&#8594;</button>
+    </div>
+  </div>
+</div>
+
+<div class="m-bg" id="modal" style="display:none" onclick="closeModal(event)">
+  <div class="m-box" onclick="event.stopPropagation()">
+    <div class="m-hdr"><h3 id="m-title">Detail</h3><button class="m-x" onclick="closeModal()">&#x2715;</button></div>
+    <div class="m-body" id="m-body"></div>
+  </div>
+</div>
+
+<div class="fc-popup" id="fc-popup">
+  <div class="fc-title">Verify with</div>
+  <a href="#" onclick="return fcGo('chatgpt')"><span class="fc-ico">&#x1F4AC;</span>ChatGPT</a>
+  <a href="#" onclick="return fcGo('claude')"><span class="fc-ico">&#x1F9E0;</span>Claude</a>
+  <a href="#" onclick="return fcGo('perplexity')"><span class="fc-ico">&#x1F50D;</span>Perplexity</a>
+  <a href="#" onclick="return fcGo('google')"><span class="fc-ico">&#x1F310;</span>Google Search</a>
+</div>
+<div class="toast" id="toast">Copied to clipboard!</div>
+
+<script src="/static/app.js?v=6"></script>
+</body></html>

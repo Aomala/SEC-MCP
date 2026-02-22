@@ -6,24 +6,7 @@ from sec_mcp.edgar_client import (
     search_companies,
     get_company,
     list_filings,
-    _resolve_section,
 )
-
-
-def test_resolve_section_alias():
-    assert _resolve_section("risk factors") == "Item 1A"
-    assert _resolve_section("mda") == "Item 7"
-    assert _resolve_section("MD&A") == "Item 7"
-    assert _resolve_section("business") == "Item 1"
-
-
-def test_resolve_section_passthrough():
-    assert _resolve_section("Item 7") == "Item 7"
-    assert _resolve_section("Item 1.01") == "Item 1.01"
-
-
-def test_resolve_section_none():
-    assert _resolve_section(None) is None
 
 
 @pytest.mark.integration

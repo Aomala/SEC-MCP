@@ -970,3 +970,38 @@ def get_sec_client() -> SECClient:
         config = get_config()
         _client = SECClient(user_agent=config.edgar_identity)
     return _client
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Convenience functions — module-level wrappers around the singleton
+# ═══════════════════════════════════════════════════════════════════════════
+
+def search_companies(query: str, limit: int = 10) -> list[CompanyInfo]:
+    """Search for companies by ticker or name."""
+    return get_sec_client().search_companies(query, limit=limit)
+
+
+def get_company(ticker_or_cik: str) -> CompanyInfo:
+    """Direct company lookup by ticker or CIK."""
+    return get_sec_client().get_company_info(ticker_or_cik)
+
+
+def list_filings(
+    ticker_or_cik: str,
+    form_type: str | None = None,
+    limit: int = 10,
+) -> list[FilingMetadata]:
+    """List available filings for a company."""
+    return get_sec_client().get_filings(ticker_or_cik, form_type=form_type, limit=limit)
+
+
+def get_filing_content(
+    ticker_or_cik: str,
+    accession_number: str,
+    section: str | None = None,
+    max_length: int = 50000,
+) -> str:
+    """Fetch filing text, optionally a specific section."""
+    return get_sec_client().get_filing_document(
+        ticker_or_cik, accession_number, section=section, max_length=max_length,
+    )

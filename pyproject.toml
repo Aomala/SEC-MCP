@@ -51,3 +51,10 @@ markers = [
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "SIM108", # ternary operator (readability preference)
+]

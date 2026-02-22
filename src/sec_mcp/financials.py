@@ -241,6 +241,8 @@ def _resolve_metric(
     industry: IndustryClass = IndustryClass.STANDARD,
     prefer_quarterly: bool = False,
     duration_pref: str | None = None,
+    target_fp: str | None = None,
+    target_fy: int | None = None,
 ) -> ResolvedMetric:
     """Resolve a metric from a facts DataFrame using ordered concept list.
 
@@ -274,8 +276,11 @@ def _resolve_metric(
         # For balance sheet (instant) concepts, never filter by duration
         is_instant = entry.xbrl_concept in _INSTANT_CONCEPTS
         dp = duration_pref if not is_instant else None
+        tfp = target_fp if not is_instant else None
+        tfy = target_fy if not is_instant else None
         val = _lookup_fact(clean_df, entry.xbrl_concept, period_index,
-                           match_mode="exact", duration_pref=dp)
+                           match_mode="exact", duration_pref=dp,
+                           target_fp=tfp, target_fy=tfy)
         if val is not None:
             return ResolvedMetric(val, entry.display_name, confidence=0.95, method="exact")
 
@@ -285,8 +290,11 @@ def _resolve_metric(
             continue
         is_instant = entry.xbrl_concept in _INSTANT_CONCEPTS
         dp = duration_pref if not is_instant else None
+        tfp = target_fp if not is_instant else None
+        tfy = target_fy if not is_instant else None
         val = _lookup_fact(clean_df, entry.xbrl_concept, period_index,
-                           match_mode="contains", duration_pref=dp)
+                           match_mode="contains", duration_pref=dp,
+                           target_fp=tfp, target_fy=tfy)
         if val is not None:
             return ResolvedMetric(val, entry.display_name, confidence=0.80, method="contains")
 
@@ -358,6 +366,8 @@ def _lookup_fact(
     match_mode: str = "exact",
     prefer_quarterly: bool = False,
     duration_pref: str | None = None,
+    target_fp: str | None = None,
+    target_fy: int | None = None,
 ) -> float | None:
     """Find a fact value for the given concept and period.
 
@@ -420,7 +430,10 @@ def _lookup_fact(
     # with the same end date but different start dates.
     # Balance sheet items are instant (no start date) — unaffected.
     if duration_pref and end_col and "start" in matches.columns:
-        matches = _filter_by_duration(matches, end_col, prefer=duration_pref)
+        matches = _filter_by_duration(
+            matches, end_col, prefer=duration_pref,
+            target_fp=target_fp, target_fy=target_fy,
+        )
 
     if period_index >= len(matches):
         return None
@@ -472,28 +485,103 @@ _INSTANT_CONCEPTS = {
 }
 
 
+# SEC fp field → valid duration ranges (days).  Research source: XBRL US / EDGAR EFM.
+# fp="Q3" means the 10-Q covers 9 months YTD — do NOT expect a 90-day standalone value.
+_FP_DURATION_RANGES: dict[str, tuple[int, int]] = {
+    "Q1": (65, 115),    # ~91 days standalone first quarter
+    "Q2": (155, 205),   # ~182 days YTD through second quarter
+    "H1": (155, 205),   # synonym for Q2 period in some filings
+    "Q3": (245, 295),   # ~273 days YTD through third quarter
+    "M9": (245, 295),   # synonym for Q3 period
+    "FY": (340, 395),   # full fiscal year (52/53-week filers: 363-371 days)
+    "CY": (340, 395),   # calendar year
+    "H2": (155, 210),   # second half (rare)
+    "Q4": (65, 115),    # standalone Q4 (rarely tagged separately)
+}
+
+# fp values that correspond to 10-Q filings (duration > 1 quarter)
+_FP_QUARTERLY_FORMS = {"Q1", "Q2", "H1", "Q3", "M9"}
+_FP_ANNUAL_FORMS = {"FY", "CY"}
+
+
+def _filter_by_fp(
+    df: pd.DataFrame,
+    target_fp: str,
+    target_fy: int | None = None,
+) -> pd.DataFrame:
+    """Filter facts using the authoritative `fp` (fiscal period) field.
+
+    This is the primary period-selection method — more reliable than duration
+    calculation because fp is directly declared by the filer in DEI tags.
+
+    Args:
+        target_fp: The fiscal period to target (e.g. "Q3", "FY").
+        target_fy:  The fiscal year to target (company-defined integer).
+    """
+    if "fp" not in df.columns:
+        return df  # fp column not present — caller should fall back to duration
+
+    fp_col = "fp"
+    filtered = df[df[fp_col].astype(str).str.upper() == target_fp.upper()]
+
+    if target_fy is not None and "fy" in df.columns:
+        filtered = filtered[pd.to_numeric(filtered["fy"], errors="coerce") == target_fy]
+
+    # Keep instant rows (no start date — balance sheet) unconditionally
+    if "start" in filtered.columns:
+        instant_mask = filtered["start"].isna()
+        duration_rows = filtered[~instant_mask]
+        instant_rows = filtered[instant_mask]
+        # Validate duration is consistent with fp to catch mislabelled facts
+        if not duration_rows.empty and "end" in duration_rows.columns:
+            lo, hi = _FP_DURATION_RANGES.get(target_fp.upper(), (0, 999))
+            dur = (
+                pd.to_datetime(duration_rows["end"], errors="coerce")
+                - pd.to_datetime(duration_rows["start"], errors="coerce")
+            ).dt.days
+            valid_dur = dur.between(lo, hi) | dur.isna()
+            duration_rows = duration_rows[valid_dur]
+        filtered = pd.concat([instant_rows, duration_rows], ignore_index=True)
+
+    return filtered if not filtered.empty else df
+
+
 def _filter_by_duration(
     df: pd.DataFrame,
     end_col: str,
     prefer: str = "quarterly",
+    target_fp: str | None = None,
+    target_fy: int | None = None,
 ) -> pd.DataFrame:
-    """Filter facts to prefer quarterly (3-month) or annual (12-month) durations.
+    """Filter facts to prefer quarterly or annual durations.
 
-    For each unique end date, if multiple durations exist, keep only the
-    shortest one (quarterly) or longest (annual/YTD) depending on `prefer`.
-    Rows without a start date (instant/balance sheet items) are kept as-is.
+    Primary method: if target_fp is provided, use the SEC fp field directly —
+    this is authoritative (declared by the filer) and avoids duration math.
+
+    Fallback: duration-day calculation for when fp is unavailable.
+
+    Note: For 10-Q filings:
+     - Q1 cash flows are ~91-day standalone values
+     - Q2/Q3 cash flows are YTD cumulative (~182/273-day) — this is correct GAAP
+       behaviour; the SEC does NOT require standalone quarter cash flows
     """
     if "start" not in df.columns:
         return df
 
-    df = df.copy()
+    # ── Primary: fp-based selection ─────────────────────────────────────────
+    if target_fp and "fp" in df.columns:
+        result = _filter_by_fp(df, target_fp, target_fy)
+        if not result.empty and len(result) < len(df):
+            if end_col in result.columns:
+                result = result.sort_values(end_col, ascending=False)
+            return result
 
-    # Calculate duration in days
+    # ── Fallback: duration-day heuristic ────────────────────────────────────
+    df = df.copy()
     start_dt = pd.to_datetime(df["start"], errors="coerce")
     end_dt = pd.to_datetime(df[end_col], errors="coerce")
     df["_duration_days"] = (end_dt - start_dt).dt.days
 
-    # Separate instant (no start) vs duration-based rows
     instant_mask = df["start"].isna() | df["_duration_days"].isna()
     instant_rows = df[instant_mask]
     duration_rows = df[~instant_mask]
@@ -503,31 +591,27 @@ def _filter_by_duration(
         return df
 
     if prefer == "quarterly":
-        # For each (concept, end_date) group, keep the shortest duration
-        # Quarterly ≈ 80-100 days, YTD ≈ 170-370 days
-        # Keep rows with duration < 120 days if available, else keep all
-        short = duration_rows[duration_rows["_duration_days"] <= 120]
+        # Keep rows with duration consistent with Q1 (65-115 days) if available.
+        # For Q2/Q3 filings the only available facts are YTD — that's correct.
+        short = duration_rows[duration_rows["_duration_days"] <= 115]
         if not short.empty:
             duration_rows = short
-        # If no short durations found, keep the shortest available per end date
-        elif not duration_rows.empty:
+        else:
+            # No standalone-quarter data — keep shortest available (YTD is fine)
             concept_col = _find_column(duration_rows, ("concept", "Concept", "tag", "Tag"))
             if concept_col and end_col:
                 idx = duration_rows.groupby([concept_col, end_col])["_duration_days"].idxmin()
                 duration_rows = duration_rows.loc[idx]
     else:
-        # Keep the longest duration (annual/YTD)
+        # Annual: keep the longest duration (full-year, fp=FY)
         long = duration_rows[duration_rows["_duration_days"] > 300]
         if not long.empty:
             duration_rows = long
 
     result = pd.concat([instant_rows, duration_rows], ignore_index=True)
     result.drop(columns=["_duration_days"], inplace=True, errors="ignore")
-
-    # Re-sort by end date
     if end_col in result.columns:
         result = result.sort_values(end_col, ascending=False)
-
     return result
 
 
@@ -666,7 +750,7 @@ def _llm_disambiguate(
         )
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=10,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -706,6 +790,8 @@ def _build_statement_from_facts(
     *,
     duration_pref: str | None = None,
     is_instant_statement: bool = False,
+    target_fp: str | None = None,
+    target_fy: int | None = None,
 ) -> list[dict]:
     """Build a statement table from companyfacts data.
 
@@ -733,11 +819,6 @@ def _build_statement_from_facts(
     # Apply quality filters to get consolidated (non-segment) data
     clean_df = _apply_quality_filters(facts_df)
 
-    # Pre-filter by duration for flow statements (income, cash flow)
-    # This prevents picking Q4-only values for annual filings
-    if duration_pref and not is_instant_statement and end_col and "start" in clean_df.columns:
-        clean_df = _filter_by_duration(clean_df, end_col, prefer=duration_pref)
-
     for concept_name in statement_concepts:
         # Exact match first (preferred — avoids partial matches)
         exact_mask = (clean_df[concept_col] == concept_name)
@@ -757,6 +838,17 @@ def _build_statement_from_facts(
         # Sort by date, take most recent
         if end_col and end_col in matches.columns:
             matches = matches.sort_values(end_col, ascending=False)
+
+        # Apply duration filter per-concept (not globally) so that concepts with
+        # only YTD values (e.g. cash flows in 10-Qs) are still included.
+        # Income items get Q3 standalone; CF items get YTD — both correct.
+        if duration_pref and not is_instant_statement and end_col and "start" in matches.columns:
+            filtered = _filter_by_duration(
+                matches.copy(), end_col, prefer=duration_pref,
+                target_fp=target_fp, target_fy=target_fy,
+            )
+            if not filtered.empty:
+                matches = filtered
 
         row = matches.iloc[0]
         label_raw = row[label_col] if label_col and label_col in matches.columns else None
@@ -1105,11 +1197,28 @@ def extract_financials(
     pq = is_quarterly  # legacy compat
     result["period_type"] = "quarterly" if is_quarterly else "annual"
 
+    # Extract the authoritative fp/fy from the filing's facts.
+    # fp (fiscal period focus) is declared by the filer and is more reliable
+    # than duration-day calculations for period selection.
+    target_fp: str | None = None
+    target_fy: int | None = None
+    if "fp" in facts_df.columns and not facts_df.empty:
+        fp_counts = facts_df["fp"].dropna().astype(str).value_counts()
+        if not fp_counts.empty:
+            target_fp = fp_counts.index[0]
+            log.debug("Filing fp (authoritative): %s", target_fp)
+    if "fy" in facts_df.columns and not facts_df.empty:
+        fy_vals = pd.to_numeric(facts_df["fy"], errors="coerce").dropna()
+        if not fy_vals.empty:
+            target_fy = int(fy_vals.mode().iloc[0])
+            log.debug("Filing fy (authoritative): %s", target_fy)
+
     # Revenue (industry-aware, with confidence)
     rev_concepts = get_revenue_concepts(industry)
     resolved = _resolve_metric(
         facts_df, rev_concepts, period_index=period_index,
         industry=industry, duration_pref=dur_pref,
+        target_fp=target_fp, target_fy=target_fy,
     )
     metrics["revenue"] = resolved.value
     sourced["revenue"] = resolved.source
@@ -1120,6 +1229,7 @@ def extract_financials(
         resolved = _resolve_metric(
             facts_df, concepts, period_index=period_index,
             industry=industry, duration_pref=dur_pref,
+            target_fp=target_fp, target_fy=target_fy,
         )
         metrics[metric_name] = resolved.value
         sourced[metric_name] = resolved.source
@@ -1206,16 +1316,19 @@ def extract_financials(
         for tag in ("DepreciationDepletionAndAmortization",
                      "DepreciationAndAmortization"):
             da_val = _lookup_fact(facts_df, tag, period_index,
-                                  match_mode="exact", duration_pref=dur_pref)
+                                  match_mode="exact", duration_pref=dur_pref,
+                                  target_fp=target_fp, target_fy=target_fy)
             if da_val is not None:
                 break
         # Fallback: sum Depreciation + Amortization separately
         if da_val is None:
             dep = _lookup_fact(facts_df, "Depreciation", period_index,
-                               match_mode="exact", duration_pref=dur_pref)
+                               match_mode="exact", duration_pref=dur_pref,
+                               target_fp=target_fp, target_fy=target_fy)
             amort = _lookup_fact(facts_df, "AmortizationOfIntangibleAssets",
                                  period_index, match_mode="exact",
-                                 duration_pref=dur_pref)
+                                 duration_pref=dur_pref,
+                                 target_fp=target_fp, target_fy=target_fy)
             if dep is not None or amort is not None:
                 da_val = abs(dep or 0) + abs(amort or 0)
         if da_val is not None:
@@ -1253,7 +1366,8 @@ def extract_financials(
         best_src = sourced.get("revenue")
         for tag in _BROAD_REVENUE_TAGS:
             v = _lookup_fact(facts_df, tag, period_index,
-                             match_mode="exact", duration_pref=dur_pref)
+                             match_mode="exact", duration_pref=dur_pref,
+                             target_fp=target_fp, target_fy=target_fy)
             if v is not None and v > best_rev:
                 best_rev = v
                 best_src = f"{tag} (auto-corrected)"
@@ -1339,11 +1453,14 @@ def extract_financials(
     # Build statement tables from companyfacts data
     if include_statements:
         result["income_statement"] = _build_statement_from_facts(
-            facts_df, _INCOME_CONCEPTS, duration_pref=dur_pref)
+            facts_df, _INCOME_CONCEPTS, duration_pref=dur_pref,
+            target_fp=target_fp, target_fy=target_fy)
         result["balance_sheet"] = _build_statement_from_facts(
-            facts_df, _BALANCE_CONCEPTS, is_instant_statement=True)
+            facts_df, _BALANCE_CONCEPTS, is_instant_statement=True,
+            target_fp=target_fp, target_fy=target_fy)
         result["cash_flow_statement"] = _build_statement_from_facts(
-            facts_df, _CASHFLOW_CONCEPTS, duration_pref=dur_pref)
+            facts_df, _CASHFLOW_CONCEPTS, duration_pref=dur_pref,
+            target_fp=target_fp, target_fy=target_fy)
 
     return result
 
