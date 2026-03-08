@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sec-mcp"
-version = "0.2.0"
-description = "MCP server for SEC filing analysis — direct EDGAR API + MongoDB + modern UI"
+version = "1.0.0"
+description = "Fineas.ai — SEC financial intelligence platform. MCP server for SEC filing analysis with industry-aware XBRL extraction, market data integration, and AI-powered insights"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -26,9 +26,15 @@ dependencies = [
     "pymongo[srv]>=4.6",
     # Claude API for narrative explanations
     "anthropic>=0.40",
+    # Market data provider
+    "yfinance>=0.2.30",
 ]
 
 [project.optional-dependencies]
+# Market data providers — optional alternative sources
+market = [
+    "yfinance>=0.2.30",
+]
 # NLP models — heavy (~2.5GB), only needed for local use
 nlp = [
     "transformers>=4.40",

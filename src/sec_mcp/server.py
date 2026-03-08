@@ -50,6 +50,8 @@ log = logging.getLogger(__name__)
 _sentiment = None
 _summarizer = None
 _ner = None
+_peer_engine = None
+_screener = None
 
 
 def _get_sentiment():
@@ -95,6 +97,32 @@ def _get_ner():
             from sec_mcp.nlp.claude_fallback import ClaudeEntityExtractor
             _ner = ClaudeEntityExtractor()
     return _ner
+
+
+def _get_peer_engine():
+    """Lazy-load PeerEngine singleton for peer discovery."""
+    global _peer_engine
+    if _peer_engine is None:
+        try:
+            from sec_mcp.core.peer_engine import PeerEngine
+            _peer_engine = PeerEngine()
+        except ImportError as exc:
+            log.error("PeerEngine module unavailable: %s", exc)
+            raise
+    return _peer_engine
+
+
+def _get_screener():
+    """Lazy-load Screener singleton for company screening."""
+    global _screener
+    if _screener is None:
+        try:
+            from sec_mcp.core.screener import Screener
+            _screener = Screener()
+        except ImportError as exc:
+            log.error("Screener module unavailable: %s", exc)
+            raise
+    return _screener
 
 
 def _resolve_text(
@@ -556,6 +584,449 @@ def analyze_filing(
         entities=entities,
     )
     return result.model_dump()
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  V2: MARKET DATA
+# ═══════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def get_stock_price(ticker: str) -> dict:
+    """Get current stock price, change, volume, and market cap for a company.
+    
+    Returns real-time(ish) price data including 52-week range and P/E ratio.
+    Requires yfinance package. Returns error dict if unavailable.
+    """
+    try:
+        # Try to import and use market data provider
+        import yfinance as yf
+        
+        # Fetch stock data
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # Build response with available fields
+        result = {
+            "ticker": ticker,
+            "price": info.get("currentPrice"),
+            "change": info.get("regularMarketChange"),
+            "change_pct": info.get("regularMarketChangePercent"),
+            "volume": info.get("volume"),
+            "market_cap": info.get("marketCap"),
+            "high_52w": info.get("fiftyTwoWeekHigh"),
+            "low_52w": info.get("fiftyTwoWeekLow"),
+            "pe_ratio": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+            "source": "yfinance",
+            "timestamp": None,
+        }
+        return result
+    except ImportError:
+        # yfinance not available
+        return {
+            "error": "Market data module (yfinance) not available. Install with: pip install yfinance"
+        }
+    except Exception as e:
+        # API error or ticker not found
+        return {"error": f"Failed to fetch stock price for {ticker}: {str(e)}"}
+
+
+@mcp.tool()
+def get_valuation_metrics(ticker: str, year: int | None = None) -> dict:
+    """Get valuation metrics combining market price with XBRL fundamentals.
+    
+    Computes P/E, P/S, P/B, EV/EBITDA, EV/Revenue by combining
+    live stock price with SEC filing data.
+    """
+    try:
+        # Get XBRL metrics via extract_financials
+        financials = extract_financials(ticker, year=year)
+        if "error" in financials:
+            return {"error": f"Could not fetch financials for {ticker}: {financials.get('error')}"}
+        
+        # Get market data via yfinance
+        import yfinance as yf
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        
+        # Extract needed values
+        market_cap = info.get("marketCap")
+        current_price = info.get("currentPrice")
+        shares_outstanding = info.get("sharesOutstanding")
+        
+        # Extract XBRL metrics
+        metrics = financials.get("metrics", {})
+        revenue = metrics.get("revenue")
+        net_income = metrics.get("net_income")
+        total_assets = metrics.get("total_assets")
+        stockholders_equity = metrics.get("stockholders_equity")
+        ebitda = metrics.get("ebitda")
+        total_debt = (metrics.get("long_term_debt", 0) or 0) + (metrics.get("short_term_debt", 0) or 0)
+        
+        # Compute valuation metrics
+        pe_ratio = None
+        ps_ratio = None
+        pb_ratio = None
+        ev_ebitda = None
+        ev_revenue = None
+        
+        if current_price and net_income and shares_outstanding:
+            pe_ratio = (current_price * shares_outstanding) / net_income if net_income > 0 else None
+        
+        if current_price and revenue and shares_outstanding:
+            ps_ratio = (current_price * shares_outstanding) / revenue if revenue > 0 else None
+        
+        if current_price and stockholders_equity and shares_outstanding:
+            pb_ratio = (current_price * shares_outstanding) / stockholders_equity if stockholders_equity > 0 else None
+        
+        if market_cap and ebitda:
+            ev_ebitda = market_cap / ebitda if ebitda > 0 else None
+        
+        if market_cap and revenue:
+            ev_revenue = market_cap / revenue if revenue > 0 else None
+        
+        result = {
+            "ticker": ticker,
+            "market_cap": market_cap,
+            "enterprise_value": (market_cap + total_debt) if market_cap else None,
+            "pe_ratio": pe_ratio,
+            "ps_ratio": ps_ratio,
+            "pb_ratio": pb_ratio,
+            "ev_ebitda": ev_ebitda,
+            "ev_revenue": ev_revenue,
+            "dividend_yield": info.get("dividendYield"),
+        }
+        return result
+    except ImportError:
+        return {"error": "yfinance not available. Install with: pip install yfinance"}
+    except Exception as e:
+        return {"error": f"Failed to compute valuation metrics: {str(e)}"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  V2: FILING DIFF
+# ═══════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def diff_financials(ticker: str, year1: int, year2: int) -> dict:
+    """Compare financial metrics between two fiscal years.
+    
+    Shows what changed: revenue growth, margin expansion/compression,
+    debt changes, etc. Each metric gets a significance rating.
+    """
+    try:
+        # Fetch financials for both years
+        fin1 = extract_financials(ticker, year=year1)
+        fin2 = extract_financials(ticker, year=year2)
+        
+        # Check for errors
+        if "error" in fin1:
+            return {"error": f"Could not fetch {year1} financials: {fin1.get('error')}"}
+        if "error" in fin2:
+            return {"error": f"Could not fetch {year2} financials: {fin2.get('error')}"}
+        
+        # Extract metrics from both years
+        metrics1 = fin1.get("metrics", {})
+        metrics2 = fin2.get("metrics", {})
+        ratios1 = fin1.get("ratios", {})
+        ratios2 = fin2.get("ratios", {})
+        
+        # Build list of changes
+        changes = []
+        
+        # Key metrics to compare
+        key_metrics = [
+            "revenue", "net_income", "gross_profit", "operating_income", "ebitda",
+            "total_assets", "total_liabilities", "stockholders_equity",
+            "operating_cash_flow", "free_cash_flow", "long_term_debt"
+        ]
+        
+        for metric_name in key_metrics:
+            old_val = metrics1.get(metric_name)
+            new_val = metrics2.get(metric_name)
+            
+            # Skip if both are None
+            if old_val is None and new_val is None:
+                continue
+            
+            # Calculate change
+            change = None
+            change_pct = None
+            if old_val is not None and new_val is not None and old_val != 0:
+                change = new_val - old_val
+                change_pct = (change / abs(old_val)) * 100
+            
+            # Determine significance
+            significance = "minor"
+            if change_pct is not None:
+                abs_pct = abs(change_pct)
+                if abs_pct > 20:
+                    significance = "major"
+                elif abs_pct > 10:
+                    significance = "moderate"
+            
+            changes.append({
+                "metric": metric_name,
+                "old_value": old_val,
+                "new_value": new_val,
+                "change": change,
+                "change_pct": change_pct,
+                "significance": significance,
+            })
+        
+        # Also compare key ratios
+        ratio_keys = [
+            "gross_margin", "operating_margin", "net_margin",
+            "return_on_assets", "return_on_equity", "current_ratio",
+            "debt_to_equity"
+        ]
+        
+        for ratio_name in ratio_keys:
+            old_val = ratios1.get(ratio_name)
+            new_val = ratios2.get(ratio_name)
+            
+            if old_val is None and new_val is None:
+                continue
+            
+            change = None
+            change_pct = None
+            if old_val is not None and new_val is not None and old_val != 0:
+                change = new_val - old_val
+                change_pct = (change / abs(old_val)) * 100
+            
+            significance = "minor"
+            if change_pct is not None and abs(change_pct) > 15:
+                significance = "major" if abs(change_pct) > 30 else "moderate"
+            
+            changes.append({
+                "metric": ratio_name,
+                "old_value": old_val,
+                "new_value": new_val,
+                "change": change,
+                "change_pct": change_pct,
+                "significance": significance,
+            })
+        
+        result = {
+            "ticker": ticker,
+            "year1": year1,
+            "year2": year2,
+            "changes": changes,
+            "summary": None,
+        }
+        return result
+    except Exception as e:
+        return {"error": f"Failed to compare financials: {str(e)}"}
+
+
+@mcp.tool()
+def diff_filing_section(ticker: str, section: str, year1: int, year2: int) -> dict:
+    """Compare a specific filing section between two years.
+    
+    Useful for tracking changes in Risk Factors, MD&A, etc.
+    Returns a summary of key changes (Claude-powered if available).
+    
+    Section names: 'risk_factors', 'mda', 'business', 'controls', 'legal'
+    """
+    try:
+        # Map section names to form sections
+        section_map = {
+            "risk_factors": "Item 1A. Risk Factors",
+            "mda": "Item 7. Management's Discussion and Analysis",
+            "business": "Item 1. Business",
+            "controls": "Item 9A. Changes in and Disagreements with Accountants",
+            "legal": "Item 3. Legal Proceedings",
+        }
+        
+        mapped_section = section_map.get(section.lower(), section)
+        
+        # Get filings for both years
+        filings1 = list_filings(ticker, form="10-K", limit=5)
+        filings2 = list_filings(ticker, form="10-K", limit=5)
+        
+        # Find the filings closest to each year
+        text1 = None
+        text2 = None
+        
+        for filing in filings1:
+            filing_year = int(filing.get("filing_date", "")[:4])
+            if filing_year == year1:
+                text1 = get_filing_content(ticker, filing.get("accession_number"), mapped_section)
+                break
+        
+        for filing in filings2:
+            filing_year = int(filing.get("filing_date", "")[:4])
+            if filing_year == year2:
+                text2 = get_filing_content(ticker, filing.get("accession_number"), mapped_section)
+                break
+        
+        if not text1 or not text2:
+            return {"error": f"Could not retrieve section '{section}' for both years"}
+        
+        # Try to use Claude to summarize the changes
+        summary = None
+        try:
+            from sec_mcp.narrator import get_narrator
+            narrator = get_narrator()
+            if narrator:
+                summary = narrator.explain_section_change(section, text1, text2)
+        except Exception:
+            # Fall back to no Claude summary
+            pass
+        
+        result = {
+            "ticker": ticker,
+            "section": section,
+            "year1": year1,
+            "year2": year2,
+            "text1_snippet": text1[:500] if text1 else None,
+            "text2_snippet": text2[:500] if text2 else None,
+            "summary": summary,
+        }
+        return result
+    except Exception as e:
+        return {"error": f"Failed to compare filing sections: {str(e)}"}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  V2: PEER DISCOVERY & SCREENING
+# ═══════════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def find_peers(ticker: str, max_peers: int = 5) -> list[dict]:
+    """Find peer companies for comparison.
+
+    Uses industry classification (SIC code) and a curated peer map
+    to find the most relevant comparable companies.
+
+    Args:
+        ticker: Company ticker (e.g., "AAPL")
+        max_peers: Maximum number of peers to return (default: 5)
+
+    Returns:
+        List of peer company dicts with fields: ticker, name, sic,
+        relevance_score (0-1), reason
+    """
+    try:
+        # Get PeerEngine singleton and find peers
+        engine = _get_peer_engine()
+        results = engine.find_peers(ticker.upper(), max_peers=max_peers)
+
+        # If no peers found, return empty list (not an error)
+        if not results:
+            return []
+
+        return results
+    except ImportError:
+        # Fallback: use search_companies for basic validation
+        try:
+            company = search_companies(ticker)
+            if not company or len(company) == 0:
+                return [{"error": f"Company {ticker} not found"}]
+            return [{"error": "Peer discovery engine not available, but company found"}]
+        except Exception as e:
+            return [{"error": f"Failed to find peers: {str(e)}"}]
+    except Exception as e:
+        return [{"error": f"Failed to find peers: {str(e)}"}]
+
+
+@mcp.tool()
+def screen_companies(filters: list[dict], limit: int = 20) -> list[dict]:
+    """Screen SEC-filing companies by financial criteria.
+
+    Each filter: {"metric": "net_margin", "operator": ">", "value": 25.0}
+    Supported metrics: revenue, net_income, gross_margin, operating_margin,
+    net_margin, roa, roe, total_assets, market_cap
+    Operators: >, <, >=, <=, ==, between (between requires "value_max" key)
+
+    Args:
+        filters: List of filter dicts with keys: metric, operator, value
+                 and optional value_max for "between" operator
+        limit: Maximum number of results to return (default: 20)
+
+    Returns:
+        List of matching company dicts with fields: ticker, company_name,
+        metrics, ratios, matched
+
+    Note: Screening is compute-intensive. Results are cached for 30 minutes.
+    """
+    try:
+        # Get Screener singleton and run screening
+        screener = _get_screener()
+        results = screener.screen(filters, limit=limit)
+
+        # If no matches found, return empty list (not an error)
+        if not results:
+            return []
+
+        return results
+    except ValueError as e:
+        # Filter validation error from screener
+        return [{"error": f"Invalid filter: {str(e)}"}]
+    except ImportError:
+        return [{"error": "Screener module not available"}]
+    except Exception as e:
+        return [{"error": f"Failed to screen companies: {str(e)}"}]
+
+
+@mcp.tool()
+def export_financials(ticker: str, format: str = "json", year: int | None = None) -> dict:
+    """Export financial data in a specified format.
+    
+    Args:
+        ticker: company ticker
+        format: 'json' or 'csv'
+        year: fiscal year (None = latest)
+    
+    Returns the data as a string in the requested format,
+    or as a structured dict for JSON.
+    """
+    try:
+        # Get financials
+        financials = extract_financials(ticker, year=year)
+        
+        if "error" in financials:
+            return {"error": f"Could not fetch financials: {financials.get('error')}"}
+        
+        if format.lower() == "json":
+            # Return as dict
+            return financials
+        elif format.lower() == "csv":
+            # Convert to CSV format
+            import csv
+            from io import StringIO
+            
+            metrics = financials.get("metrics", {})
+            ratios = financials.get("ratios", {})
+            
+            output = StringIO()
+            writer = csv.writer(output)
+            
+            # Write metrics
+            writer.writerow(["Metric", "Value"])
+            for key, value in metrics.items():
+                if value is not None:
+                    writer.writerow([key, value])
+            
+            writer.writerow([])
+            
+            # Write ratios
+            writer.writerow(["Ratio", "Value"])
+            for key, value in ratios.items():
+                if value is not None:
+                    writer.writerow([key, value])
+            
+            csv_string = output.getvalue()
+            return {
+                "ticker": ticker,
+                "format": "csv",
+                "data": csv_string,
+            }
+        else:
+            return {"error": f"Unsupported format: {format}. Use 'json' or 'csv'"}
+    except Exception as e:
+        return {"error": f"Failed to export financials: {str(e)}"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -136,3 +136,80 @@ class StandardizedFinancials(BaseModel):
     balance_sheet: list[dict] | None = None
     cash_flow_statement: list[dict] | None = None
     error: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# V2 Models — Market data, diffs, peers, screening
+# ---------------------------------------------------------------------------
+
+class PriceData(BaseModel):
+    """Stock price data from market data provider."""
+    ticker: str
+    price: float | None = None
+    change: float | None = None
+    change_pct: float | None = None
+    volume: int | None = None
+    market_cap: float | None = None
+    high_52w: float | None = None
+    low_52w: float | None = None
+    pe_ratio: float | None = None
+    forward_pe: float | None = None
+    source: str = "yfinance"
+    timestamp: str | None = None
+
+
+class ValuationMetrics(BaseModel):
+    """Valuation metrics combining market price + XBRL fundamentals."""
+    ticker: str
+    market_cap: float | None = None
+    enterprise_value: float | None = None
+    pe_ratio: float | None = None
+    ps_ratio: float | None = None
+    pb_ratio: float | None = None
+    ev_ebitda: float | None = None
+    ev_revenue: float | None = None
+    dividend_yield: float | None = None
+
+
+class MetricChange(BaseModel):
+    """Single metric change between two periods."""
+    metric: str
+    old_value: float | None = None
+    new_value: float | None = None
+    change: float | None = None
+    change_pct: float | None = None
+    significance: str = "minor"  # minor/moderate/major
+
+
+class MetricDiff(BaseModel):
+    """Full diff between two filing periods."""
+    ticker: str
+    year1: int
+    year2: int
+    changes: list[MetricChange] = []
+    summary: str | None = None
+
+
+class PeerMatch(BaseModel):
+    """A matched peer company with relevance scoring."""
+    ticker: str
+    name: str | None = None
+    sic_code: str | None = None
+    relevance_score: float = 0.0
+    reason: str = ""
+
+
+class ScreenFilter(BaseModel):
+    """Single screening filter criterion."""
+    metric: str
+    operator: str  # >, <, >=, <=, ==, between
+    value: float
+    value2: float | None = None  # for "between" operator
+
+
+class ScreenResult(BaseModel):
+    """A company that matched screening criteria."""
+    ticker: str
+    company_name: str | None = None
+    metrics: dict = {}
+    ratios: dict = {}

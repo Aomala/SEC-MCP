@@ -1,139 +1,297 @@
 <!DOCTYPE html>
-<html lang="en"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SEC Terminal</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-<link rel="stylesheet" href="/static/app.css?v=6"/>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Fineas.ai — SEC Financial Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css?v=10"/>
 </head>
 <body>
 <div class="app">
-  <div class="cp">
-    <div class="cp-hdr">
-      <div class="cp-logo">S</div>
-      <div>
-        <h1>SEC Terminal</h1>
-        <div class="cp-sub">Live EDGAR Analysis</div>
+  <!-- LEFT SIDEBAR (240px) -->
+  <aside class="sidebar" id="sidebar">
+    <!-- Brand -->
+    <div class="sidebar-brand">
+      <div class="brand-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polyline>
+        </svg>
       </div>
-      <div class="spacer"></div>
-      <span class="tag">LIVE</span>
-      <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" title="Toggle light/dark mode">&#x263E;</button>
+      <div class="brand-text">
+        <span class="brand-name">Fineas</span>
+        <span class="brand-sub">.ai</span>
+      </div>
     </div>
-    <div class="chat" id="chat">
-      <div class="welcome" id="welcome">
-        <div class="w-ico">&#x25C8;</div>
-        <h2>Financial Intelligence</h2>
-        <p>Any public company — US domestic or foreign filer. Financials, filings, and AI analysis.</p>
-        <div class="pills">
-          <span class="pill" onclick="q('Apple')">AAPL</span>
-          <span class="pill" onclick="q('NVDA 10-Q')">NVDA Quarterly</span>
-          <span class="pill" onclick="q('compare AAPL vs MSFT')">AAPL vs MSFT</span>
-          <span class="pill" onclick="q('Toyota')">Toyota 20-F</span>
-          <span class="pill" onclick="q('ASML')">ASML (FPI)</span>
-          <span class="pill" onclick="q('TSLA risk factors')">TSLA Risks</span>
+    
+    <!-- Navigation -->
+    <nav class="sidebar-nav">
+      <a href="#" class="nav-item active" data-view="dashboard">
+        <i data-lucide="layout-dashboard"></i> Dashboard
+      </a>
+      <a href="#" class="nav-item" data-view="screener">
+        <i data-lucide="search"></i> Screener <span class="nav-badge">NEW</span>
+      </a>
+      <a href="#" class="nav-item" data-view="comps">
+        <i data-lucide="git-compare"></i> Compare
+      </a>
+      <a href="#" class="nav-item" data-view="filings">
+        <i data-lucide="file-text"></i> Filings
+      </a>
+      <a href="#" class="nav-item" data-view="diff">
+        <i data-lucide="diff"></i> Filing Diff <span class="nav-badge">NEW</span>
+      </a>
+      <a href="#" class="nav-item" data-view="alerts">
+        <i data-lucide="bell"></i> Alerts
+      </a>
+    </nav>
+
+    <!-- Watchlist -->
+    <div class="sidebar-section">
+      <div class="section-title">WATCHLIST</div>
+      <div id="watchlist" class="watchlist">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+
+    <!-- Settings at bottom -->
+    <div class="sidebar-footer">
+      <button class="nav-item" onclick="toggleTheme()">
+        <i data-lucide="moon" id="theme-icon"></i> <span id="theme-label">Light Mode</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- CENTER MAIN CONTENT (flex) -->
+  <main class="main">
+    <!-- Top Header -->
+    <header class="header">
+      <div class="header-top">
+        <!-- Search -->
+        <div class="search-bar">
+          <i data-lucide="search"></i>
+          <input id="search-input" placeholder="Search companies, tickers, or ask a question..." autocomplete="off" oninput="debSearch(this.value)"/>
+          <kbd>/</kbd>
+          <div class="search-results" id="search-results"></div>
         </div>
-        <div class="w-note">
-          <span class="w-note-ico">&#x1F30D;</span>
+
+        <!-- Company Pill (shown when company is loaded) -->
+        <div class="company-pill" id="company-pill" style="display:none">
+          <span class="ticker-badge" id="pill-ticker">AAPL</span>
+          <span class="company-name" id="pill-name">Apple Inc.</span>
+          <div class="pill-divider"></div>
+          <span class="price" id="pill-price">$227.48</span>
+          <span class="price-change positive" id="pill-change">
+            <i data-lucide="arrow-up-right"></i> +1.04%
+          </span>
+          <span class="live-dot"></span>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="header-actions">
+          <button class="icon-btn" onclick="refreshData()" title="Refresh"><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-btn" onclick="exportData()" title="Export"><i data-lucide="download"></i></button>
+          <button class="icon-btn has-badge" title="Alerts"><i data-lucide="bell"></i></button>
+          <button class="icon-btn" id="chat-toggle" onclick="toggleChat()" title="AI Analyst">
+            <i data-lucide="message-square"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- View Tabs -->
+      <div class="header-tabs">
+        <div class="view-tabs">
+          <button class="view-tab active" data-view="dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</button>
+          <button class="view-tab" data-view="statements"><i data-lucide="table"></i> Statements</button>
+          <button class="view-tab" data-view="comps"><i data-lucide="git-compare"></i> Comparables</button>
+          <button class="view-tab" data-view="filings"><i data-lucide="book-open"></i> Filings</button>
+          <button class="view-tab" data-view="insights"><i data-lucide="zap"></i> AI Insights</button>
+        </div>
+        <div class="header-controls">
+          <!-- Period Toggle -->
+          <div class="toggle-group">
+            <button class="toggle-btn active" data-period="annual">Annual</button>
+            <button class="toggle-btn" data-period="quarterly">Quarterly</button>
+          </div>
+          <!-- Form Type Select -->
+          <select id="sel-form" class="sel" onchange="onFormSel()">
+            <option value="10-K">10-K (Annual)</option>
+            <option value="10-Q">10-Q (Quarterly)</option>
+            <option value="20-F">20-F (FPI Annual)</option>
+            <option value="6-K">6-K (FPI Interim)</option>
+          </select>
+          <!-- Period Select -->
+          <select id="sel-period" class="sel" onchange="onPeriodSel()">
+            <option value="">Select Period</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <!-- Scrollable Content Area -->
+    <div class="content" id="content">
+      <!-- Welcome State (shown initially) -->
+      <div class="welcome" id="welcome">
+        <div class="welcome-icon">
+          <i data-lucide="trending-up"></i>
+        </div>
+        <h2>Financial Intelligence Platform</h2>
+        <p>Search any public company — US domestic or foreign filer</p>
+        <div class="welcome-pills">
+          <button class="pill" onclick="q('Apple')">AAPL</button>
+          <button class="pill" onclick="q('NVDA')">NVDA</button>
+          <button class="pill" onclick="q('MSFT')">MSFT</button>
+          <button class="pill" onclick="q('compare AAPL vs MSFT')">AAPL vs MSFT</button>
+          <button class="pill" onclick="q('ASML')">ASML (FPI)</button>
+          <button class="pill" onclick="q('JPM')">JPM</button>
+        </div>
+        <div class="welcome-note">
+          <i data-lucide="globe"></i>
           Foreign filers (20-F / 6-K / 40-F) are fully supported
         </div>
       </div>
-    </div>
-    <div class="inp-row">
-      <input id="inp" placeholder="Ticker, company name, or question..." autocomplete="off"/>
-      <button class="snd" id="btn" onclick="send()">&#8594;</button>
-    </div>
-  </div>
 
-  <div class="ap" id="apanel">
-    <div class="ap-toolbar" id="ap-toolbar">
-      <div class="srch"><span class="mag">&#x1F50E;</span>
-        <input id="asrch" placeholder="Search ticker or company..." oninput="debSearch(this.value)" autocomplete="off"/>
-        <div class="sr-drop" id="sr-drop"></div>
+      <!-- Dashboard View (hidden initially, shown when data loads) -->
+      <div class="dashboard" id="dashboard" style="display:none">
+        <!-- KPI Cards Row -->
+        <div class="kpi-grid" id="kpi-grid">
+          <!-- 6 KPI cards injected by JS -->
+        </div>
+
+        <!-- Charts Row -->
+        <div class="charts-row">
+          <div class="chart-card wide">
+            <div class="card-header">
+              <div>
+                <h3>Revenue & Profitability Trend</h3>
+                <p class="card-subtitle">5-year annual data from SEC XBRL</p>
+              </div>
+              <div class="legend">
+                <span class="legend-item" style="--color: var(--brand)">Revenue</span>
+                <span class="legend-item" style="--color: var(--success)">Net Income</span>
+                <span class="legend-item" style="--color: var(--info)">FCF</span>
+              </div>
+            </div>
+            <canvas id="revenue-chart" height="140"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="card-header">
+              <h3>Revenue Segments</h3>
+              <p class="card-subtitle" id="segments-subtitle">FY2024 breakdown</p>
+            </div>
+            <canvas id="segment-chart" height="160"></canvas>
+            <div id="segment-legend" class="segment-legend"></div>
+          </div>
+        </div>
+
+        <!-- Margin + Peers Row -->
+        <div class="charts-row">
+          <div class="chart-card">
+            <div class="card-header">
+              <h3>Margin Trend</h3>
+              <p class="card-subtitle">Net margin % over time</p>
+            </div>
+            <canvas id="margin-chart" height="130"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="card-header">
+              <div>
+                <h3>Peer Comparison</h3>
+                <p class="card-subtitle">Key metrics vs industry peers</p>
+              </div>
+              <button class="text-btn"><i data-lucide="plus"></i> Add Peer</button>
+            </div>
+            <table class="data-table" id="peer-table">
+              <thead>
+                <tr>
+                  <th>Company</th>
+                  <th class="right">Revenue</th>
+                  <th class="right">Net Margin</th>
+                  <th class="right">P/E</th>
+                </tr>
+              </thead>
+              <tbody id="peer-tbody">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Provenance Bar -->
+        <div class="provenance" id="provenance">
+          <!-- Validation badges injected by JS -->
+        </div>
+
+        <!-- Statement Preview -->
+        <div class="chart-card" id="statement-preview" style="display:none">
+          <div class="card-header">
+            <div>
+              <h3 id="statement-title">Income Statement Summary</h3>
+              <p class="card-subtitle" id="statement-subtitle">FY2024 vs FY2023</p>
+            </div>
+            <button class="text-btn" onclick="showFullStatement()">
+              View Full Statement <i data-lucide="arrow-right"></i>
+            </button>
+          </div>
+          <table class="data-table" id="statement-table">
+            <thead><tr><th>Line Item</th><th class="right">Current</th><th class="right">Prior</th><th class="right">Change</th></tr></thead>
+            <tbody id="statement-tbody"></tbody>
+          </table>
+        </div>
       </div>
-      <span class="fpi-indicator" id="fpi-indicator" title="Foreign Private Issuer — files 20-F/6-K instead of 10-K/10-Q">FPI</span>
-      <div class="tb-sep"></div>
-      <span class="tb-label">View</span>
-      <select id="sel-tool" class="sel" onchange="onToolSel()">
-        <option value="dashboard">Dashboard</option>
-        <option value="mda">MD&amp;A</option>
-        <option value="risk_factors">Risk Factors</option>
-        <option value="business">Business Overview</option>
-        <option value="entity">Entity Profile</option>
-        <option value="executive_compensation">Exec Compensation</option>
-      </select>
-      <div class="tb-sep"></div>
-      <span class="tb-label">Form</span>
-      <select id="sel-form" class="sel" onchange="onFormSel()">
-        <option value="">All Types</option>
-        <optgroup label="US Domestic">
-          <option value="10-K">10-K — Annual</option>
-          <option value="10-Q">10-Q — Quarterly</option>
-        </optgroup>
-        <optgroup label="Foreign Private Issuer (FPI)">
-          <option value="20-F">20-F — Annual (FPI)</option>
-          <option value="6-K">6-K — Interim (FPI)</option>
-          <option value="40-F">40-F — Annual (Canada)</option>
-        </optgroup>
-      </select>
-      <span class="tb-label">Period</span>
-      <select id="sel-period" class="sel" onchange="onPeriodSel()"><option value="">Select Period</option></select>
-      <button class="cb-toggle" id="cb-btn" onclick="toggleCb()"><span class="cb-dot"></span>AI Assistant</button>
+
+      <!-- Other views (filings text, comps, etc) -->
+      <div class="view-panel" id="filings-view" style="display:none"></div>
+      <div class="view-panel" id="comps-view" style="display:none"></div>
+      <div class="view-panel" id="insights-view" style="display:none"></div>
     </div>
-    <div class="ap-content" id="ap-content">
-      <div class="ap-empty" id="ap-empty">
+  </main>
+
+  <!-- RIGHT CHAT PANEL (380px) -->
+  <aside class="chat-panel" id="chat-panel">
+    <div class="chat-header">
+      <div class="chat-brand">
+        <div class="chat-icon"><i data-lucide="zap"></i></div>
         <div>
-          <div class="ico">&#x25C8;</div>
-          <p>Query any public company to begin analysis</p>
-          <p class="ap-empty-sub">Supports US (10-K/10-Q) and foreign filers (20-F/6-K/40-F)</p>
+          <span class="chat-title">AI Analyst</span>
+          <span class="chat-subtitle">Powered by Claude</span>
         </div>
       </div>
+      <button class="icon-btn" onclick="toggleChat()"><i data-lucide="x"></i></button>
     </div>
-    <button class="chat-fab" id="chat-fab" onclick="toggleCb()" title="AI Assistant">&#x1F4AC;</button>
-  </div>
-
-  <div class="cb" id="cbpanel">
-    <div class="cb-hdr">
-      <h3>AI Assistant</h3>
-      <span class="cb-badge">CLAUDE</span>
-      <button class="cb-close" onclick="toggleCb()" title="Close panel">&#x2715;</button>
-    </div>
-    <div class="cb-msgs" id="cb-msgs">
-      <div class="cb-welcome" id="cb-welcome">
-        <div class="cb-wico">&#x1F4CA;</div>
-        <p><strong>Ask anything</strong> about the data on screen</p>
-        <p style="font-size:11px;margin-top:6px">Executive summaries, comparisons, insights</p>
-        <div class="cb-chips">
-          <span class="cb-chip" onclick="cbQ('Give me an executive summary')">Executive Summary</span>
-          <span class="cb-chip" onclick="cbQ('What are the key risks?')">Key Risks</span>
-          <span class="cb-chip" onclick="cbQ('How is revenue trending?')">Revenue Trend</span>
-          <span class="cb-chip" onclick="cbQ('Analyze the balance sheet')">Balance Sheet</span>
-        </div>
+    <div class="chat-messages" id="chat-messages">
+      <!-- Welcome + messages -->
+      <div class="chat-welcome" id="chat-welcome">
+        <p><strong>Ask anything</strong> about the loaded data</p>
+        <p class="small">Executive summaries, comparisons, insights</p>
       </div>
     </div>
-    <div class="cb-inp-row">
-      <input class="cb-inp" id="cb-inp" placeholder="Ask about this company..." autocomplete="off"/>
-      <button class="cb-send" id="cb-send" onclick="sendCb()">&#8594;</button>
+    <div class="chat-chips">
+      <button class="chip" onclick="cbQ('Give me an executive summary')">Executive Summary</button>
+      <button class="chip" onclick="cbQ('What are the key risks?')">Key Risks</button>
+      <button class="chip" onclick="cbQ('How is revenue trending?')">Revenue Trend</button>
+      <button class="chip" onclick="cbQ('Compare to peers')">Compare Peers</button>
+      <button class="chip highlight" onclick="cbQ('What changed since last year?')">Filing Diff ✨</button>
     </div>
+    <form class="chat-input" onsubmit="sendCb(); return false;">
+      <input id="chat-inp" placeholder="Ask about financials..." autocomplete="off"/>
+      <button type="submit" class="send-btn">Send</button>
+    </form>
+  </aside>
+</div>
+
+<!-- Modal -->
+<div class="modal-bg" id="modal" style="display:none" onclick="closeModal(event)">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header"><h3 id="m-title">Detail</h3><button class="icon-btn" onclick="closeModal()"><i data-lucide="x"></i></button></div>
+    <div class="modal-body" id="m-body"></div>
   </div>
 </div>
 
-<div class="m-bg" id="modal" style="display:none" onclick="closeModal(event)">
-  <div class="m-box" onclick="event.stopPropagation()">
-    <div class="m-hdr"><h3 id="m-title">Detail</h3><button class="m-x" onclick="closeModal()">&#x2715;</button></div>
-    <div class="m-body" id="m-body"></div>
-  </div>
-</div>
-
-<div class="fc-popup" id="fc-popup">
-  <div class="fc-title">Verify with</div>
-  <a href="#" onclick="return fcGo('chatgpt')"><span class="fc-ico">&#x1F4AC;</span>ChatGPT</a>
-  <a href="#" onclick="return fcGo('claude')"><span class="fc-ico">&#x1F9E0;</span>Claude</a>
-  <a href="#" onclick="return fcGo('perplexity')"><span class="fc-ico">&#x1F50D;</span>Perplexity</a>
-  <a href="#" onclick="return fcGo('google')"><span class="fc-ico">&#x1F310;</span>Google Search</a>
-</div>
-<div class="toast" id="toast">Copied to clipboard!</div>
-
-<script src="/static/app.js?v=6"></script>
-</body></html>
+<script src="/static/app.js?v=10"></script>
+</body>
+</html>

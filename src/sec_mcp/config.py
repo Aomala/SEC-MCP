@@ -7,9 +7,11 @@ Required:
     EDGAR_IDENTITY  — Your name + email for SEC EDGAR API User-Agent header
 
 Optional:
-    ANTHROPIC_API_KEY  — For Claude-powered narrative explanations
-    MONGODB_URI        — For persistent filing cache in MongoDB Atlas
-    PORT               — Server port (Railway sets this automatically)
+    ANTHROPIC_API_KEY       — For Claude-powered narrative explanations
+    MONGODB_URI             — For persistent filing cache in MongoDB Atlas
+    PORT                    — Server port (Railway sets this automatically)
+    MARKET_DATA_PROVIDER    — Market data source (yfinance or alpha_vantage)
+    ALPHA_VANTAGE_API_KEY   — API key for Alpha Vantage market data
 """
 
 from pydantic import field_validator
@@ -36,9 +38,22 @@ class Settings(BaseSettings):
     # Server port (Railway sets PORT env var automatically)
     port: int = 8877
 
+    # Market data provider (optional)
+    market_data_provider: str = "yfinance"
+    alpha_vantage_api_key: str = ""
+
+    # Cache TTLs (seconds)
+    cache_l1_ttl: int = 300      # 5 min in-memory
+    cache_l2_ttl: int = 3600     # 1 hr disk
+    cache_l3_ttl: int = 86400    # 24 hr MongoDB
+
+    # Screener settings
+    screener_max_candidates: int = 100
+    screener_cache_ttl: int = 1800  # 30 min
+
     # Strip whitespace from string fields — the .env file often has
     # trailing spaces that break connection strings
-    @field_validator("mongodb_uri", "anthropic_api_key", "edgar_identity", mode="before")
+    @field_validator("mongodb_uri", "anthropic_api_key", "edgar_identity", "alpha_vantage_api_key", mode="before")
     @classmethod
     def strip_whitespace(cls, v: str) -> str:
         if isinstance(v, str):
