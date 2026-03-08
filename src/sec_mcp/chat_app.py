@@ -94,6 +94,129 @@ class ChatbotRequest(BaseModel):
     history: list = []  # conversation history: [{role: "user"/"assistant", content: "..."}]
 
 
+class CompsRequest(BaseModel):
+    tickers: list[str]
+    year: int | None = None
+    form_type: str = "10-K"
+
+
+# ── Peer comparison map ────────────────────────────────────────────────────
+# Industry-based peer groups: primary ticker → [up to 4 peers]
+PEER_MAP: dict[str, list[str]] = {
+    # Big Tech
+    "AAPL": ["MSFT", "GOOG", "AMZN", "META"],
+    "MSFT": ["AAPL", "GOOG", "AMZN", "ORCL"],
+    "GOOG": ["META", "MSFT", "AMZN", "SNAP"],
+    "GOOGL": ["META", "MSFT", "AMZN", "SNAP"],
+    "META": ["GOOG", "SNAP", "PINS", "NFLX"],
+    "AMZN": ["MSFT", "AAPL", "GOOG", "WMT"],
+    # Semiconductors
+    "NVDA": ["AMD", "INTC", "QCOM", "AVGO"],
+    "AMD": ["NVDA", "INTC", "QCOM", "AVGO"],
+    "INTC": ["AMD", "NVDA", "QCOM", "TSM"],
+    "QCOM": ["NVDA", "AMD", "INTC", "AVGO"],
+    "AVGO": ["NVDA", "AMD", "QCOM", "INTC"],
+    "TSM": ["INTC", "NVDA", "AMAT", "LRCX"],
+    "ASML": ["AMAT", "LRCX", "KLAC", "TER"],
+    "AMAT": ["ASML", "LRCX", "KLAC", "NVDA"],
+    "LRCX": ["AMAT", "ASML", "KLAC", "TER"],
+    # Enterprise Software
+    "ORCL": ["SAP", "MSFT", "IBM", "CRM"],
+    "SAP": ["ORCL", "MSFT", "IBM", "CRM"],
+    "CRM": ["MSFT", "ORCL", "SAP", "NOW"],
+    "NOW": ["CRM", "MSFT", "ORCL", "SAP"],
+    "IBM": ["ORCL", "MSFT", "HPE", "ACN"],
+    "CSCO": ["JNPR", "PANW", "FTNT", "HPE"],
+    "ADBE": ["CRM", "MSFT", "NOW", "WDAY"],
+    "WDAY": ["CRM", "ADBE", "SAP", "ORCL"],
+    "INTU": ["MSFT", "ADBE", "CRM", "NOW"],
+    # Cybersecurity
+    "PANW": ["FTNT", "CSCO", "CRWD", "OKTA"],
+    "CRWD": ["PANW", "FTNT", "OKTA", "ZS"],
+    "FTNT": ["PANW", "CRWD", "CSCO", "OKTA"],
+    # Cloud / SaaS
+    "SNOW": ["DBRX", "CRM", "MSFT", "GOOG"],
+    "DDOG": ["SNOW", "MSFT", "NOW", "SPLK"],
+    # E-commerce / Retail
+    "WMT": ["TGT", "AMZN", "COST", "KR"],
+    "TGT": ["WMT", "AMZN", "COST", "DLTR"],
+    "COST": ["WMT", "TGT", "BJ", "SFM"],
+    # Auto
+    "TSLA": ["GM", "F", "NIO", "RIVN"],
+    "GM": ["F", "TSLA", "STLA", "TM"],
+    "F": ["GM", "TSLA", "STLA", "TM"],
+    "TM": ["HMC", "GM", "F", "STLA"],
+    "RIVN": ["TSLA", "NIO", "LCID", "F"],
+    # Streaming / Media
+    "NFLX": ["DIS", "WBD", "PARA", "CMCSA"],
+    "DIS": ["NFLX", "WBD", "PARA", "CMCSA"],
+    "WBD": ["DIS", "NFLX", "PARA", "CMCSA"],
+    # Financials — Banks
+    "JPM": ["BAC", "WFC", "C", "GS"],
+    "BAC": ["JPM", "WFC", "C", "USB"],
+    "WFC": ["JPM", "BAC", "C", "USB"],
+    "C": ["JPM", "BAC", "WFC", "GS"],
+    "GS": ["MS", "JPM", "BAC", "C"],
+    "MS": ["GS", "JPM", "BAC", "C"],
+    "USB": ["JPM", "BAC", "WFC", "PNC"],
+    "PNC": ["USB", "JPM", "BAC", "WFC"],
+    # Financials — Payments
+    "V": ["MA", "AXP", "PYPL", "FIS"],
+    "MA": ["V", "AXP", "PYPL", "FIS"],
+    "PYPL": ["V", "MA", "AFRM", "SQ"],
+    "SQ": ["PYPL", "V", "MA", "AFRM"],
+    "AXP": ["V", "MA", "JPM", "C"],
+    # Pharma / Biotech
+    "JNJ": ["PFE", "ABBV", "MRK", "LLY"],
+    "PFE": ["JNJ", "MRNA", "ABBV", "MRK"],
+    "MRNA": ["PFE", "BNTX", "JNJ", "AZN"],
+    "LLY": ["JNJ", "PFE", "ABBV", "MRK"],
+    "ABBV": ["JNJ", "PFE", "MRK", "LLY"],
+    "MRK": ["JNJ", "PFE", "ABBV", "LLY"],
+    # Healthcare Services
+    "UNH": ["CI", "CVS", "HUM", "CNC"],
+    "CI": ["UNH", "CVS", "HUM", "CNC"],
+    "CVS": ["WBA", "UNH", "CI", "HUM"],
+    # Energy
+    "XOM": ["CVX", "BP", "SHEL", "COP"],
+    "CVX": ["XOM", "BP", "SHEL", "COP"],
+    "COP": ["XOM", "CVX", "EOG", "PXD"],
+    # Telecom
+    "T": ["VZ", "TMUS", "CMCSA", "CHTR"],
+    "VZ": ["T", "TMUS", "CMCSA", "CHTR"],
+    "TMUS": ["T", "VZ", "CMCSA", "CHTR"],
+    # Consumer Staples
+    "KO": ["PEP", "MNST", "STZ", "TAP"],
+    "PEP": ["KO", "MNST", "STZ", "TAP"],
+    "PG": ["UL", "CL", "CLX", "KMB"],
+    "UL": ["PG", "CL", "CLX", "KMB"],
+    # Restaurants
+    "MCD": ["SBUX", "YUM", "CMG", "DPZ"],
+    "SBUX": ["MCD", "CMG", "YUM", "DPZ"],
+    "CMG": ["MCD", "SBUX", "YUM", "DPZ"],
+    # Airlines
+    "DAL": ["UAL", "AAL", "LUV", "ALK"],
+    "UAL": ["DAL", "AAL", "LUV", "ALK"],
+    "AAL": ["DAL", "UAL", "LUV", "ALK"],
+    # REITs
+    "SPG": ["O", "AMT", "PLD", "WPC"],
+    "AMT": ["CCI", "SBAC", "PLD", "SPG"],
+    # Industrials
+    "BA": ["LMT", "RTX", "NOC", "GD"],
+    "LMT": ["BA", "RTX", "NOC", "GD"],
+    "GE": ["HON", "MMM", "RTX", "EMR"],
+    "HON": ["GE", "MMM", "RTX", "EMR"],
+    # Mining / Materials
+    "NEM": ["GOLD", "AEM", "FNV", "WPM"],
+    "GOLD": ["NEM", "AEM", "FNV", "WPM"],
+    # Crypto / Blockchain-adjacent
+    "COIN": ["MSTR", "MARA", "RIOT", "CLSK"],
+    "MSTR": ["COIN", "MARA", "RIOT", "CLSK"],
+    # Music / Audio
+    "SPOT": ["AAPL", "AMZN", "GOOG", "NFLX"],
+}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  Health check (Railway uses this to verify the service is running)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -754,6 +877,25 @@ async def cache_stats():
         "disk": disk_cache.stats(),
         "tickers": disk_cache.list_tickers(),
     }
+
+@app.get("/api/peers/{ticker}")
+async def get_peers(ticker: str):
+    """Return suggested peer companies for the comps view."""
+    tk = ticker.upper()
+    peers = PEER_MAP.get(tk, [])
+    return {"ticker": tk, "peers": peers}
+
+
+@app.post("/api/comps")
+async def get_comps(req: CompsRequest):
+    """Fetch financial data for multiple tickers for side-by-side comparison."""
+    tickers = [t.strip().upper() for t in req.tickers if t.strip()][:8]
+    if not tickers:
+        return {"error": "No tickers provided", "results": [], "resolved_tickers": []}
+    result = _handle_compare(tickers, year=req.year, form_type=req.form_type)
+    result["resolved_tickers"] = tickers
+    return result
+
 
 @app.delete("/api/cache/clear")
 async def cache_clear(ticker: str | None = None):

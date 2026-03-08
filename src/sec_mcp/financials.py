@@ -627,56 +627,186 @@ def _find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
 #  Segment extraction (revenue by product/service + geographic)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _extract_segments(facts_df: pd.DataFrame | None) -> dict:
+def _clean_segment_label(concept: str) -> str:
+    """Convert a CamelCase XBRL concept name to a readable label.
+
+    Strips common revenue prefixes and inserts spaces between words.
+    E.g. "AdvertisingRevenue" → "Advertising Revenue"
+         "OnlineStoresRevenue" → "Online Stores"
+    """
+    import re
+    # Strip long common prefixes first
+    prefixes = [
+        r"^RevenueFromContractWithCustomerExcludingAssessedTax",
+        r"^RevenueFromContractWithCustomer",
+        r"^NetRevenueFrom",
+        r"^ProductsAndServicesRevenue",
+        r"^SalesRevenue",
+    ]
+    label = concept
+    for p in prefixes:
+        cleaned = re.sub(p, "", label, flags=re.IGNORECASE)
+        if cleaned and len(cleaned) < len(label):
+            label = cleaned
+            break
+    # Strip trailing "Revenue"/"Revenues"/"Net" if there's still content
+    label = re.sub(r"Revenue[s]?$", "", label).strip()
+    # Insert spaces before uppercase letter that follows lowercase (CamelCase split)
+    label = re.sub(r"([a-z])([A-Z])", r"\1 \2", label)
+    # Handle sequences of caps followed by lower (e.g. "USRevenue" → "US Revenue")
+    label = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", label)
+    label = label.strip()
+    return label if label else concept
+
+
+def _extract_segments(
+    facts_df: pd.DataFrame | None,
+    target_fp: str | None = None,
+    target_fy: int | None = None,
+) -> dict:
     """Extract revenue and geographic segments from XBRL facts.
 
-    The companyfacts API doesn't include dimensional data directly,
-    so segment extraction is limited. We look for segment-related
-    concepts in the fact names themselves.
+    The SEC companyfacts API does not include XBRL dimensional context
+    (segment axes), so true segment breakdowns are unavailable for most
+    large-cap filers. However, some companies tag separate business/geo
+    revenue as distinct top-level XBRL concepts — those are captured here.
+
+    Returns a dict with:
+      revenue_segments:    [{segment, value, pct}, ...]  — product/business breakdown
+      geographic_segments: [{segment, value, pct}, ...]  — geographic breakdown
+      available:           bool — True if any non-trivial segment data found
+      note:                str  — human-readable explanation for UI
     """
-    result: dict = {"revenue_segments": [], "geographic_segments": []}
+    result: dict = {
+        "revenue_segments": [],
+        "geographic_segments": [],
+        "available": False,
+        "note": (
+            "Segment data requires XBRL dimensional context which is not "
+            "available in the SEC companyfacts API. View the filing directly "
+            "in the EDGAR Interactive Viewer for segment breakdowns."
+        ),
+    }
 
     if facts_df is None or facts_df.empty:
         return result
 
     concept_col = _find_column(facts_df, ("concept", "Concept", "tag", "Tag"))
     value_col = _find_column(facts_df, ("value", "Value", "val"))
+    end_col = _find_column(facts_df, ("end", "period"))
     if concept_col is None or value_col is None:
         return result
 
-    # Look for segment-related revenue concepts
-    rev_segment_patterns = [
-        "RevenueFrom", "SalesRevenue", "NetRevenue",
-        "ProductRevenue", "ServiceRevenue", "SubscriptionRevenue",
+    # Filter to current period facts when fp/fy are known
+    working = facts_df.copy()
+    if target_fp and "fp" in working.columns:
+        fp_rows = working[working["fp"].astype(str).str.upper() == target_fp.upper()]
+        if not fp_rows.empty:
+            working = fp_rows
+    if target_fy and "fy" in working.columns:
+        fy_rows = working[pd.to_numeric(working["fy"], errors="coerce") == target_fy]
+        if not fy_rows.empty:
+            working = fy_rows
+
+    # Sort newest first
+    if end_col and end_col in working.columns:
+        working = working.sort_values(end_col, ascending=False)
+
+    # ── Geographic concept name → display label mapping ────────────────────
+    GEO_MAP: list[tuple[str, str]] = [
+        ("GreaterChina",          "Greater China"),
+        ("ChinaMainland",         "China"),
+        ("UnitedStates",          "United States"),
+        ("Americas",              "Americas"),
+        ("NorthAmerica",          "North America"),
+        ("Europe",                "Europe"),
+        ("MiddleEastAndAfrica",   "Middle East & Africa"),
+        ("AsiaPacific",           "Asia Pacific"),
+        ("Japan",                 "Japan"),
+        ("Korea",                 "Korea"),
+        ("International",         "International"),
+        ("Domestic",              "Domestic"),
+        ("RestOfWorld",           "Rest of World"),
+        ("RestOfAsia",            "Rest of Asia"),
     ]
-    geo_patterns = [
-        "Americas", "Europe", "Asia", "International", "Domestic",
-        "UnitedStates", "China", "Japan",
+    GEO_KEYS = {k.lower() for k, _ in GEO_MAP}
+
+    # ── Revenue segment concept patterns (product/business) ───────────────
+    # These match standalone segment revenue tags some companies use.
+    REV_SEG_PATTERNS = [
+        # Tech product lines
+        "DataCenter", "ComputeAndNetworking", "Gaming", "Automotive",
+        "Professional", "Visualization", "CloudRevenue",
+        "OnlineStore", "PhysicalStore", "ThirdPartySeller",
+        "MacRevenue", "iPhoneRevenue", "iPadRevenue", "WearableRevenue",
+        "ProductRevenue", "ServiceRevenue",
+        # Media / ad
+        "AdvertisingRevenue", "SubscriptionRevenue",
+        # Broad segments
+        "OnlineStore", "Retail", "Wholesale",
+        # Generic
+        "OtherRevenue", "OtherSalesRevenue",
     ]
 
-    for _, row in facts_df.head(500).iterrows():  # Limit to avoid slow iteration
+    # Concept names that are almost certainly the TOTAL (not a sub-segment)
+    TOTAL_CONCEPTS = {
+        "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "Revenues", "Revenue", "NetRevenues", "TotalRevenues",
+        "SalesRevenueNet", "OperatingRevenue",
+    }
+
+    seen_rev: dict[str, float] = {}     # label → value (keep highest val for dedup)
+    seen_geo: dict[str, float] = {}
+
+    for _, row in working.iterrows():
         concept_name = str(row[concept_col])
         val = _safe(row[value_col])
-        if val is None:
+        if val is None or val <= 0:
+            continue
+        # Skip obvious total concepts
+        if concept_name in TOTAL_CONCEPTS:
             continue
 
-        # Check for revenue segments
-        for pattern in rev_segment_patterns:
-            if pattern.lower() in concept_name.lower():
-                result["revenue_segments"].append({
-                    "segment": concept_name,
-                    "value": val,
-                })
+        concept_lo = concept_name.lower()
+
+        # ── Geographic match ──────────────────────────────────────────────
+        matched_geo = False
+        for key, display in GEO_MAP:
+            if key.lower() in concept_lo:
+                # Prefer the larger value (handles multiple periods in same df)
+                if display not in seen_geo or val > seen_geo[display]:
+                    seen_geo[display] = val
+                matched_geo = True
                 break
 
-        # Check for geographic segments
-        for pattern in geo_patterns:
-            if pattern.lower() in concept_name.lower():
-                result["geographic_segments"].append({
-                    "segment": concept_name,
-                    "value": val,
-                })
-                break
+        if not matched_geo:
+            # ── Product/business segment match ────────────────────────────
+            for pat in REV_SEG_PATTERNS:
+                if pat.lower() in concept_lo:
+                    label = _clean_segment_label(concept_name) or pat
+                    if label not in seen_rev or val > seen_rev[label]:
+                        seen_rev[label] = val
+                    break
+
+    def _pct_list(d: dict[str, float]) -> list[dict]:
+        total = sum(d.values()) or 1
+        return sorted(
+            [{"segment": k, "value": v, "pct": round(v / total * 100, 1)}
+             for k, v in d.items()],
+            key=lambda x: x["value"],
+            reverse=True,
+        )
+
+    rev_list = _pct_list(seen_rev)
+    geo_list = _pct_list(seen_geo)
+
+    result["revenue_segments"] = rev_list
+    result["geographic_segments"] = geo_list
+
+    has_data = len(rev_list) >= 2 or len(geo_list) >= 2
+    result["available"] = has_data
+    if has_data:
+        result["note"] = ""
 
     return result
 
@@ -1447,7 +1577,9 @@ def extract_financials(
 
     # ── Segments ──────────────────────────────────────────────────────
     if include_segments:
-        result["segments"] = _extract_segments(facts_df)
+        result["segments"] = _extract_segments(
+            facts_df, target_fp=target_fp, target_fy=target_fy
+        )
 
     # ── Statements ────────────────────────────────────────────────────
     # Build statement tables from companyfacts data

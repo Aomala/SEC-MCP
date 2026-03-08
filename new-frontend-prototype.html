@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fineas.ai V2 — SEC Financial Intelligence</title>
+
+  <!-- Tailwind CSS via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts: Inter for UI, JetBrains Mono for numbers -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <!-- Chart.js for interactive charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7"></script>
+
+  <!-- Tailwind config: custom colors + fonts -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            brand: {
+              50: '#eef2ff', 100: '#e0e7ff', 200: '#c7d2fe',
+              300: '#a5b4fc', 400: '#818cf8', 500: '#6366f1',
+              600: '#4f46e5', 700: '#4338ca', 800: '#3730a3', 900: '#312e81',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* ============================================================
+       GLOBAL STYLES — Smooth scrolling, custom scrollbar, animations
+       ============================================================ */
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; margin: 0; background: #f8fafc; }
+
+    /* Custom thin scrollbar for all scrollable areas */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+    /* Fade-in animation for cards and sections */
+    @keyframes fadeInUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in { animation: fadeInUp 0.4s ease-out forwards; }
+
+    /* Staggered animation delays for card grids */
+    .stagger-1 { animation-delay: 0.05s; opacity: 0; }
+    .stagger-2 { animation-delay: 0.10s; opacity: 0; }
+    .stagger-3 { animation-delay: 0.15s; opacity: 0; }
+    .stagger-4 { animation-delay: 0.20s; opacity: 0; }
+    .stagger-5 { animation-delay: 0.25s; opacity: 0; }
+    .stagger-6 { animation-delay: 0.30s; opacity: 0; }
+
+    /* Subtle pulse for live data indicators */
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+    /* Monospace font for all financial numbers */
+    .font-num { font-family: 'JetBrains Mono', monospace; }
+
+    /* Gradient text utility */
+    .text-gradient {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    /* Hover lift effect for interactive cards */
+    .hover-lift {
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .hover-lift:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px -5px rgba(0, 0, 0, 0.08);
+    }
+
+    /* Chat message bubble animation */
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateX(8px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    .chat-msg { animation: slideIn 0.3s ease-out; }
+
+    /* Active nav indicator bar */
+    .nav-active {
+      position: relative;
+    }
+    .nav-active::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 60%;
+      background: #6366f1;
+      border-radius: 0 3px 3px 0;
+    }
+  </style>
+</head>
+
+<body class="bg-slate-50 text-gray-900 antialiased">
+
+  <!-- ============================================================
+       APP SHELL — Three-column layout: sidebar | main | chat
+       ============================================================ -->
+  <div id="app" class="flex h-screen overflow-hidden">
+
+    <!-- ============================================================
+         LEFT SIDEBAR — Brand, navigation, watchlist
+         ============================================================ -->
+    <aside id="sidebar" class="w-60 bg-white border-r border-gray-200 flex flex-col shrink-0 transition-all duration-300">
+
+      <!-- Brand Logo -->
+      <div class="px-5 py-4 border-b border-gray-100">
+        <div class="flex items-center gap-3">
+          <!-- Gradient logo mark -->
+          <div class="w-9 h-9 bg-gradient-to-br from-brand-500 to-violet-600 rounded-xl flex items-center justify-center shadow-lg shadow-brand-200/50">
+            <i data-lucide="trending-up" class="w-[18px] h-[18px] text-white"></i>
+          </div>
+          <div>
+            <span class="text-lg font-bold text-gradient">Fineas</span>
+            <span class="text-[11px] text-gray-400 block -mt-1 font-medium">.ai — SEC Intelligence</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Main Navigation -->
+      <nav class="flex-1 px-3 py-4 space-y-1">
+        <!-- Each nav item highlights on active state -->
+        <a href="#" class="nav-active flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium bg-brand-50 text-brand-600 transition-all">
+          <i data-lucide="layout-dashboard" class="w-[18px] h-[18px]"></i>
+          Dashboard
+        </a>
+        <a href="#" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all">
+          <i data-lucide="search" class="w-[18px] h-[18px]"></i>
+          Screener
+          <!-- "New" badge -->
+          <span class="ml-auto text-[10px] bg-brand-100 text-brand-600 px-1.5 py-0.5 rounded-full font-semibold">NEW</span>
+        </a>
+        <a href="#" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all">
+          <i data-lucide="git-compare" class="w-[18px] h-[18px]"></i>
+          Compare
+        </a>
+        <a href="#" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all">
+          <i data-lucide="file-text" class="w-[18px] h-[18px]"></i>
+          Filings
+        </a>
+        <a href="#" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all">
+          <i data-lucide="diff" class="w-[18px] h-[18px]"></i>
+          Filing Diff
+          <span class="ml-auto text-[10px] bg-brand-100 text-brand-600 px-1.5 py-0.5 rounded-full font-semibold">NEW</span>
+        </a>
+        <a href="#" class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-all">
+          <i data-lucide="bell" class="w-[18px] h-[18px]"></i>
+          Alerts
+        </a>
+
+        <!-- Divider -->
+        <div class="pt-4 pb-2">
+          <p class="px-3 text-[11px] text-gray-400 font-semibold uppercase tracking-wider">Watchlist</p>
+        </div>
+
+        <!-- Watchlist items — quick access to saved tickers -->
+        <div class="space-y-0.5">
+          <a href="#" class="flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition-all group">
+            <div class="flex items-center gap-2.5">
+              <div class="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-600">A</div>
+              <span class="font-medium text-gray-700">AAPL</span>
+            </div>
+            <span class="font-num text-xs text-emerald-600 font-medium">+1.04%</span>
+          </a>
+          <a href="#" class="flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition-all group">
+            <div class="flex items-center gap-2.5">
+              <div class="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-600">N</div>
+              <span class="font-medium text-gray-700">NVDA</span>
+            </div>
+            <span class="font-num text-xs text-emerald-600 font-medium">+3.21%</span>
+          </a>
+          <a href="#" class="flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition-all group">
+            <div class="flex items-center gap-2.5">
+              <div class="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-600">M</div>
+              <span class="font-medium text-gray-700">MSFT</span>
+            </div>
+            <span class="font-num text-xs text-red-500 font-medium">-0.42%</span>
+          </a>
+          <a href="#" class="flex items-center justify-between px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition-all group">
+            <div class="flex items-center gap-2.5">
+              <div class="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center text-[10px] font-bold text-gray-600">J</div>
+              <span class="font-medium text-gray-700">JPM</span>
+            </div>
+            <span class="font-num text-xs text-emerald-600 font-medium">+0.87%</span>
+          </a>
+        </div>
+      </nav>
+
+      <!-- Sidebar Footer — Settings + collapse -->
+      <div class="p-3 border-t border-gray-100">
+        <a href="#" class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-gray-50 transition-all">
+          <i data-lucide="settings" class="w-[16px] h-[16px]"></i>
+          Settings
+        </a>
+      </div>
+    </aside>
+
+    <!-- ============================================================
+         MAIN CONTENT — Header + scrollable dashboard
+         ============================================================ -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- TOP HEADER — Search bar + company info + controls -->
+      <header class="bg-white border-b border-gray-200 px-6 py-3 shrink-0">
+        <div class="flex items-center gap-4">
+
+          <!-- Global Search Input -->
+          <div class="relative flex-1 max-w-lg">
+            <i data-lucide="search" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400"></i>
+            <input
+              type="text"
+              placeholder="Search companies, tickers, or ask a question..."
+              class="w-full pl-10 pr-16 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent focus:bg-white transition-all"
+            />
+            <!-- Keyboard shortcut badge -->
+            <div class="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              <kbd class="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded border border-gray-200 font-mono">/</kbd>
+            </div>
+          </div>
+
+          <!-- Company Quick Info Pill -->
+          <div class="flex items-center gap-3 px-4 py-2 bg-gray-50 rounded-xl border border-gray-100">
+            <div class="flex items-center gap-2">
+              <!-- Ticker badge -->
+              <span class="px-2 py-0.5 text-xs font-bold bg-brand-100 text-brand-700 rounded-md">AAPL</span>
+              <span class="font-semibold text-sm text-gray-800">Apple Inc.</span>
+            </div>
+            <div class="h-4 w-px bg-gray-200"></div>
+            <!-- Live price with change -->
+            <div class="flex items-center gap-1.5">
+              <span class="font-bold text-sm font-num">$227.48</span>
+              <span class="text-xs font-medium text-emerald-600 flex items-center gap-0.5 font-num">
+                <i data-lucide="arrow-up-right" class="w-3 h-3"></i>
+                +1.04%
+              </span>
+              <!-- Live dot indicator -->
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot ml-1"></span>
+            </div>
+          </div>
+
+          <!-- Action Buttons Row -->
+          <div class="flex items-center gap-1.5">
+            <!-- Refresh data -->
+            <button class="p-2 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors" title="Refresh data">
+              <i data-lucide="refresh-cw" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- Export dropdown -->
+            <button class="p-2 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors" title="Export">
+              <i data-lucide="download" class="w-[18px] h-[18px]"></i>
+            </button>
+            <!-- Notifications -->
+            <button class="p-2 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors relative" title="Alerts">
+              <i data-lucide="bell" class="w-[18px] h-[18px]"></i>
+              <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"></span>
+            </button>
+            <!-- Toggle AI Chat -->
+            <button id="chatToggle" onclick="toggleChat()" class="p-2 rounded-lg bg-brand-50 text-brand-600 transition-colors" title="AI Analyst">
+              <i data-lucide="message-square" class="w-[18px] h-[18px]"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- View Tabs Row — Below search bar -->
+        <div class="flex items-center gap-4 mt-3">
+          <!-- Primary view tabs -->
+          <div class="flex gap-1">
+            <button class="flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white shadow-sm transition-all">
+              <i data-lucide="layout-dashboard" class="w-3.5 h-3.5"></i> Dashboard
+            </button>
+            <button class="flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100 transition-all">
+              <i data-lucide="table" class="w-3.5 h-3.5"></i> Statements
+            </button>
+            <button class="flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100 transition-all">
+              <i data-lucide="git-compare" class="w-3.5 h-3.5"></i> Comparables
+            </button>
+            <button class="flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100 transition-all">
+              <i data-lucide="book-open" class="w-3.5 h-3.5"></i> Filings
+            </button>
+            <button class="flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-lg text-gray-500 hover:bg-gray-100 transition-all">
+              <i data-lucide="zap" class="w-3.5 h-3.5"></i> AI Insights
+            </button>
+          </div>
+
+          <div class="flex-1"></div>
+
+          <!-- Period Toggle: Annual vs Quarterly -->
+          <div class="flex gap-0.5 bg-gray-100 rounded-lg p-0.5">
+            <button class="px-3 py-1.5 text-xs font-medium rounded-md bg-white text-brand-600 shadow-sm transition-all">Annual</button>
+            <button class="px-3 py-1.5 text-xs font-medium rounded-md text-gray-500 hover:text-gray-700 transition-all">Quarterly</button>
+          </div>
+
+          <!-- Form Type Selector -->
+          <select class="text-sm bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-brand-500 focus:outline-none cursor-pointer">
+            <option>10-K (Annual)</option>
+            <option>10-Q (Quarterly)</option>
+            <option>20-F (FPI Annual)</option>
+            <option>8-K (Current Report)</option>
+          </select>
+        </div>
+      </header>
+
+      <!-- ============================================================
+           SCROLLABLE DASHBOARD — All financial data lives here
+           ============================================================ -->
+      <div class="flex-1 flex overflow-hidden">
+        <div class="flex-1 overflow-y-auto p-6 space-y-6" id="dashboardContent">
+
+          <!-- ========================================
+               ROW 1: KPI Metric Cards (6 cards)
+               ======================================== -->
+          <div class="grid grid-cols-6 gap-4">
+
+            <!-- Card 1: Revenue -->
+            <div class="animate-fade-in stagger-1 bg-white rounded-xl border border-gray-100 p-4 hover-lift cursor-pointer group">
+              <div class="flex items-center justify-between mb-3">
+                <div class="p-2 rounded-lg bg-brand-50 text-brand-600 border border-brand-100">
+                  <i data-lucide="dollar-sign" class="w-4 h-4"></i>
+                </div>
+                <span class="text-xs font-medium text-emerald-600 flex items-center gap-0.5 font-num">
+                  <i data-lucide="arrow-up-right" class="w-3 h-3"></i> +2.0%
+                </span>
+              </div>
+              <div class="text-2xl font-bold text-gray-900 mb-1 group-hover:text-brand-600 transition-colors font-num">$391.0B</div>
+              <div class="text-[11px] text-gray-500 font-medium uppercase tracking-wider">Revenue</div>
+            </div>
+
+            <!-- Card 2: Net Income -->
+            <div class="animate-fade-in stagger-2 bg-white rounded-xl border border-gray-100 p-4 hover-lift cursor-pointer group">
+              <div class="flex items-center justify-between mb-3">
+                <div class="p-2 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">
+                  <i data-lucide="trending-up" class="w-4 h-4"></i>
+                </div>
+                <span class="text-xs font-medium text-red-500 flex items-center gap-0.5 font-num">
+                  <i data-lucide="arrow-down-right" class="w-3 h-3"></i> -3.4%
+                </span>
+              </div>
+              <div class="text-2xl font-bold text-gray-900 mb-1 group-hover:text-emerald-600 transition-colors font-num">$93.7B</div>
+              <div class="text-[11px] text-gray-500 font-medium uppercase tracking-wider">Net Income</div>
+            </div>
+
+            <!-- Card 3: Free Cash Flow -->
+            <div class="animate-fade-in stagger-3 bg-white rounded-xl border border-gray-100 p-4 hover-lift cursor-pointer group">
+              <div class="flex items-center justify-between mb-3">
+                <div class="p-2 rounded-lg bg-blue-50 text-blue-600 border border-blue-100">
+                  <i data-lucide="activity" class="w-4 h-4"></i>
+                </div>
+                <span class="text-xs font-medium text-emerald-600 flex items-center gap-0.5 font-num">
+                  <i data-lucide="arrow-up-right" class="w-3 h-3"></i> +0.8%
+                </span>
+              </div>
+              <div class="text-2xl font-bold text-gray-900 mb-1 group-hover:text-blue-600 transition-colors font-num">$111.4B</div>
+              <div class="text-[11px] text-gray-500 font-medium uppercase tracking-wider">Free Cash Flow</div>
+            </div>
+
+            <!-- Card 4: Gross Margin -->
+            <div class="animate-fade-in stagger-4 bg-white rounded-xl border border-gray-100 p-4 hover-lift cursor-pointer group">
+              <div class="flex items-center justify-between mb-3">
+                <div class="p-2 rounded-lg bg-violet-50 text-violet-600 border border-violet-100">
+                  <i data-lucide="pie-chart" class="w-4 h-4"></i>
+                </div>
+                <span class="text-xs font-medium text-emerald-600 flex items-center gap-0.5 font-num">
+                  <i data-lucide="arrow-up-right" class="w-3 h-3"></i> +0.6pp
+                </span>
+              </div>
+              <div class="text-2xl font-bold text-gray-900 mb-1 group-hover:text-violet-600 transition-colors font-num">46.2%</div>
+              <div class="text-[11px] text-gray-500 font-medium uppercase tracking-wider">Gross Margin</div>
+            </div>
+
+            <!-- Card 5: Market Cap -->
+            <div class="animate-fade-in stagger-5 bg-white rounded-xl border border-gray-100 p-4 hover-lift cursor-pointer group">
+              <div class="flex items-center justify-between mb-3">
+                <div class="p-2 rounded-lg bg-amber-50 text-amber-600 border border-amber-100">
+                  <i data-lucide="globe" class="w-4 h-4"></i>
+                </div>
+                <span class="text-xs font-medium text-emerald-600 flex items-center gap-0.5 font-num">
+                  <i data-lucide="arrow-up-right" class="w-3 h-3"></i> +1.04%
+                </span>
+              </div>
+              <div class="text-2xl font-bold text-gray-900 mb-1 group-hover:text-amber-600 transition-colors font-num">$3.42T</div>
+              <div class="text-[11px] text-gray-500 font-medium uppercase tracking-wider">Market Cap</div>
+            </div>
+
+            <!-- Card 6: EPS -->
+            <div class="animate-fade-in stagger-6 bg-white rounded-xl border border-gray-100 p-4 hover-lift cursor-pointer group">
+              <div class="flex items-center justify-between mb-3">
+                <div class="p-2 rounded-lg bg-rose-50 text-rose-600 border border-rose-100">
+                  <i data-lucide="users" class="w-4 h-4"></i>
+                </div>
+                <span class="text-xs font-medium text-red-500 flex items-center gap-0.5 font-num">
+                  <i data-lucide="arrow-down-right" class="w-3 h-3"></i> -2.1%
+                </span>
+              </div>
+              <div class="text-2xl font-bold text-gray-900 mb-1 group-hover:text-rose-600 transition-colors font-num">$6.08</div>
+              <div class="text-[11px] text-gray-500 font-medium uppercase tracking-wider">EPS (Diluted)</div>
+            </div>
+          </div>
+
+          <!-- ========================================
+               ROW 2: Revenue Trend Chart + Segments
+               ======================================== -->
+          <div class="grid grid-cols-3 gap-6">
+
+            <!-- Revenue & Profitability Trend (2/3 width) -->
+            <div class="col-span-2 bg-white rounded-xl border border-gray-100 p-5 animate-fade-in" style="animation-delay:0.15s; opacity:0;">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="text-base font-semibold text-gray-900">Revenue & Profitability Trend</h3>
+                  <p class="text-xs text-gray-500 mt-0.5">5-year annual data from SEC XBRL filings</p>
+                </div>
+                <div class="flex gap-2">
+                  <span class="px-2 py-0.5 text-[11px] font-medium bg-brand-50 text-brand-700 rounded-full">Revenue</span>
+                  <span class="px-2 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-700 rounded-full">Net Income</span>
+                  <span class="px-2 py-0.5 text-[11px] font-medium bg-blue-50 text-blue-700 rounded-full">FCF</span>
+                </div>
+              </div>
+              <!-- Chart.js canvas -->
+              <canvas id="revenueChart" height="140"></canvas>
+            </div>
+
+            <!-- Revenue Segments Donut (1/3 width) -->
+            <div class="bg-white rounded-xl border border-gray-100 p-5 animate-fade-in" style="animation-delay:0.20s; opacity:0;">
+              <div class="mb-4">
+                <h3 class="text-base font-semibold text-gray-900">Revenue Segments</h3>
+                <p class="text-xs text-gray-500 mt-0.5">FY2024 product breakdown</p>
+              </div>
+              <canvas id="segmentChart" height="160"></canvas>
+              <!-- Segment legend -->
+              <div class="space-y-2 mt-4" id="segmentLegend"></div>
+            </div>
+          </div>
+
+          <!-- ========================================
+               ROW 3: Margin Trend + Peer Comparison
+               ======================================== -->
+          <div class="grid grid-cols-2 gap-6">
+
+            <!-- Margin Trend -->
+            <div class="bg-white rounded-xl border border-gray-100 p-5 animate-fade-in" style="animation-delay:0.25s; opacity:0;">
+              <div class="mb-4">
+                <h3 class="text-base font-semibold text-gray-900">Margin Trend</h3>
+                <p class="text-xs text-gray-500 mt-0.5">Net margin % over 5 fiscal years</p>
+              </div>
+              <canvas id="marginChart" height="130"></canvas>
+            </div>
+
+            <!-- Peer Comparison Table -->
+            <div class="bg-white rounded-xl border border-gray-100 p-5 animate-fade-in" style="animation-delay:0.30s; opacity:0;">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="text-base font-semibold text-gray-900">Peer Comparison</h3>
+                  <p class="text-xs text-gray-500 mt-0.5">Key metrics vs industry peers</p>
+                </div>
+                <button class="text-xs text-brand-600 font-medium hover:underline flex items-center gap-1">
+                  <i data-lucide="plus" class="w-3 h-3"></i> Add Peer
+                </button>
+              </div>
+              <!-- Comparison Table -->
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-[11px] text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                    <th class="pb-3 font-medium">Company</th>
+                    <th class="pb-3 font-medium text-right">Revenue</th>
+                    <th class="pb-3 font-medium text-right">Net Margin</th>
+                    <th class="pb-3 font-medium text-right">P/E</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- Active company — highlighted row -->
+                  <tr class="border-b border-gray-50 bg-brand-50/50">
+                    <td class="py-2.5">
+                      <span class="font-semibold text-brand-600">AAPL</span>
+                      <span class="text-gray-400 ml-1.5 text-xs">Apple</span>
+                    </td>
+                    <td class="py-2.5 text-right font-medium font-num">$391.0B</td>
+                    <td class="py-2.5 text-right font-num">24.0%</td>
+                    <td class="py-2.5 text-right font-num">36.5x</td>
+                  </tr>
+                  <!-- Peer rows -->
+                  <tr class="border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors">
+                    <td class="py-2.5">
+                      <span class="font-medium text-gray-900">MSFT</span>
+                      <span class="text-gray-400 ml-1.5 text-xs">Microsoft</span>
+                    </td>
+                    <td class="py-2.5 text-right font-medium font-num">$245.1B</td>
+                    <td class="py-2.5 text-right font-num text-emerald-600">36.4%</td>
+                    <td class="py-2.5 text-right font-num">34.2x</td>
+                  </tr>
+                  <tr class="border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors">
+                    <td class="py-2.5">
+                      <span class="font-medium text-gray-900">GOOG</span>
+                      <span class="text-gray-400 ml-1.5 text-xs">Alphabet</span>
+                    </td>
+                    <td class="py-2.5 text-right font-medium font-num">$307.4B</td>
+                    <td class="py-2.5 text-right font-num">27.6%</td>
+                    <td class="py-2.5 text-right font-num text-emerald-600">22.8x</td>
+                  </tr>
+                  <tr class="border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors">
+                    <td class="py-2.5">
+                      <span class="font-medium text-gray-900">AMZN</span>
+                      <span class="text-gray-400 ml-1.5 text-xs">Amazon</span>
+                    </td>
+                    <td class="py-2.5 text-right font-medium font-num">$574.8B</td>
+                    <td class="py-2.5 text-right font-num text-red-500">8.0%</td>
+                    <td class="py-2.5 text-right font-num text-red-500">42.1x</td>
+                  </tr>
+                  <tr class="hover:bg-gray-50 cursor-pointer transition-colors">
+                    <td class="py-2.5">
+                      <span class="font-medium text-gray-900">META</span>
+                      <span class="text-gray-400 ml-1.5 text-xs">Meta</span>
+                    </td>
+                    <td class="py-2.5 text-right font-medium font-num">$134.9B</td>
+                    <td class="py-2.5 text-right font-num text-emerald-600">35.6%</td>
+                    <td class="py-2.5 text-right font-num">24.5x</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ========================================
+               ROW 4: Data Quality + Provenance Bar
+               ======================================== -->
+          <div class="bg-white rounded-xl border border-gray-100 p-4 animate-fade-in" style="animation-delay:0.35s; opacity:0;">
+            <div class="flex items-center gap-3 flex-wrap">
+              <!-- Validation status badge -->
+              <div class="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 rounded-lg border border-emerald-100">
+                <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-600"></i>
+                <span class="text-sm font-medium text-emerald-700">All 5 validation checks passed</span>
+              </div>
+              <!-- Filing source badge -->
+              <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-100">
+                <i data-lucide="database" class="w-3.5 h-3.5 text-gray-500"></i>
+                <span class="text-sm text-gray-600">Source: <span class="font-medium">10-K FY2024</span> XBRL (Accession: 0000320193-24-000123)</span>
+              </div>
+              <!-- Extraction time badge -->
+              <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-100">
+                <i data-lucide="clock" class="w-3.5 h-3.5 text-gray-500"></i>
+                <span class="text-sm text-gray-600">Extracted <span class="font-medium">2 min ago</span> · 4-pass resolution</span>
+              </div>
+              <!-- Industry classification -->
+              <div class="flex items-center gap-2 px-3 py-1.5 bg-brand-50 rounded-lg border border-brand-100">
+                <i data-lucide="layers" class="w-3.5 h-3.5 text-brand-600"></i>
+                <span class="text-sm text-brand-700">Industry: <span class="font-medium">Standard (SIC 3571)</span></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========================================
+               ROW 5: Financial Statements Preview
+               ======================================== -->
+          <div class="bg-white rounded-xl border border-gray-100 p-5 animate-fade-in" style="animation-delay:0.40s; opacity:0;">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="text-base font-semibold text-gray-900">Income Statement Summary</h3>
+                <p class="text-xs text-gray-500 mt-0.5">FY2024 vs FY2023 comparison</p>
+              </div>
+              <button class="text-xs text-brand-600 font-medium hover:underline flex items-center gap-1">
+                View Full Statement <i data-lucide="arrow-right" class="w-3 h-3"></i>
+              </button>
+            </div>
+            <!-- Statement comparison table -->
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-[11px] text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                  <th class="pb-3 font-medium">Line Item</th>
+                  <th class="pb-3 font-medium text-right">FY2024</th>
+                  <th class="pb-3 font-medium text-right">FY2023</th>
+                  <th class="pb-3 font-medium text-right">Change</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="border-b border-gray-50 font-medium">
+                  <td class="py-2.5 text-gray-900">Total Revenue</td>
+                  <td class="py-2.5 text-right font-num">$391,035M</td>
+                  <td class="py-2.5 text-right font-num text-gray-500">$383,285M</td>
+                  <td class="py-2.5 text-right font-num text-emerald-600">+2.0%</td>
+                </tr>
+                <tr class="border-b border-gray-50">
+                  <td class="py-2.5 text-gray-700 pl-4">Cost of Revenue</td>
+                  <td class="py-2.5 text-right font-num">$210,352M</td>
+                  <td class="py-2.5 text-right font-num text-gray-500">$207,270M</td>
+                  <td class="py-2.5 text-right font-num text-red-500">+1.5%</td>
+                </tr>
+                <tr class="border-b border-gray-50 font-medium">
+                  <td class="py-2.5 text-gray-900">Gross Profit</td>
+                  <td class="py-2.5 text-right font-num">$180,683M</td>
+                  <td class="py-2.5 text-right font-num text-gray-500">$176,015M</td>
+                  <td class="py-2.5 text-right font-num text-emerald-600">+2.7%</td>
+                </tr>
+                <tr class="border-b border-gray-50 font-medium">
+                  <td class="py-2.5 text-gray-900">Operating Income</td>
+                  <td class="py-2.5 text-right font-num">$123,216M</td>
+                  <td class="py-2.5 text-right font-num text-gray-500">$118,658M</td>
+                  <td class="py-2.5 text-right font-num text-emerald-600">+3.8%</td>
+                </tr>
+                <tr class="font-medium">
+                  <td class="py-2.5 text-gray-900">Net Income</td>
+                  <td class="py-2.5 text-right font-num">$93,736M</td>
+                  <td class="py-2.5 text-right font-num text-gray-500">$96,995M</td>
+                  <td class="py-2.5 text-right font-num text-red-500">-3.4%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+
+        <!-- ============================================================
+             RIGHT SIDEBAR — AI Chat Panel (toggleable)
+             ============================================================ -->
+        <aside id="chatPanel" class="w-96 bg-white border-l border-gray-200 flex flex-col shrink-0 transition-all duration-300">
+
+          <!-- Chat Header -->
+          <div class="p-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 bg-gradient-to-br from-brand-500 to-violet-600 rounded-lg flex items-center justify-center shadow-md shadow-brand-200/50">
+                <i data-lucide="zap" class="w-4 h-4 text-white"></i>
+              </div>
+              <div>
+                <span class="font-semibold text-sm text-gray-900">AI Analyst</span>
+                <span class="text-[11px] text-gray-400 block">Powered by Claude · Context-aware</span>
+              </div>
+            </div>
+            <button onclick="toggleChat()" class="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <!-- Chat Messages — Scrollable -->
+          <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chatMessages">
+
+            <!-- System welcome message -->
+            <div class="chat-msg flex justify-start">
+              <div class="max-w-[85%] rounded-2xl rounded-bl-md bg-gray-100 px-4 py-3 text-sm leading-relaxed text-gray-800">
+                <p>Welcome! I have <strong>AAPL FY2024</strong> financials loaded. Ask me anything about Apple's performance, risks, or comparisons.</p>
+                <div class="mt-2 pt-2 border-t border-gray-200/50">
+                  <p class="text-[11px] text-gray-500 font-medium">Data loaded: 10-K FY2024 · 30 metrics · 5 segments</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- User message -->
+            <div class="chat-msg flex justify-end">
+              <div class="max-w-[85%] rounded-2xl rounded-br-md bg-brand-600 px-4 py-3 text-sm leading-relaxed text-white">
+                What are the key risks for Apple right now?
+              </div>
+            </div>
+
+            <!-- AI response with sources -->
+            <div class="chat-msg flex justify-start">
+              <div class="max-w-[85%] rounded-2xl rounded-bl-md bg-gray-100 px-4 py-3 text-sm leading-relaxed text-gray-800">
+                <p>Based on Apple's FY2024 10-K filing, here are the <strong>key risk factors</strong>:</p>
+                <p class="mt-2"><strong>1. Revenue Concentration</strong> — iPhone still represents 51.3% of total revenue. Any supply chain disruption or demand shift materially impacts results.</p>
+                <p class="mt-2"><strong>2. China Exposure</strong> — Greater China revenue declined ~4% YoY amid geopolitical tensions and local competition from Huawei.</p>
+                <p class="mt-2"><strong>3. Leverage Strategy</strong> — D/E ratio of 5.41x is intentional (tax-efficient debt + buybacks), but limits flexibility in a downturn.</p>
+                <p class="mt-2"><strong>4. Regulatory</strong> — EU DMA compliance, App Store commission changes could pressure Services margin (currently the highest-margin segment).</p>
+                <!-- Source citations -->
+                <div class="mt-3 pt-2 border-t border-gray-200/50">
+                  <p class="text-[11px] text-gray-500 font-medium mb-1">Sources:</p>
+                  <p class="text-[11px] text-brand-500 flex items-center gap-1 cursor-pointer hover:underline">
+                    <i data-lucide="external-link" class="w-2.5 h-2.5"></i> 10-K FY2024, Item 1A: Risk Factors
+                  </p>
+                  <p class="text-[11px] text-brand-500 flex items-center gap-1 cursor-pointer hover:underline mt-0.5">
+                    <i data-lucide="external-link" class="w-2.5 h-2.5"></i> XBRL Revenue Segments (us-gaap)
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Action Chips -->
+          <div class="px-4 py-2 flex flex-wrap gap-1.5 shrink-0 border-t border-gray-50">
+            <button class="px-2.5 py-1 text-[11px] bg-gray-50 border border-gray-200 rounded-full text-gray-600 hover:bg-brand-50 hover:text-brand-600 hover:border-brand-200 transition-all">
+              Executive Summary
+            </button>
+            <button class="px-2.5 py-1 text-[11px] bg-gray-50 border border-gray-200 rounded-full text-gray-600 hover:bg-brand-50 hover:text-brand-600 hover:border-brand-200 transition-all">
+              Key Risks
+            </button>
+            <button class="px-2.5 py-1 text-[11px] bg-gray-50 border border-gray-200 rounded-full text-gray-600 hover:bg-brand-50 hover:text-brand-600 hover:border-brand-200 transition-all">
+              Revenue Trend
+            </button>
+            <button class="px-2.5 py-1 text-[11px] bg-gray-50 border border-gray-200 rounded-full text-gray-600 hover:bg-brand-50 hover:text-brand-600 hover:border-brand-200 transition-all">
+              Compare Peers
+            </button>
+            <button class="px-2.5 py-1 text-[11px] bg-amber-50 border border-amber-200 rounded-full text-amber-700 hover:bg-amber-100 transition-all font-medium">
+              Filing Diff ✨
+            </button>
+          </div>
+
+          <!-- Chat Input -->
+          <div class="p-3 border-t border-gray-100 shrink-0">
+            <form onsubmit="handleChat(event)" class="flex gap-2">
+              <input
+                id="chatInput"
+                type="text"
+                placeholder="Ask about AAPL financials..."
+                class="flex-1 px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white transition-all"
+              />
+              <button
+                type="submit"
+                class="px-4 py-2.5 bg-brand-600 text-white rounded-xl text-sm font-medium hover:bg-brand-700 transition-colors shadow-sm shadow-brand-200/50"
+              >
+                Send
+              </button>
+            </form>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============================================================
+       JAVASCRIPT — Charts, interactivity, chat
+       ============================================================ -->
+  <script>
+    // Initialize Lucide icons after DOM loads
+    document.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      initCharts();
+    });
+
+    // ========================================
+    // CHART INITIALIZATION
+    // ========================================
+    function initCharts() {
+      // --- Chart 1: Revenue & Profitability Trend (Bar + Line combo) ---
+      const revenueCtx = document.getElementById('revenueChart').getContext('2d');
+      new Chart(revenueCtx, {
+        type: 'bar',
+        data: {
+          labels: ['FY2020', 'FY2021', 'FY2022', 'FY2023', 'FY2024'],
+          datasets: [
+            {
+              label: 'Revenue ($B)',
+              data: [274.5, 365.8, 394.3, 383.3, 391.0],
+              backgroundColor: 'rgba(99, 102, 241, 0.15)',    // Brand color at 15% opacity
+              borderColor: '#6366f1',
+              borderWidth: 2,
+              borderRadius: 6,
+              order: 2,    // Bars render behind lines
+            },
+            {
+              label: 'Net Income ($B)',
+              data: [57.4, 94.7, 99.8, 97.0, 93.7],
+              type: 'line',
+              borderColor: '#10b981',
+              backgroundColor: 'rgba(16, 185, 129, 0.1)',
+              borderWidth: 2.5,
+              pointRadius: 4,
+              pointBackgroundColor: '#10b981',
+              tension: 0.3,    // Smooth curve
+              fill: false,
+              order: 1,
+            },
+            {
+              label: 'FCF ($B)',
+              data: [73.4, 93.0, 111.4, 110.5, 111.4],
+              type: 'line',
+              borderColor: '#3b82f6',
+              borderWidth: 2.5,
+              borderDash: [5, 5],    // Dashed line for differentiation
+              pointRadius: 4,
+              pointBackgroundColor: '#3b82f6',
+              tension: 0.3,
+              fill: false,
+              order: 0,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },    // We use custom badges instead
+            tooltip: {
+              backgroundColor: 'white',
+              titleColor: '#1e293b',
+              bodyColor: '#475569',
+              borderColor: '#e2e8f0',
+              borderWidth: 1,
+              cornerRadius: 12,
+              padding: 12,
+              callbacks: {
+                label: (ctx) => `${ctx.dataset.label}: $${ctx.parsed.y.toFixed(1)}B`
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { color: '#94a3b8', font: { size: 11, family: 'Inter' } }
+            },
+            y: {
+              grid: { color: '#f1f5f9' },
+              ticks: {
+                color: '#94a3b8',
+                font: { size: 11, family: 'JetBrains Mono' },
+                callback: (v) => `$${v}B`
+              }
+            }
+          }
+        }
+      });
+
+      // --- Chart 2: Revenue Segments Donut ---
+      const segmentCtx = document.getElementById('segmentChart').getContext('2d');
+      const segmentData = [
+        { name: 'iPhone', value: 200583, pct: 51.3, color: '#6366f1' },
+        { name: 'Services', value: 96169, pct: 24.6, color: '#10b981' },
+        { name: 'Wearables', value: 36999, pct: 9.5, color: '#f59e0b' },
+        { name: 'Mac', value: 29984, pct: 7.7, color: '#ef4444' },
+        { name: 'iPad', value: 28300, pct: 7.2, color: '#8b5cf6' },
+      ];
+      new Chart(segmentCtx, {
+        type: 'doughnut',
+        data: {
+          labels: segmentData.map(s => s.name),
+          datasets: [{
+            data: segmentData.map(s => s.value),
+            backgroundColor: segmentData.map(s => s.color),
+            borderWidth: 3,
+            borderColor: '#ffffff',
+            hoverOffset: 6,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '62%',    // Donut hole size
+          plugins: {
+            legend: { display: false },    // Custom legend below
+            tooltip: {
+              backgroundColor: 'white',
+              titleColor: '#1e293b',
+              bodyColor: '#475569',
+              borderColor: '#e2e8f0',
+              borderWidth: 1,
+              cornerRadius: 12,
+              padding: 12,
+              callbacks: {
+                label: (ctx) => {
+                  const seg = segmentData[ctx.dataIndex];
+                  return `${seg.name}: $${(seg.value / 1000).toFixed(1)}B (${seg.pct}%)`;
+                }
+              }
+            }
+          }
+        }
+      });
+
+      // Build segment legend dynamically
+      const legendEl = document.getElementById('segmentLegend');
+      segmentData.forEach(seg => {
+        legendEl.innerHTML += `
+          <div class="flex items-center justify-between text-sm">
+            <div class="flex items-center gap-2">
+              <div class="w-2.5 h-2.5 rounded-full shrink-0" style="background:${seg.color}"></div>
+              <span class="text-gray-600">${seg.name}</span>
+            </div>
+            <span class="font-medium text-gray-900 font-num">${seg.pct}%</span>
+          </div>
+        `;
+      });
+
+      // --- Chart 3: Net Margin Trend (Area chart) ---
+      const marginCtx = document.getElementById('marginChart').getContext('2d');
+      const marginGrad = marginCtx.createLinearGradient(0, 0, 0, 200);
+      marginGrad.addColorStop(0, 'rgba(99, 102, 241, 0.2)');    // Brand at top
+      marginGrad.addColorStop(1, 'rgba(99, 102, 241, 0)');      // Transparent at bottom
+      new Chart(marginCtx, {
+        type: 'line',
+        data: {
+          labels: ['FY2020', 'FY2021', 'FY2022', 'FY2023', 'FY2024'],
+          datasets: [{
+            label: 'Net Margin',
+            data: [20.9, 25.9, 25.3, 25.3, 24.0],
+            borderColor: '#6366f1',
+            backgroundColor: marginGrad,
+            borderWidth: 2.5,
+            pointRadius: 5,
+            pointBackgroundColor: '#6366f1',
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 2,
+            tension: 0.3,
+            fill: true,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: 'white',
+              titleColor: '#1e293b',
+              bodyColor: '#475569',
+              borderColor: '#e2e8f0',
+              borderWidth: 1,
+              cornerRadius: 12,
+              padding: 12,
+              callbacks: { label: (ctx) => `Net Margin: ${ctx.parsed.y}%` }
+            }
+          },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { color: '#94a3b8', font: { size: 11 } }
+            },
+            y: {
+              min: 18, max: 28,
+              grid: { color: '#f1f5f9' },
+              ticks: {
+                color: '#94a3b8',
+                font: { size: 11, family: 'JetBrains Mono' },
+                callback: (v) => `${v}%`
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // ========================================
+    // CHAT FUNCTIONALITY
+    // ========================================
+
+    // Toggle chat sidebar visibility
+    function toggleChat() {
+      const panel = document.getElementById('chatPanel');
+      const btn = document.getElementById('chatToggle');
+      if (panel.style.display === 'none') {
+        panel.style.display = 'flex';
+        btn.className = 'p-2 rounded-lg bg-brand-50 text-brand-600 transition-colors';
+      } else {
+        panel.style.display = 'none';
+        btn.className = 'p-2 rounded-lg hover:bg-gray-100 text-gray-400 transition-colors';
+      }
+    }
+
+    // Handle chat form submission
+    function handleChat(e) {
+      e.preventDefault();
+      const input = document.getElementById('chatInput');
+      const msg = input.value.trim();
+      if (!msg) return;
+
+      const container = document.getElementById('chatMessages');
+
+      // Add user message bubble
+      container.innerHTML += `
+        <div class="chat-msg flex justify-end">
+          <div class="max-w-[85%] rounded-2xl rounded-br-md bg-brand-600 px-4 py-3 text-sm leading-relaxed text-white">
+            ${escapeHtml(msg)}
+          </div>
+        </div>
+      `;
+
+      input.value = '';
+
+      // Simulate "thinking" indicator
+      const thinkingId = 'thinking-' + Date.now();
+      container.innerHTML += `
+        <div id="${thinkingId}" class="chat-msg flex justify-start">
+          <div class="max-w-[85%] rounded-2xl rounded-bl-md bg-gray-100 px-4 py-3 text-sm text-gray-500">
+            <div class="flex items-center gap-2">
+              <div class="flex gap-1">
+                <span class="w-1.5 h-1.5 rounded-full bg-brand-400 pulse-dot"></span>
+                <span class="w-1.5 h-1.5 rounded-full bg-brand-400 pulse-dot" style="animation-delay:0.3s"></span>
+                <span class="w-1.5 h-1.5 rounded-full bg-brand-400 pulse-dot" style="animation-delay:0.6s"></span>
+              </div>
+              <span class="text-xs">Analyzing XBRL data...</span>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Auto-scroll to bottom
+      container.scrollTop = container.scrollHeight;
+
+      // Simulate AI response after 1.5s
+      setTimeout(() => {
+        const thinking = document.getElementById(thinkingId);
+        if (thinking) thinking.remove();
+
+        container.innerHTML += `
+          <div class="chat-msg flex justify-start">
+            <div class="max-w-[85%] rounded-2xl rounded-bl-md bg-gray-100 px-4 py-3 text-sm leading-relaxed text-gray-800">
+              <p>I've analyzed the relevant data from Apple's XBRL filings. Based on the metrics and filing text, here's my analysis of your question.</p>
+              <p class="mt-2">The financial data shows consistent patterns across the last 5 fiscal years, with notable trends in margin compression and services growth.</p>
+              <div class="mt-2 pt-2 border-t border-gray-200/50">
+                <p class="text-[11px] text-gray-500 font-medium">Source: 10-K FY2024 XBRL · 4-pass extraction</p>
+              </div>
+            </div>
+          </div>
+        `;
+        container.scrollTop = container.scrollHeight;
+      }, 1500);
+    }
+
+    // Escape HTML to prevent XSS in chat messages
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+  </script>
+
+</body>
+</html>
