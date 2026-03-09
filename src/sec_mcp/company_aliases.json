@@ -242,5 +242,20 @@
   "intel corp": "INTC",
   "philip morris international inc.": "PM",
   "meta platforms, inc.": "META",
-  "amazon com inc": "AMZN"
+  "amazon com inc": "AMZN",
+  "lowes companies inc": "LOW",
+  "five below, inc": "FIVE",
+  "freeport-mcmoran inc": "FCX",
+  "advanced micro devices inc": "AMD",
+  "applied materials inc /de": "AMAT",
+  "qualcomm inc/de": "QCOM",
+  "texas instruments inc": "TXN",
+  "bank of america corp /de/": "BAC",
+  "wells fargo & company/mn": "WFC",
+  "citigroup inc": "C",
+  "walker & dunlop, inc.": "WD",
+  "nxp semiconductors n.v.": "NXPI",
+  "kla corp": "KLAC",
+  "lam research corp": "LRCX",
+  "spotify technology s.a.": "SPOT"
 }

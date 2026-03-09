@@ -144,7 +144,7 @@ function acceptTos() {
 }
 
 // ========================================
-// DATE RANGE & FMP HISTORY
+// DATE RANGE (controls SEC XBRL chart period display)
 // ========================================
 
 function setDateRange(years) {
@@ -152,7 +152,8 @@ function setDateRange(years) {
   document.querySelectorAll('.range-presets .range-btn').forEach(b => {
     b.classList.toggle('active', parseInt(b.dataset.range) === years);
   });
-  if (_tk) loadFmpHistory();
+  // Re-render the XBRL revenue chart with the current data
+  if (_curData) renderRevenueChart(_curData);
 }
 
 function setChartPeriod(period) {
@@ -160,7 +161,7 @@ function setChartPeriod(period) {
   document.querySelectorAll('.range-period .range-btn').forEach(b => {
     b.classList.toggle('active', b.dataset.period === period);
   });
-  if (_tk) loadFmpHistory();
+  if (_curData) renderRevenueChart(_curData);
 }
 
 function applyCustomRange() {
@@ -169,135 +170,76 @@ function applyCustomRange() {
   if (from && to && parseInt(from) <= parseInt(to)) {
     _chartRange = -1; // custom
     document.querySelectorAll('.range-presets .range-btn').forEach(b => b.classList.remove('active'));
-    if (_tk) loadFmpHistory(from + '-01-01', to + '-12-31');
+    if (_curData) renderRevenueChart(_curData);
   }
 }
 
-function loadFmpHistory(dateFrom, dateTo) {
+// ========================================
+// FMP FOOTNOTE COMPARISON (background load only)
+// ========================================
+
+function loadFmpFootnote() {
   if (!_tk) return;
-  const rangeBar = document.getElementById('date-range-bar');
-  if (rangeBar) rangeBar.style.display = 'flex';
+  const el = document.getElementById('data-footnote');
+  if (!el) return;
 
-  let url = '/api/financials-history/' + encodeURIComponent(_tk) +
-    '?period=' + _chartPeriod + '&limit=20';
-  if (dateFrom) url += '&date_from=' + dateFrom;
-  if (dateTo) url += '&date_to=' + dateTo;
-
-  const sub = document.getElementById('revenue-subtitle');
-  if (sub) sub.textContent = 'Loading history...';
-
-  fetch(url)
+  fetch('/api/financials-history/' + encodeURIComponent(_tk) + '?period=annual&limit=3')
     .then(r => r.json())
     .then(j => {
-      if (j.error) {
-        if (sub) sub.textContent = 'FMP unavailable — showing SEC XBRL';
+      if (j.error || !j.income || !j.income.length) {
+        el.style.display = 'none';
         return;
       }
       _fmpHistory = j;
-      renderMultiYearChart(j);
+      renderFootnote(j);
     })
-    .catch(() => {
-      if (sub) sub.textContent = 'History unavailable — showing SEC XBRL';
-    });
+    .catch(() => { el.style.display = 'none'; });
 }
 
-function renderMultiYearChart(hist) {
-  if (_charts.revenue) _charts.revenue.destroy();
-  const ctx = document.getElementById('revenue-chart');
-  if (!ctx) return;
+function renderFootnote(hist) {
+  const el = document.getElementById('data-footnote');
+  if (!el) return;
 
-  let income = (hist.income || []).slice().reverse(); // oldest first
+  const m = _curData?.metrics || {};
+  const fmp = hist.income[0] || {};
 
-  // Apply date range filter
-  if (_chartRange > 0) {
-    const cutoff = new Date();
-    cutoff.setFullYear(cutoff.getFullYear() - _chartRange);
-    const cutStr = cutoff.toISOString().slice(0, 10);
-    income = income.filter(r => (r.date || '') >= cutStr);
-  }
+  // Compare SEC-MCP XBRL vs FMP for latest period
+  const rows = [];
+  const pairs = [
+    ['Revenue', m.revenue, fmp.revenue],
+    ['Net Income', m.net_income, fmp.netIncome],
+    ['Gross Profit', m.gross_profit, fmp.grossProfit],
+    ['Operating Income', m.operating_income, fmp.operatingIncome],
+    ['EPS (Diluted)', m.eps_diluted, fmp.epsDiluted],
+  ];
 
-  if (!income.length) {
-    const sub = document.getElementById('revenue-subtitle');
-    if (sub) sub.textContent = 'No data for selected range';
-    return;
-  }
-
-  const labels = income.map(r => {
-    if (_chartPeriod === 'quarter') return r.period + ' ' + (r.fiscalYear || r.date?.slice(0, 4));
-    return r.fiscalYear || r.date?.slice(0, 4) || '';
-  });
-  const revenue = income.map(r => (r.revenue || 0) / 1e9);
-  const netIncome = income.map(r => (r.netIncome || 0) / 1e9);
-  const fcf = [];
-  // Match cash flow by date if available
-  const cfMap = {};
-  for (const cf of (hist.cashflow || [])) {
-    cfMap[cf.date] = cf;
-  }
-  for (const r of income) {
-    const cf = cfMap[r.date];
-    if (cf) {
-      fcf.push(((cf.operatingCashFlow || 0) - Math.abs(cf.capitalExpenditure || 0)) / 1e9);
-    } else {
-      fcf.push(0);
+  for (const [label, xbrl, fmpVal] of pairs) {
+    if (xbrl == null && fmpVal == null) continue;
+    const xbrlStr = xbrl != null ? fmtN(xbrl) : '—';
+    const fmpStr = fmpVal != null ? fmtN(fmpVal) : '—';
+    let match = '';
+    if (xbrl != null && fmpVal != null && xbrl !== 0) {
+      const diff = Math.abs((xbrl - fmpVal) / xbrl * 100);
+      if (diff < 0.5) match = '<span class="fn-match">Match</span>';
+      else if (diff < 5) match = '<span class="fn-close">' + diff.toFixed(1) + '% diff</span>';
+      else match = '<span class="fn-mismatch">' + diff.toFixed(1) + '% diff</span>';
     }
+    rows.push('<tr><td>' + esc(label) + '</td><td class="right mono">' + xbrlStr +
+      '</td><td class="right mono">' + fmpStr + '</td><td class="right">' + match + '</td></tr>');
   }
 
-  const defaults = getChartDefaults();
+  if (!rows.length) { el.style.display = 'none'; return; }
 
-  _charts.revenue = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Revenue ($B)', data: revenue,
-          backgroundColor: CHART_COLORS.brandBg, borderColor: CHART_COLORS.brand,
-          borderWidth: 2, borderRadius: 6, order: 2,
-        },
-        {
-          label: 'Net Income ($B)', data: netIncome,
-          backgroundColor: CHART_COLORS.successBg, borderColor: CHART_COLORS.success,
-          borderWidth: 2, borderRadius: 6, order: 3,
-        },
-        {
-          label: 'FCF ($B)', data: fcf,
-          backgroundColor: CHART_COLORS.infoBg, borderColor: CHART_COLORS.info,
-          borderWidth: 2, borderRadius: 6, order: 4,
-        },
-      ],
-    },
-    options: {
-      ...defaults,
-      layout: { padding: { top: 24 } },
-      plugins: {
-        ...defaults.plugins,
-        legend: {
-          display: true,
-          labels: { color: CHART_COLORS.text, usePointStyle: true, pointStyle: 'rect', padding: 12, font: { size: 11 } }
-        },
-        datalabels: {
-          display: income.length <= 8,
-          anchor: 'end', align: 'top', offset: 2,
-          font: { size: 9, weight: 600, family: "'JetBrains Mono', monospace" },
-          color: function(c) { return c.dataset.borderColor || CHART_COLORS.text; },
-          formatter: function(v) {
-            if (v == null || v === 0) return '';
-            return '$' + v.toFixed(1) + 'B';
-          },
-        },
-      },
-      scales: {
-        ...defaults.scales,
-        y: { ...defaults.scales.y, ticks: { ...defaults.scales.y.ticks, callback: (v) => '$' + v.toFixed(0) + 'B' } },
-      },
-    },
-  });
-
-  const sub = document.getElementById('revenue-subtitle');
-  const src = hist.source === 'fmp' ? 'Financial Modeling Prep' : 'SEC XBRL';
-  const rangeLabel = _chartRange > 0 ? _chartRange + 'Y' : 'All';
-  if (sub) sub.textContent = src + ' · ' + rangeLabel + ' ' + (_chartPeriod === 'quarter' ? 'Quarterly' : 'Annual');
+  const fmpDate = fmp.date ? ' (' + fmp.date.slice(0, 4) + ')' : '';
+  el.style.display = 'block';
+  el.innerHTML =
+    '<div class="card-header"><div><h3>Data Source Comparison</h3>' +
+    '<p class="card-subtitle">SEC XBRL (primary) vs Financial Modeling Prep' + fmpDate + '</p></div></div>' +
+    '<table class="data-table"><thead><tr><th>Metric</th><th class="right">SEC XBRL</th>' +
+    '<th class="right">FMP</th><th class="right">Status</th></tr></thead>' +
+    '<tbody>' + rows.join('') + '</tbody></table>' +
+    '<p class="fn-note">Revenue & profitability charts use SEC XBRL data extracted directly from 10-K/10-Q filings. ' +
+    'FMP data shown for cross-reference only.</p>';
 }
 
 // ========================================
@@ -912,14 +854,18 @@ function renderDashboard(d) {
   // 2. Render company overview
   renderCompanyOverview(d);
 
-  // 3. Render charts with slight delay to allow DOM rendering
+  // 3. Show date range bar
+  const rangeBar = document.getElementById('date-range-bar');
+  if (rangeBar) rangeBar.style.display = 'flex';
+
+  // 4. Render charts with slight delay to allow DOM rendering
   setTimeout(() => {
     renderRevenueChart(d);
     renderSegmentChart(d);
     renderMarginChart(d);
     renderGeoMap(d);
-    // Load FMP multi-year history for the revenue chart
-    loadFmpHistory();
+    // Load FMP data for footnote comparison only (not for charts)
+    loadFmpFootnote();
   }, 100);
 
   // 4. Render peer comparison table

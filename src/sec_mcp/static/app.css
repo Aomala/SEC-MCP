@@ -2222,3 +2222,89 @@ a:hover { color: var(--brand); }
   .tos-body { padding: 16px 20px 20px; }
   .tos-scroll { max-height: 280px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   FMP vs SEC FOOTNOTE COMPARISON
+   ═══════════════════════════════════════════════════════════════ */
+
+#data-footnote h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 4px;
+}
+
+#data-footnote .card-subtitle {
+  margin-bottom: 12px;
+}
+
+#data-footnote table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+#data-footnote th {
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+#data-footnote th.right { text-align: right; }
+
+#data-footnote td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+#data-footnote td:first-child {
+  font-family: var(--font-sans);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+#data-footnote td.right { text-align: right; }
+
+#data-footnote tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.fn-match {
+  color: var(--success) !important;
+  font-weight: 600;
+}
+
+.fn-close {
+  color: var(--warning) !important;
+  font-weight: 600;
+}
+
+.fn-mismatch {
+  color: var(--danger) !important;
+  font-weight: 600;
+}
+
+.fn-note {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 10px;
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* Segment legend value styling */
+.seg-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-left: 4px;
+  font-weight: 500;
+}
