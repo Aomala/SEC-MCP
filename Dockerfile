@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir \
     "pydantic-settings>=2.0" \
     "fastapi>=0.100" \
     "uvicorn[standard]>=0.20" \
-    "pymongo[srv]>=4.6" \
+    "supabase>=2.0" \
     "anthropic>=0.40" \
     "yfinance>=0.2.30" \
     "python-dotenv>=1.0"

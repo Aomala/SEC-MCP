@@ -35,7 +35,7 @@ from sec_mcp.financials import (
     generate_local_summary,
 )
 from sec_mcp.historical import get_historical_data, run_historical_extraction
-from sec_mcp.db import get_job, is_available as mongo_available
+from sec_mcp.db import get_job, is_available as db_available
 from sec_mcp.intent_parser import learn_company, parse_intent, resolve_name
 from sec_mcp import disk_cache
 
@@ -374,7 +374,7 @@ async def health():
     """Health check endpoint for Railway deployment."""
     return {
         "status": "ok",
-        "mongodb": "connected" if mongo_available() else "unavailable",
+        "database": "connected" if db_available() else "unavailable",
     }
 
 
@@ -861,7 +861,7 @@ async def chat(req: ChatRequest, bg: BackgroundTasks) -> dict:
         elif tool == "explain":
             result = _handle_explain(tickers[0], year)
         elif tool == "historical":
-            if mongo_available():
+            if db_available():
                 bg.add_task(run_historical_extraction, tickers[0])
                 result = {"tool": "historical", "ticker": tickers[0],
                           "message": f"Historical extraction started for {tickers[0]}. Dashboard loading..."}
@@ -876,7 +876,7 @@ async def chat(req: ChatRequest, bg: BackgroundTasks) -> dict:
         result["elapsed_ms"] = int((time.time() - t0) * 1000)
 
         # Auto-trigger historical extraction in background for financial queries
-        if tool in ("financials", "explain") and mongo_available():
+        if tool in ("financials", "explain") and db_available():
             job = get_job(tickers[0])
             if job is None or job.get("status") != "complete":
                 bg.add_task(run_historical_extraction, tickers[0])
@@ -915,7 +915,7 @@ async def historical_data(ticker: str, form_type: str | None = None):
 @app.post("/api/historical/{ticker}/fetch")
 async def trigger_fetch(ticker: str, bg: BackgroundTasks):
     """Manually trigger historical extraction as a background task."""
-    if not mongo_available():
+    if not db_available():
         return {"error": "MongoDB not configured. Add MONGODB_URI to .env"}
     bg.add_task(run_historical_extraction, ticker.upper())
     return {"status": "started", "ticker": ticker.upper()}

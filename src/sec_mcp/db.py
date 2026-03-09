@@ -1,13 +1,12 @@
-"""MongoDB persistence layer for SEC Terminal.
+"""Supabase persistence layer for SEC Terminal.
 
 Stores extracted filing data so subsequent requests are instant.
 Falls back GRACEFULLY when:
-  - MONGODB_URI is not set
-  - MongoDB is unreachable
-  - User lacks permissions on sec_terminal database (Atlas auth issue)
+  - SUPABASE_URL / SUPABASE_KEY are not set
+  - Supabase is unreachable
 
 Every public function catches exceptions and returns safe defaults
-so the app NEVER crashes from a MongoDB problem.
+so the app NEVER crashes from a database problem.
 """
 
 from __future__ import annotations
@@ -19,84 +18,82 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 _client: Any = None
-_db: Any = None
 _available: bool | None = None
 
 
-def _get_db():
-    """Lazy-init MongoDB connection. Returns None if unavailable or unauthorized."""
-    global _client, _db, _available
+def _get_client():
+    """Lazy-init Supabase connection. Returns None if unavailable."""
+    global _client, _available
     if _available is False:
         return None
-    if _db is not None:
-        return _db
+    if _client is not None:
+        return _client
 
     try:
         from sec_mcp.config import get_config
-        uri = get_config().mongodb_uri
-        if not uri:
-            log.info("MONGODB_URI not set — running without persistent cache")
+        cfg = get_config()
+        if not cfg.supabase_url or not cfg.supabase_key:
+            log.info("SUPABASE_URL/SUPABASE_KEY not set — running without persistent cache")
             _available = False
             return None
 
-        from pymongo import MongoClient
-        _client = MongoClient(uri, serverSelectionTimeoutMS=5000)
+        from supabase import create_client
+        _client = create_client(cfg.supabase_url, cfg.supabase_key)
 
-        # Ping confirms connectivity, but NOT database-level authorization
-        _client.admin.command("ping")
-
-        _db = _client.sec_terminal
-
-        # Test an actual read on our database to verify permissions
-        # If the user doesn't have readWrite on sec_terminal, this throws
-        _db.companies.find_one({}, {"_id": 1})
-
-        # Create indexes (only runs once per connection)
-        _db.filings.create_index([("ticker", 1), ("accession", 1)], unique=True)
-        _db.filings.create_index([("ticker", 1), ("form_type", 1), ("filing_date", -1)])
-        _db.companies.create_index("ticker", unique=True)
-        _db.jobs.create_index("ticker", unique=True)
+        # Verify connectivity with a simple query
+        _client.table("companies").select("ticker").limit(1).execute()
 
         _available = True
-        log.info("MongoDB connected and authorized on sec_terminal")
-        return _db
+        log.info("Supabase connected")
+        return _client
 
     except Exception as exc:
-        log.warning("MongoDB unavailable: %s", exc)
+        log.warning("Supabase unavailable: %s", exc)
         _available = False
-        _db = None
         _client = None
         return None
 
 
 def is_available() -> bool:
-    """Check if MongoDB is connected and authorized."""
-    _get_db()
+    """Check if Supabase is connected."""
+    _get_client()
     return _available is True
 
 
 # ── Companies ──────────────────────────────────────────────────────────
 
 def upsert_company(ticker: str, data: dict):
-    """Save company info. Silently fails if MongoDB unavailable."""
+    """Save company info. Silently fails if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return
-        data["ticker"] = ticker.upper()
-        data["updated_at"] = datetime.now(timezone.utc)
-        db.companies.update_one({"ticker": ticker.upper()}, {"$set": data}, upsert=True)
+        row = {
+            "ticker": ticker.upper(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Pull known columns out of data, put the rest in jsonb
+        for col in ("name", "cik", "industry", "sic_code", "website", "exchange"):
+            if col in data:
+                row[col] = data[col]
+        extra = {k: v for k, v in data.items() if k not in row and k != "ticker"}
+        if extra:
+            row["data"] = extra
+        client.table("companies").upsert(row, on_conflict="ticker").execute()
     except Exception as exc:
         log.debug("upsert_company failed: %s", exc)
 
 
 def get_company(ticker: str) -> dict | None:
-    """Get company info. Returns None if MongoDB unavailable."""
+    """Get company info. Returns None if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return None
-        return db.companies.find_one({"ticker": ticker.upper()}, {"_id": 0})
+        resp = client.table("companies").select("*").eq("ticker", ticker.upper()).limit(1).execute()
+        if resp.data:
+            return resp.data[0]
+        return None
     except Exception as exc:
         log.debug("get_company failed: %s", exc)
         return None
@@ -105,58 +102,78 @@ def get_company(ticker: str) -> dict | None:
 # ── Filings ────────────────────────────────────────────────────────────
 
 def upsert_filing(ticker: str, accession: str, data: dict):
-    """Save a filing record. Silently fails if MongoDB unavailable."""
+    """Save a filing record. Silently fails if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return
-        data["ticker"] = ticker.upper()
-        data["accession"] = accession
-        data["processed_at"] = datetime.now(timezone.utc).isoformat()
-        db.filings.update_one(
-            {"ticker": ticker.upper(), "accession": accession},
-            {"$set": data}, upsert=True,
-        )
+        row = {
+            "ticker": ticker.upper(),
+            "accession": accession,
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        for col in ("form_type", "filing_date"):
+            if col in data:
+                row[col] = data[col]
+        extra = {k: v for k, v in data.items() if k not in row and k not in ("ticker", "accession")}
+        if extra:
+            row["data"] = extra
+        client.table("filings").upsert(row, on_conflict="ticker,accession").execute()
     except Exception as exc:
         log.debug("upsert_filing failed: %s", exc)
 
 
 def get_filings(ticker: str, form_type: str | None = None, limit: int = 500) -> list[dict]:
-    """List filings for a ticker. Returns [] if MongoDB unavailable."""
+    """List filings for a ticker. Returns [] if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return []
-        query: dict = {"ticker": ticker.upper()}
+        query = client.table("filings").select("*").eq("ticker", ticker.upper())
         if form_type:
-            query["form_type"] = form_type
-        return list(db.filings.find(query, {"_id": 0}).sort("filing_date", -1).limit(limit))
+            query = query.eq("form_type", form_type)
+        resp = query.order("filing_date", desc=True).limit(limit).execute()
+        return resp.data or []
     except Exception as exc:
         log.debug("get_filings failed: %s", exc)
         return []
 
 
 def get_filing(ticker: str, accession: str) -> dict | None:
-    """Get a single filing. Returns None if MongoDB unavailable."""
+    """Get a single filing. Returns None if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return None
-        return db.filings.find_one(
-            {"ticker": ticker.upper(), "accession": accession}, {"_id": 0},
+        resp = (
+            client.table("filings")
+            .select("*")
+            .eq("ticker", ticker.upper())
+            .eq("accession", accession)
+            .limit(1)
+            .execute()
         )
+        if resp.data:
+            return resp.data[0]
+        return None
     except Exception as exc:
         log.debug("get_filing failed: %s", exc)
         return None
 
 
 def count_filings(ticker: str) -> int:
-    """Count filings for a ticker. Returns 0 if MongoDB unavailable."""
+    """Count filings for a ticker. Returns 0 if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return 0
-        return db.filings.count_documents({"ticker": ticker.upper()})
+        resp = (
+            client.table("filings")
+            .select("id", count="exact")
+            .eq("ticker", ticker.upper())
+            .execute()
+        )
+        return resp.count or 0
     except Exception as exc:
         log.debug("count_filings failed: %s", exc)
         return 0
@@ -165,34 +182,34 @@ def count_filings(ticker: str) -> int:
 # ── Extraction jobs ────────────────────────────────────────────────────
 
 def set_job(ticker: str, status: str, progress: int = 0, total: int = 0, detail: str = ""):
-    """Update extraction job status. Silently fails if MongoDB unavailable."""
+    """Update extraction job status. Silently fails if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return
-        db.jobs.update_one(
-            {"ticker": ticker.upper()},
-            {"$set": {
-                "ticker": ticker.upper(),
-                "status": status,
-                "progress": progress,
-                "total": total,
-                "detail": detail,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }},
-            upsert=True,
-        )
+        row = {
+            "ticker": ticker.upper(),
+            "status": status,
+            "progress": progress,
+            "total": total,
+            "detail": detail,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        client.table("jobs").upsert(row, on_conflict="ticker").execute()
     except Exception as exc:
         log.debug("set_job failed: %s", exc)
 
 
 def get_job(ticker: str) -> dict | None:
-    """Get extraction job status. Returns None if MongoDB unavailable."""
+    """Get extraction job status. Returns None if Supabase unavailable."""
     try:
-        db = _get_db()
-        if db is None:
+        client = _get_client()
+        if client is None:
             return None
-        return db.jobs.find_one({"ticker": ticker.upper()}, {"_id": 0})
+        resp = client.table("jobs").select("*").eq("ticker", ticker.upper()).limit(1).execute()
+        if resp.data:
+            return resp.data[0]
+        return None
     except Exception as exc:
         log.debug("get_job failed: %s", exc)
         return None
