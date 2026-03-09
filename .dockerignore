@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env.*
+.git/
+.github/
+tests/
+*.md
+*.txt
+uv.lock
+pyproject.toml
+.sec_mcp_cache/
+.cache/
+node_modules/

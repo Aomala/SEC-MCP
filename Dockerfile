@@ -5,7 +5,7 @@ FROM python:3.11-slim
 
 # System deps for building Python C extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ && \
+    gcc g++ curl && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -15,8 +15,8 @@ RUN pip install --no-cache-dir --upgrade pip
 
 # Install dependencies directly (skip hatchling build system entirely)
 RUN pip install --no-cache-dir \
-    requests>=2.31 \
-    beautifulsoup4>=4.12 \
+    "requests>=2.31" \
+    "beautifulsoup4>=4.12" \
     "pandas>=2.0" \
     "pydantic>=2.0" \
     "pydantic-settings>=2.0" \

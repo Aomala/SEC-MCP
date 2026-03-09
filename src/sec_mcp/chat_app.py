@@ -72,6 +72,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def _startup():
+    """Non-blocking startup: init DB connection in background thread."""
+    import threading
+
+    def _warmup():
+        try:
+            db_available()
+            log.info("DB warmup complete")
+        except Exception as exc:
+            log.warning("DB warmup failed (non-fatal): %s", exc)
+
+    threading.Thread(target=_warmup, daemon=True).start()
+    log.info("SEC Terminal ready (DB warming up in background)")
+
 # Serve static assets (CSS, JS)
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -371,11 +387,12 @@ PEER_MAP: dict[str, list[str]] = {
 
 @app.get("/health")
 async def health():
-    """Health check endpoint for Railway deployment."""
-    return {
-        "status": "ok",
-        "database": "connected" if db_available() else "unavailable",
-    }
+    """Health check endpoint for Railway deployment.
+
+    MUST respond instantly — never block on DB/network calls.
+    Railway kills containers that don't pass health checks quickly.
+    """
+    return {"status": "ok"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
