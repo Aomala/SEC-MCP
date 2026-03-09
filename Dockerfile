@@ -15,8 +15,8 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY src/ src/
 
-# Install the package
-RUN pip install --no-cache-dir -e .
+# Install the package (non-editable for Docker stability)
+RUN pip install --no-cache-dir .
 
 # Verify the app can import (fail fast if deps are broken)
 RUN python -c "from sec_mcp.chat_app import app; print('OK: chat_app imports successfully')"
