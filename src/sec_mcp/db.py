@@ -1,5 +1,6 @@
 """Supabase persistence layer for SEC Terminal.
 
+Uses httpx + PostgREST API directly (no supabase SDK needed).
 Stores extracted filing data so subsequent requests are instant.
 Falls back GRACEFULLY when:
   - SUPABASE_URL / SUPABASE_KEY are not set
@@ -11,23 +12,27 @@ so the app NEVER crashes from a database problem.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 log = logging.getLogger(__name__)
 
-_client: Any = None
+_headers: dict[str, str] | None = None
+_base_url: str = ""
 _available: bool | None = None
 
 
-def _get_client():
-    """Lazy-init Supabase connection. Returns None if unavailable."""
-    global _client, _available
+def _init() -> bool:
+    """Lazy-init connection config. Returns True if available."""
+    global _headers, _base_url, _available
     if _available is False:
-        return None
-    if _client is not None:
-        return _client
+        return False
+    if _headers is not None:
+        return True
 
     try:
         from sec_mcp.config import get_config
@@ -35,29 +40,57 @@ def _get_client():
         if not cfg.supabase_url or not cfg.supabase_key:
             log.info("SUPABASE_URL/SUPABASE_KEY not set — running without persistent cache")
             _available = False
-            return None
+            return False
 
-        from supabase import create_client
-        _client = create_client(cfg.supabase_url, cfg.supabase_key)
+        _base_url = cfg.supabase_url.rstrip("/") + "/rest/v1"
+        _headers = {
+            "apikey": cfg.supabase_key,
+            "Authorization": f"Bearer {cfg.supabase_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
 
-        # Verify connectivity with a simple query
-        _client.table("companies").select("ticker").limit(1).execute()
+        # Verify connectivity
+        resp = httpx.get(
+            f"{_base_url}/companies?select=ticker&limit=1",
+            headers=_headers,
+            timeout=5,
+        )
+        resp.raise_for_status()
 
         _available = True
-        log.info("Supabase connected")
-        return _client
+        log.info("Supabase connected (PostgREST)")
+        return True
 
     except Exception as exc:
         log.warning("Supabase unavailable: %s", exc)
         _available = False
-        _client = None
-        return None
+        _headers = None
+        return False
 
 
 def is_available() -> bool:
     """Check if Supabase is connected."""
-    _get_client()
+    _init()
     return _available is True
+
+
+def _post(table: str, data: dict, on_conflict: str = "") -> Any:
+    """Upsert a row via PostgREST."""
+    headers = {**_headers, "Prefer": "resolution=merge-duplicates,return=representation"}
+    url = f"{_base_url}/{table}"
+    if on_conflict:
+        url += f"?on_conflict={on_conflict}"
+    resp = httpx.post(url, headers=headers, json=data, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _get(table: str, params: str) -> list[dict]:
+    """Query rows via PostgREST."""
+    resp = httpx.get(f"{_base_url}/{table}?{params}", headers=_headers, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
 
 
 # ── Companies ──────────────────────────────────────────────────────────
@@ -65,21 +98,19 @@ def is_available() -> bool:
 def upsert_company(ticker: str, data: dict):
     """Save company info. Silently fails if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return
         row = {
             "ticker": ticker.upper(),
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        # Pull known columns out of data, put the rest in jsonb
         for col in ("name", "cik", "industry", "sic_code", "website", "exchange"):
             if col in data:
                 row[col] = data[col]
         extra = {k: v for k, v in data.items() if k not in row and k != "ticker"}
         if extra:
             row["data"] = extra
-        client.table("companies").upsert(row, on_conflict="ticker").execute()
+        _post("companies", row, on_conflict="ticker")
     except Exception as exc:
         log.debug("upsert_company failed: %s", exc)
 
@@ -87,13 +118,10 @@ def upsert_company(ticker: str, data: dict):
 def get_company(ticker: str) -> dict | None:
     """Get company info. Returns None if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return None
-        resp = client.table("companies").select("*").eq("ticker", ticker.upper()).limit(1).execute()
-        if resp.data:
-            return resp.data[0]
-        return None
+        rows = _get("companies", f"select=*&ticker=eq.{ticker.upper()}&limit=1")
+        return rows[0] if rows else None
     except Exception as exc:
         log.debug("get_company failed: %s", exc)
         return None
@@ -104,8 +132,7 @@ def get_company(ticker: str) -> dict | None:
 def upsert_filing(ticker: str, accession: str, data: dict):
     """Save a filing record. Silently fails if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return
         row = {
             "ticker": ticker.upper(),
@@ -118,7 +145,7 @@ def upsert_filing(ticker: str, accession: str, data: dict):
         extra = {k: v for k, v in data.items() if k not in row and k not in ("ticker", "accession")}
         if extra:
             row["data"] = extra
-        client.table("filings").upsert(row, on_conflict="ticker,accession").execute()
+        _post("filings", row, on_conflict="ticker,accession")
     except Exception as exc:
         log.debug("upsert_filing failed: %s", exc)
 
@@ -126,14 +153,12 @@ def upsert_filing(ticker: str, accession: str, data: dict):
 def get_filings(ticker: str, form_type: str | None = None, limit: int = 500) -> list[dict]:
     """List filings for a ticker. Returns [] if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return []
-        query = client.table("filings").select("*").eq("ticker", ticker.upper())
+        params = f"select=*&ticker=eq.{ticker.upper()}&order=filing_date.desc&limit={limit}"
         if form_type:
-            query = query.eq("form_type", form_type)
-        resp = query.order("filing_date", desc=True).limit(limit).execute()
-        return resp.data or []
+            params += f"&form_type=eq.{form_type}"
+        return _get("filings", params)
     except Exception as exc:
         log.debug("get_filings failed: %s", exc)
         return []
@@ -142,20 +167,10 @@ def get_filings(ticker: str, form_type: str | None = None, limit: int = 500) -> 
 def get_filing(ticker: str, accession: str) -> dict | None:
     """Get a single filing. Returns None if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return None
-        resp = (
-            client.table("filings")
-            .select("*")
-            .eq("ticker", ticker.upper())
-            .eq("accession", accession)
-            .limit(1)
-            .execute()
-        )
-        if resp.data:
-            return resp.data[0]
-        return None
+        rows = _get("filings", f"select=*&ticker=eq.{ticker.upper()}&accession=eq.{accession}&limit=1")
+        return rows[0] if rows else None
     except Exception as exc:
         log.debug("get_filing failed: %s", exc)
         return None
@@ -164,16 +179,21 @@ def get_filing(ticker: str, accession: str) -> dict | None:
 def count_filings(ticker: str) -> int:
     """Count filings for a ticker. Returns 0 if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return 0
-        resp = (
-            client.table("filings")
-            .select("id", count="exact")
-            .eq("ticker", ticker.upper())
-            .execute()
+        headers = {**_headers, "Prefer": "count=exact"}
+        resp = httpx.get(
+            f"{_base_url}/filings?select=id&ticker=eq.{ticker.upper()}",
+            headers=headers,
+            timeout=10,
         )
-        return resp.count or 0
+        resp.raise_for_status()
+        # PostgREST returns count in content-range header
+        cr = resp.headers.get("content-range", "")
+        # Format: "0-N/total" or "*/total"
+        if "/" in cr:
+            return int(cr.split("/")[-1])
+        return len(resp.json())
     except Exception as exc:
         log.debug("count_filings failed: %s", exc)
         return 0
@@ -184,8 +204,7 @@ def count_filings(ticker: str) -> int:
 def set_job(ticker: str, status: str, progress: int = 0, total: int = 0, detail: str = ""):
     """Update extraction job status. Silently fails if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return
         row = {
             "ticker": ticker.upper(),
@@ -195,7 +214,7 @@ def set_job(ticker: str, status: str, progress: int = 0, total: int = 0, detail:
             "detail": detail,
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
-        client.table("jobs").upsert(row, on_conflict="ticker").execute()
+        _post("jobs", row, on_conflict="ticker")
     except Exception as exc:
         log.debug("set_job failed: %s", exc)
 
@@ -203,13 +222,10 @@ def set_job(ticker: str, status: str, progress: int = 0, total: int = 0, detail:
 def get_job(ticker: str) -> dict | None:
     """Get extraction job status. Returns None if Supabase unavailable."""
     try:
-        client = _get_client()
-        if client is None:
+        if not _init():
             return None
-        resp = client.table("jobs").select("*").eq("ticker", ticker.upper()).limit(1).execute()
-        if resp.data:
-            return resp.data[0]
-        return None
+        rows = _get("jobs", f"select=*&ticker=eq.{ticker.upper()}&limit=1")
+        return rows[0] if rows else None
     except Exception as exc:
         log.debug("get_job failed: %s", exc)
         return None
