@@ -18,8 +18,10 @@ COPY src/ src/
 COPY .env.example .env.example
 
 # Install the package (editable mode so module resolution works)
-# Skip torch/transformers — they're optional and way too large for Railway
-RUN pip install --no-cache-dir -e . 2>&1 | grep -v "torch\|transformers\|sentencepiece" || true
+RUN pip install --no-cache-dir -e .
+
+# Health check: verify the app can import
+RUN python -c "from sec_mcp.chat_app import app; print('Import check passed')"
 
 # Railway sets PORT env var; default to 8877 for local Docker runs
 ENV PYTHONUNBUFFERED=1
@@ -28,7 +30,7 @@ ENV PORT=8877
 EXPOSE 8877
 
 # Health check endpoint is at /health
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
 
 # Run the chat app (reads PORT from env)
