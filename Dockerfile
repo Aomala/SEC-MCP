@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir \
     "pydantic>=2.0" \
     "pydantic-settings>=2.0" \
     "fastapi>=0.100" \
-    "uvicorn>=0.20" \
+    "uvicorn[standard]>=0.20" \
     "pymongo[srv]>=4.6" \
     "anthropic>=0.40" \
     "yfinance>=0.2.30" \
@@ -33,14 +33,9 @@ COPY src/ src/
 # Add source to Python path (no package install needed)
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
-ENV PORT=8877
 
-# Verify imports work
-RUN python -c "from sec_mcp.chat_app import app; print('OK')"
+# Verify imports work at build time
+RUN python -c "from sec_mcp.chat_app import app; print('imports OK')"
 
-EXPOSE 8877
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
-
+# Railway sets PORT dynamically — app reads os.environ["PORT"] with fallback to 8877
 CMD ["python", "-m", "sec_mcp.chat_app"]
