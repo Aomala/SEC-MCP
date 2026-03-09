@@ -1283,7 +1283,7 @@ function renderRevenueChart(d) {
       plugins: {
         ...defaults.plugins,
         legend: {
-          display: labels.length > 1,
+          display: true,
           labels: { color: CHART_COLORS.text, usePointStyle: true, pointStyle: 'rect', padding: 12, font: { size: 11 } }
         },
         datalabels: {

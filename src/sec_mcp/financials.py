@@ -2257,6 +2257,16 @@ def extract_financials(
             sourced["revenue"] = best_src
             confidence["revenue"] = 0.80
 
+    # ── Currency detection & conversion to USD ─────────────────────
+    from sec_mcp.core.fx import detect_currency, convert_metrics_to_usd
+    reporting_currency = detect_currency(facts_df)
+    result["reporting_currency"] = reporting_currency
+    if reporting_currency != "USD":
+        metrics, fx_rate = convert_metrics_to_usd(metrics, reporting_currency)
+        result["fx_rate"] = fx_rate
+        result["fx_note"] = f"Converted from {reporting_currency} to USD at {fx_rate:.4f}" if fx_rate else f"Reported in {reporting_currency} (conversion unavailable)"
+        log.info("Foreign filer %s reports in %s, converted to USD", ticker_or_cik, reporting_currency)
+
     result["metrics"] = metrics
     result["metrics_sourced"] = sourced
     result["confidence_scores"] = confidence
@@ -2319,6 +2329,12 @@ def extract_financials(
                 qoq_metrics["free_cash_flow"] = None
         except Exception:
             pass
+
+    # Convert prior/qoq metrics to USD if foreign filer
+    if reporting_currency != "USD":
+        prior_metrics, _ = convert_metrics_to_usd(prior_metrics, reporting_currency)
+        if qoq_metrics:
+            qoq_metrics, _ = convert_metrics_to_usd(qoq_metrics, reporting_currency)
 
     result["prior_metrics"] = prior_metrics
     result["qoq_metrics"] = qoq_metrics
