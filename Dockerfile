@@ -15,7 +15,10 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY src/ src/
 
-# Install the package (non-editable for Docker stability)
+# Upgrade pip/setuptools/wheel first (fixes metadata generation errors)
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel hatchling
+
+# Install the package
 RUN pip install --no-cache-dir .
 
 # Verify the app can import (fail fast if deps are broken)
