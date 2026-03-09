@@ -10,9 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    # MCP protocol server
-    "fastmcp>=2.0",
-    # Direct SEC EDGAR HTTP client (replaces edgartools)
+    # Direct SEC EDGAR HTTP client
     "requests>=2.31",
     "beautifulsoup4>=4.12",
     # Data processing
@@ -28,9 +26,15 @@ dependencies = [
     "anthropic>=0.40",
     # Market data provider
     "yfinance>=0.2.30",
+    # Env file loading
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
+# MCP protocol server — only needed for Claude Desktop integration, not web dashboard
+mcp = [
+    "fastmcp>=2.0",
+]
 # Market data providers — optional alternative sources
 market = [
     "yfinance>=0.2.30",
