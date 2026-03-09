@@ -1,36 +1,45 @@
 # Fineas.ai — Railway deployment image
 # Runs the web dashboard (chat_app.py) — NOT the MCP server
-# ~200MB image (python:3.11-slim + core deps, no torch/transformers/fastmcp)
 
 FROM python:3.11-slim
 
-# System deps for building Python C extensions (pymongo, pandas, etc.)
+# System deps for building Python C extensions
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy project files
-COPY pyproject.toml .
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip
+
+# Install dependencies directly (skip hatchling build system entirely)
+RUN pip install --no-cache-dir \
+    requests>=2.31 \
+    beautifulsoup4>=4.12 \
+    "pandas>=2.0" \
+    "pydantic>=2.0" \
+    "pydantic-settings>=2.0" \
+    "fastapi>=0.100" \
+    "uvicorn>=0.20" \
+    "pymongo[srv]>=4.6" \
+    "anthropic>=0.40" \
+    "yfinance>=0.2.30" \
+    "python-dotenv>=1.0"
+
+# Copy source code
 COPY src/ src/
 
-# Upgrade pip/setuptools/wheel first (fixes metadata generation errors)
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel hatchling
-
-# Install the package
-RUN pip install --no-cache-dir .
-
-# Verify the app can import (fail fast if deps are broken)
-RUN python -c "from sec_mcp.chat_app import app; print('OK: chat_app imports successfully')"
-
-# Railway sets PORT env var; default to 8877 for local Docker runs
+# Add source to Python path (no package install needed)
+ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8877
 
+# Verify imports work
+RUN python -c "from sec_mcp.chat_app import app; print('OK')"
+
 EXPOSE 8877
 
-# Health check with startup grace period
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/health')" || exit 1
 
