@@ -22,7 +22,7 @@ def _load_aliases() -> dict[str, str]:
     if _ALIASES_PATH.exists():
         try:
             return json.loads(_ALIASES_PATH.read_text())
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             pass
     return {}
 
@@ -33,19 +33,29 @@ def _save_alias(name: str, ticker: str):
     data[name.lower().strip()] = ticker.upper().strip()
     try:
         _ALIASES_PATH.write_text(json.dumps(data, indent=2))
-    except Exception:
+    except OSError:
         pass
 
 
 def resolve_name(text: str) -> str | None:
-    """Resolve a company name/alias to a ticker symbol."""
+    """Resolve a company name/alias to a ticker symbol.
+
+    Uses exact match first, then word-boundary partial match (longest first).
+    Rejects aliases shorter than 3 chars for partial matching to avoid
+    false positives like 'ms' matching 'terms'.
+    """
     aliases = _load_aliases()
     low = text.lower().strip()
     if low in aliases:
         return aliases[low]
-    # Try partial match (longest alias first for specificity)
+    # Try word-boundary partial match (longest alias first for specificity)
+    # Skip very short aliases (< 3 chars) for partial matching — too ambiguous
     for name in sorted(aliases, key=len, reverse=True):
-        if name in low:
+        if len(name) < 3:
+            continue
+        # Require word boundaries around the alias to prevent substring matches
+        # e.g. "apple" should NOT match inside "pineapple"
+        if re.search(r'\b' + re.escape(name) + r'\b', low):
             return aliases[name]
     return None
 
@@ -78,6 +88,20 @@ _STOP = {
     "DCF", "EPS", "NAV", "ROE", "ROA", "IRR", "NPV", "EBIT", "SGA",
     "ETF", "IPO", "IS", "BS", "CF", "IR", "FY", "PY", "QQ", "AUM",
     "10K", "10Q", "20F", "6K", "40F", "FPI", "DEF",
+    # Common English words that look like tickers
+    "DO", "SO", "IT", "AT", "ON", "BY", "OR", "AS", "IF", "GO", "UP",
+    "HAS", "HAD", "ARE", "WAS", "HIS", "HER", "ITS", "OUR", "ALSO",
+    "BUT", "NOT", "NOR", "YET", "HE", "SHE", "WE", "THEY", "THIS",
+    "THAT", "ANY", "NEW", "OLD", "BIG", "TOP", "LOW", "NET", "TAX",
+    "LOOK", "LIKE", "BEEN", "MORE", "MOST", "OVER", "INTO", "EACH",
+    "SOME", "THAN", "VERY", "JUST", "ONLY", "MADE", "GOOD", "BEST",
+    "HIGH", "LAST", "LONG", "WELL", "LIST", "KEEP", "MANY", "SAME",
+    "STOCK", "SHARE", "PRICE", "VALUE", "DEBT", "CASH", "FUND",
+    "BANK", "RATE", "BOND", "LOAN", "COST", "LOSS", "GAIN", "SELL",
+    "HOLD", "PLAN", "TERM", "NOTE", "FORM", "ITEM", "PART", "TYPE",
+    "VIEW", "HELP", "NEED", "WANT", "KNOW", "THINK", "SEE", "SAY",
+    "LET", "PUT", "RUN", "USE", "TRY", "ASK", "SET", "OWN", "PAY",
+    "ADD", "GOT", "HIT", "CUT", "BUY",
 }
 
 # Entity-related trigger phrases
@@ -226,12 +250,15 @@ def parse_intent(msg: str) -> dict:
     # picking up fragments from keywords like MD&A → ["MD", "A"]
     if not tickers:
         clean_upper = re.sub(r"[^A-Z\s]", " ", clean_q.upper())
-        tokens = re.findall(r"\b[A-Z]{2,6}\b", clean_upper)
+        # Require 2-5 chars (6-char tickers are very rare and cause false positives)
+        tokens = re.findall(r"\b[A-Z]{2,5}\b", clean_upper)
         tickers = [t for t in tokens if t not in _STOP]
         # If still empty, fall back to original message but with stricter filtering
         if not tickers:
             tokens = re.findall(r"\b[A-Z]{2,5}\b", upper)
             tickers = [t for t in tokens if t not in _STOP]
+        # Cap at 3 tickers from regex fallback to avoid noise
+        tickers = tickers[:3]
 
     # Deduplicate while preserving order
     seen = set()

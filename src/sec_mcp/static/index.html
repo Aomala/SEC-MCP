@@ -8,14 +8,18 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=10"/>
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.0/marked.min.js"></script>
+  <!-- Leaflet for geographic map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="/static/app.css?v=18"/>
 </head>
 <body>
 <div class="app">
-  <!-- LEFT SIDEBAR (240px) -->
+  <!-- LEFT SIDEBAR -->
   <aside class="sidebar" id="sidebar">
-    <!-- Brand -->
     <div class="sidebar-brand">
       <div class="brand-icon">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -27,38 +31,27 @@
         <span class="brand-sub">.ai</span>
       </div>
     </div>
-    
-    <!-- Navigation -->
     <nav class="sidebar-nav">
       <a href="#" class="nav-item active" data-view="dashboard">
         <i data-lucide="layout-dashboard"></i> Dashboard
       </a>
-      <a href="#" class="nav-item" data-view="screener">
-        <i data-lucide="search"></i> Screener <span class="nav-badge">NEW</span>
+      <a href="#" class="nav-item" data-view="statements">
+        <i data-lucide="table"></i> Statements
       </a>
       <a href="#" class="nav-item" data-view="comps">
         <i data-lucide="git-compare"></i> Compare
       </a>
       <a href="#" class="nav-item" data-view="filings">
-        <i data-lucide="file-text"></i> Filings
+        <i data-lucide="book-open"></i> 10-K Explorer
       </a>
-      <a href="#" class="nav-item" data-view="diff">
-        <i data-lucide="diff"></i> Filing Diff <span class="nav-badge">NEW</span>
-      </a>
-      <a href="#" class="nav-item" data-view="alerts">
-        <i data-lucide="bell"></i> Alerts
+      <a href="#" class="nav-item" data-view="insights">
+        <i data-lucide="zap"></i> AI Insights
       </a>
     </nav>
-
-    <!-- Watchlist -->
     <div class="sidebar-section">
       <div class="section-title">WATCHLIST</div>
-      <div id="watchlist" class="watchlist">
-        <!-- Populated by JS -->
-      </div>
+      <div id="watchlist" class="watchlist"></div>
     </div>
-
-    <!-- Settings at bottom -->
     <div class="sidebar-footer">
       <button class="nav-item" onclick="toggleTheme()">
         <i data-lucide="moon" id="theme-icon"></i> <span id="theme-label">Light Mode</span>
@@ -66,20 +59,16 @@
     </div>
   </aside>
 
-  <!-- CENTER MAIN CONTENT (flex) -->
+  <!-- CENTER MAIN CONTENT -->
   <main class="main">
-    <!-- Top Header -->
     <header class="header">
       <div class="header-top">
-        <!-- Search -->
         <div class="search-bar">
           <i data-lucide="search"></i>
           <input id="search-input" placeholder="Search companies, tickers, or ask a question..." autocomplete="off" oninput="debSearch(this.value)"/>
           <kbd>/</kbd>
           <div class="search-results" id="search-results"></div>
         </div>
-
-        <!-- Company Pill (shown when company is loaded) -->
         <div class="company-pill" id="company-pill" style="display:none">
           <span class="ticker-badge" id="pill-ticker">AAPL</span>
           <span class="company-name" id="pill-name">Apple Inc.</span>
@@ -90,41 +79,33 @@
           </span>
           <span class="live-dot"></span>
         </div>
-
-        <!-- Action Buttons -->
         <div class="header-actions">
           <button class="icon-btn" onclick="refreshData()" title="Refresh"><i data-lucide="refresh-cw"></i></button>
           <button class="icon-btn" onclick="exportData()" title="Export"><i data-lucide="download"></i></button>
-          <button class="icon-btn has-badge" title="Alerts"><i data-lucide="bell"></i></button>
           <button class="icon-btn" id="chat-toggle" onclick="toggleChat()" title="AI Analyst">
             <i data-lucide="message-square"></i>
           </button>
         </div>
       </div>
-
-      <!-- View Tabs -->
       <div class="header-tabs">
         <div class="view-tabs">
           <button class="view-tab active" data-view="dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</button>
           <button class="view-tab" data-view="statements"><i data-lucide="table"></i> Statements</button>
           <button class="view-tab" data-view="comps"><i data-lucide="git-compare"></i> Comparables</button>
-          <button class="view-tab" data-view="filings"><i data-lucide="book-open"></i> Filings</button>
+          <button class="view-tab" data-view="filings"><i data-lucide="book-open"></i> 10-K Explorer</button>
           <button class="view-tab" data-view="insights"><i data-lucide="zap"></i> AI Insights</button>
         </div>
         <div class="header-controls">
-          <!-- Period Toggle -->
           <div class="toggle-group">
             <button class="toggle-btn active" data-period="annual">Annual</button>
             <button class="toggle-btn" data-period="quarterly">Quarterly</button>
           </div>
-          <!-- Form Type Select -->
           <select id="sel-form" class="sel" onchange="onFormSel()">
             <option value="10-K">10-K (Annual)</option>
             <option value="10-Q">10-Q (Quarterly)</option>
             <option value="20-F">20-F (FPI Annual)</option>
             <option value="6-K">6-K (FPI Interim)</option>
           </select>
-          <!-- Period Select -->
           <select id="sel-period" class="sel" onchange="onPeriodSel()">
             <option value="">Select Period</option>
           </select>
@@ -134,11 +115,9 @@
 
     <!-- Scrollable Content Area -->
     <div class="content" id="content">
-      <!-- Welcome State (shown initially) -->
+      <!-- Welcome State -->
       <div class="welcome" id="welcome">
-        <div class="welcome-icon">
-          <i data-lucide="trending-up"></i>
-        </div>
+        <div class="welcome-icon"><i data-lucide="trending-up"></i></div>
         <h2>Financial Intelligence Platform</h2>
         <p>Search any public company — US domestic or foreign filer</p>
         <div class="welcome-pills">
@@ -155,20 +134,38 @@
         </div>
       </div>
 
-      <!-- Dashboard View (hidden initially, shown when data loads) -->
+      <!-- ═══ DASHBOARD VIEW ═══ -->
       <div class="dashboard" id="dashboard" style="display:none">
-        <!-- KPI Cards Row -->
-        <div class="kpi-grid" id="kpi-grid">
-          <!-- 6 KPI cards injected by JS -->
+        <!-- KPI Cards -->
+        <div class="kpi-grid" id="kpi-grid"></div>
+
+        <!-- Date Range Controls -->
+        <div class="date-range-bar" id="date-range-bar" style="display:none">
+          <div class="range-presets">
+            <button class="range-btn active" data-range="3" onclick="setDateRange(3)">3Y</button>
+            <button class="range-btn" data-range="5" onclick="setDateRange(5)">5Y</button>
+            <button class="range-btn" data-range="10" onclick="setDateRange(10)">10Y</button>
+            <button class="range-btn" data-range="0" onclick="setDateRange(0)">All</button>
+          </div>
+          <div class="range-custom">
+            <label>From</label>
+            <input type="number" id="range-from" min="2000" max="2026" placeholder="2020" onchange="applyCustomRange()"/>
+            <label>To</label>
+            <input type="number" id="range-to" min="2000" max="2026" placeholder="2025" onchange="applyCustomRange()"/>
+          </div>
+          <div class="range-period">
+            <button class="range-btn active" data-period="annual" onclick="setChartPeriod('annual')">Annual</button>
+            <button class="range-btn" data-period="quarter" onclick="setChartPeriod('quarter')">Quarterly</button>
+          </div>
         </div>
 
-        <!-- Charts Row -->
+        <!-- Revenue Chart + Company Overview -->
         <div class="charts-row">
           <div class="chart-card wide">
             <div class="card-header">
               <div>
-                <h3>Revenue & Profitability Trend</h3>
-                <p class="card-subtitle">5-year annual data from SEC XBRL</p>
+                <h3>Revenue & Profitability</h3>
+                <p class="card-subtitle" id="revenue-subtitle">SEC XBRL data</p>
               </div>
               <div class="legend">
                 <span class="legend-item" style="--color: var(--brand)">Revenue</span>
@@ -178,53 +175,87 @@
             </div>
             <canvas id="revenue-chart" height="140"></canvas>
           </div>
+          <div class="chart-card" id="company-overview-card">
+            <div class="card-header">
+              <div>
+                <h3 id="overview-title">Company Overview</h3>
+                <p class="card-subtitle" id="overview-subtitle">Business summary</p>
+              </div>
+            </div>
+            <div id="company-overview" class="company-overview">
+              <p class="text-muted" style="font-size:13px">Load a company to see overview</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Segments + Margins -->
+        <div class="charts-row">
           <div class="chart-card">
             <div class="card-header">
               <h3>Revenue Segments</h3>
-              <p class="card-subtitle" id="segments-subtitle">FY2024 breakdown</p>
+              <p class="card-subtitle" id="segments-subtitle">Breakdown</p>
             </div>
             <canvas id="segment-chart" height="160"></canvas>
             <div id="segment-legend" class="segment-legend"></div>
           </div>
-        </div>
-
-        <!-- Margin + Peers Row -->
-        <div class="charts-row">
           <div class="chart-card">
             <div class="card-header">
-              <h3>Margin Trend</h3>
-              <p class="card-subtitle">Net margin % over time</p>
+              <h3>Margin Profile</h3>
+              <p class="card-subtitle">Profitability margins</p>
             </div>
             <canvas id="margin-chart" height="130"></canvas>
           </div>
-          <div class="chart-card">
+        </div>
+
+        <!-- Geographic Map -->
+        <div class="charts-row">
+          <div class="chart-card wide">
             <div class="card-header">
               <div>
-                <h3>Peer Comparison</h3>
-                <p class="card-subtitle">Key metrics vs industry peers</p>
+                <h3>Geographic Revenue</h3>
+                <p class="card-subtitle" id="geo-subtitle">Revenue by region</p>
               </div>
-              <button class="text-btn"><i data-lucide="plus"></i> Add Peer</button>
             </div>
-            <table class="data-table" id="peer-table">
-              <thead>
-                <tr>
-                  <th>Company</th>
-                  <th class="right">Revenue</th>
-                  <th class="right">Net Margin</th>
-                  <th class="right">P/E</th>
-                </tr>
-              </thead>
-              <tbody id="peer-tbody">
-                <!-- Populated by JS -->
-              </tbody>
-            </table>
+            <div id="geo-map" style="height:220px;border-radius:8px;overflow:hidden;background:var(--bg-primary)"></div>
+            <div id="geo-legend" class="segment-legend" style="margin-top:10px"></div>
           </div>
         </div>
 
-        <!-- Provenance Bar -->
-        <div class="provenance" id="provenance">
-          <!-- Validation badges injected by JS -->
+        <!-- Peers -->
+        <div class="chart-card">
+          <div class="card-header">
+            <div>
+              <h3>Peer Comparison</h3>
+              <p class="card-subtitle">Key metrics vs industry peers</p>
+            </div>
+          </div>
+          <table class="data-table" id="peer-table">
+            <thead>
+              <tr>
+                <th>Company</th>
+                <th class="right">Revenue</th>
+                <th class="right">Net Margin</th>
+                <th class="right">P/E</th>
+              </tr>
+            </thead>
+            <tbody id="peer-tbody"></tbody>
+          </table>
         </div>
+
+        <!-- Confidence Scores -->
+        <div class="chart-card" id="confidence-card" style="display:none">
+          <div class="card-header">
+            <div>
+              <h3>Data Confidence</h3>
+              <p class="card-subtitle">XBRL extraction confidence scores by metric</p>
+            </div>
+          </div>
+          <div id="confidence-grid" class="confidence-grid"></div>
+          <div id="validation-list" class="validation-list"></div>
+        </div>
+
+        <!-- Provenance -->
+        <div class="provenance" id="provenance"></div>
 
         <!-- Statement Preview -->
         <div class="chart-card" id="statement-preview" style="display:none">
@@ -233,7 +264,7 @@
               <h3 id="statement-title">Income Statement Summary</h3>
               <p class="card-subtitle" id="statement-subtitle">FY2024 vs FY2023</p>
             </div>
-            <button class="text-btn" onclick="showFullStatement()">
+            <button class="text-btn" onclick="switchView('statements')">
               View Full Statement <i data-lucide="arrow-right"></i>
             </button>
           </div>
@@ -244,15 +275,160 @@
         </div>
       </div>
 
-      <!-- Other views (filings text, comps, etc) -->
-      <div class="view-panel" id="filings-view" style="display:none"></div>
-      <div class="view-panel" id="comps-view" style="display:none"></div>
-      <div class="view-panel" id="insights-view" style="display:none"></div>
+      <!-- ═══ STATEMENTS VIEW ═══ -->
+      <div class="view-panel" id="panel-statements" style="display:none">
+        <div class="chart-card">
+          <div class="card-header">
+            <div>
+              <h3 id="full-stmt-title">Financial Statements</h3>
+              <p class="card-subtitle" id="full-stmt-sub">Load a company to view statements</p>
+            </div>
+            <div class="toggle-group" id="stmt-type-toggle">
+              <button class="toggle-btn active" data-stmt="income" onclick="renderFullStatement('income')">Income</button>
+              <button class="toggle-btn" data-stmt="balance" onclick="renderFullStatement('balance')">Balance Sheet</button>
+              <button class="toggle-btn" data-stmt="cashflow" onclick="renderFullStatement('cashflow')">Cash Flow</button>
+            </div>
+          </div>
+          <table class="data-table" id="full-stmt-table">
+            <thead><tr><th>Line Item</th><th class="right">Value</th><th class="right">Prior</th><th class="right">Change</th></tr></thead>
+            <tbody id="full-stmt-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ COMPS VIEW ═══ -->
+      <div class="view-panel" id="panel-comps" style="display:none">
+        <div class="chart-card">
+          <div class="card-header">
+            <div>
+              <h3>Comparable Companies</h3>
+              <p class="card-subtitle" id="comps-sub">Side-by-side financial comparison</p>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input id="comps-input" class="sel" style="width:200px" placeholder="Add ticker (e.g. MSFT)" onkeydown="if(event.key==='Enter'){addCompTicker()}"/>
+              <button class="send-btn" style="padding:6px 12px;font-size:12px" onclick="addCompTicker()">Add</button>
+            </div>
+          </div>
+          <div id="comps-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+          <table class="data-table" id="comps-table">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th class="right">Revenue</th>
+                <th class="right">Net Income</th>
+                <th class="right">Gross Margin</th>
+                <th class="right">Net Margin</th>
+                <th class="right">Total Assets</th>
+                <th class="right">EPS</th>
+              </tr>
+            </thead>
+            <tbody id="comps-tbody">
+              <tr><td colspan="7" class="text-center text-muted">Add tickers above to compare</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ 10-K EXPLORER VIEW ═══ -->
+      <div class="view-panel" id="panel-filings" style="display:none">
+        <!-- Section navigation tabs -->
+        <div class="explorer-tabs" id="explorer-tabs">
+          <button class="explorer-tab active" data-section="overview" onclick="loadExplorerSection('overview')">
+            <i data-lucide="list"></i> All Filings
+          </button>
+          <button class="explorer-tab" data-section="business" onclick="loadExplorerSection('business')">
+            <i data-lucide="building-2"></i> Business
+          </button>
+          <button class="explorer-tab" data-section="risk_factors" onclick="loadExplorerSection('risk_factors')">
+            <i data-lucide="alert-triangle"></i> Risk Factors
+          </button>
+          <button class="explorer-tab" data-section="mda" onclick="loadExplorerSection('mda')">
+            <i data-lucide="bar-chart-3"></i> MD&A
+          </button>
+          <button class="explorer-tab" data-section="financial_statements" onclick="loadExplorerSection('financial_statements')">
+            <i data-lucide="calculator"></i> Financials
+          </button>
+          <button class="explorer-tab" data-section="executive_compensation" onclick="loadExplorerSection('executive_compensation')">
+            <i data-lucide="users"></i> Exec Comp
+          </button>
+          <button class="explorer-tab" data-section="controls" onclick="loadExplorerSection('controls')">
+            <i data-lucide="shield-check"></i> Controls
+          </button>
+        </div>
+
+        <!-- Explorer content area -->
+        <div id="explorer-content">
+          <!-- All Filings table (default) -->
+          <div class="chart-card" id="explorer-overview">
+            <div class="card-header">
+              <div>
+                <h3>SEC Filings</h3>
+                <p class="card-subtitle" id="filings-sub">Recent filings from SEC EDGAR</p>
+              </div>
+            </div>
+            <table class="data-table" id="filings-table">
+              <thead>
+                <tr>
+                  <th>Form</th>
+                  <th>Filing Date</th>
+                  <th>Description</th>
+                  <th class="right">Action</th>
+                </tr>
+              </thead>
+              <tbody id="filings-tbody">
+                <tr><td colspan="4" class="text-center text-muted">Search a company to see filings</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Section content (shown when a section tab is clicked) -->
+          <div class="chart-card" id="explorer-section" style="display:none">
+            <div class="card-header">
+              <div>
+                <h3 id="explorer-section-title">Section</h3>
+                <p class="card-subtitle" id="explorer-section-sub"></p>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="text-btn" onclick="copyExplorerText()"><i data-lucide="copy"></i> Copy</button>
+              </div>
+            </div>
+            <div id="explorer-section-body" class="explorer-body"></div>
+            <!-- Inline AI Q&A for the section -->
+            <div class="explorer-qa">
+              <div class="explorer-qa-header">
+                <i data-lucide="zap"></i>
+                <span>Ask AI about this section</span>
+              </div>
+              <div id="explorer-qa-messages" class="explorer-qa-messages"></div>
+              <form class="explorer-qa-input" onsubmit="askExplorerAI(); return false;">
+                <input id="explorer-qa-inp" placeholder="Ask a question about this section..." autocomplete="off"/>
+                <button type="submit" class="send-btn" style="padding:8px 14px;font-size:12px">Ask</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ INSIGHTS VIEW ═══ -->
+      <div class="view-panel" id="panel-insights" style="display:none">
+        <div class="chart-card">
+          <div class="card-header">
+            <div>
+              <h3>AI Insights</h3>
+              <p class="card-subtitle">AI-generated analysis powered by Claude</p>
+            </div>
+            <button class="send-btn" style="padding:6px 12px;font-size:12px" onclick="generateInsights()">Generate</button>
+          </div>
+          <div id="insights-content" style="font-size:13px;color:var(--text-secondary);line-height:1.7">
+            <p class="text-muted">Load a company and click Generate for AI-powered insights.</p>
+          </div>
+        </div>
+      </div>
     </div>
   </main>
 
-  <!-- RIGHT CHAT PANEL (380px) -->
-  <aside class="chat-panel" id="chat-panel">
+  <!-- RIGHT CHAT PANEL (always visible) -->
+  <aside class="chat-panel open" id="chat-panel">
     <div class="chat-header">
       <div class="chat-brand">
         <div class="chat-icon"><i data-lucide="zap"></i></div>
@@ -264,7 +440,6 @@
       <button class="icon-btn" onclick="toggleChat()"><i data-lucide="x"></i></button>
     </div>
     <div class="chat-messages" id="chat-messages">
-      <!-- Welcome + messages -->
       <div class="chat-welcome" id="chat-welcome">
         <p><strong>Ask anything</strong> about the loaded data</p>
         <p class="small">Executive summaries, comparisons, insights</p>
@@ -275,7 +450,7 @@
       <button class="chip" onclick="cbQ('What are the key risks?')">Key Risks</button>
       <button class="chip" onclick="cbQ('How is revenue trending?')">Revenue Trend</button>
       <button class="chip" onclick="cbQ('Compare to peers')">Compare Peers</button>
-      <button class="chip highlight" onclick="cbQ('What changed since last year?')">Filing Diff ✨</button>
+      <button class="chip highlight" onclick="cbQ('What changed since last year?')">YoY Changes</button>
     </div>
     <form class="chat-input" onsubmit="sendCb(); return false;">
       <input id="chat-inp" placeholder="Ask about financials..." autocomplete="off"/>
@@ -292,6 +467,59 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=10"></script>
+<!-- Terms & Conditions Gate -->
+<div class="tos-overlay" id="tos-overlay">
+  <div class="tos-card">
+    <div class="tos-header">
+      <div class="tos-brand">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--brand)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polyline>
+        </svg>
+        <div>
+          <span class="tos-brand-name">Fineas<span style="color:var(--text-muted)">.ai</span></span>
+          <span class="tos-brand-sub">SEC Financial Intelligence</span>
+        </div>
+      </div>
+    </div>
+    <div class="tos-body">
+      <h2>Terms of Use & Disclaimer</h2>
+      <p class="tos-updated">Last updated: March 2025</p>
+
+      <div class="tos-scroll">
+        <h3>1. AI-Generated Content Disclaimer</h3>
+        <p>Fineas.ai uses artificial intelligence and large language models (LLMs) to analyze, interpret, and present financial data from SEC EDGAR filings. <strong>AI systems can and do produce inaccurate, incomplete, or misleading outputs ("hallucinations").</strong> All AI-generated content — including summaries, insights, comparisons, narratives, and analytical commentary — should be independently verified before relying on it for any purpose.</p>
+
+        <h3>2. Not Financial Advice</h3>
+        <p>Nothing on Fineas.ai constitutes financial, investment, tax, or legal advice. The information presented is for <strong>educational and informational purposes only</strong>. You should consult a qualified financial advisor, accountant, or attorney before making any investment or financial decision. Fineas.ai does not recommend any securities, investment strategies, or courses of action.</p>
+
+        <h3>3. No Liability</h3>
+        <p>Fineas.ai, its creators, operators, and affiliates <strong>assume no liability whatsoever</strong> for any losses, damages, costs, or expenses — whether direct, indirect, incidental, consequential, or otherwise — arising from your use of or reliance on any information, data, analysis, or AI-generated content provided through this platform. <strong>You use Fineas.ai entirely at your own risk.</strong></p>
+
+        <h3>4. Data Accuracy</h3>
+        <p>Financial data is sourced from SEC EDGAR public filings via XBRL extraction. While we strive for accuracy, automated extraction from complex regulatory filings may produce errors, omissions, or misinterpretations. Data may be delayed, incomplete, or incorrectly parsed. <strong>Always verify critical data against the original SEC filings.</strong></p>
+
+        <h3>5. No Affiliation</h3>
+        <p>Fineas.ai is <strong>not affiliated with, endorsed by, or connected to</strong> any of the companies, organizations, or entities whose financial data appears on this platform. Fineas.ai is also not affiliated with the U.S. Securities and Exchange Commission (SEC), EDGAR, or any regulatory body. Company names, trademarks, and logos referenced herein belong to their respective owners.</p>
+
+        <h3>6. No Guarantee of Availability</h3>
+        <p>This platform is provided on an "as is" and "as available" basis without any warranties of any kind, express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, or non-infringement. We do not guarantee uninterrupted or error-free service.</p>
+
+        <h3>7. User Responsibility</h3>
+        <p>By using Fineas.ai, you acknowledge that you are solely responsible for your own investment and financial decisions. You agree not to hold Fineas.ai or its operators liable for any outcome resulting from your use of the platform.</p>
+
+        <h3>8. Changes to Terms</h3>
+        <p>We reserve the right to modify these terms at any time. Continued use of the platform after changes constitutes acceptance of the updated terms.</p>
+      </div>
+
+      <label class="tos-check">
+        <input type="checkbox" id="tos-agree"/>
+        <span>I have read and agree to the Terms of Use & Disclaimer. I understand that AI-generated content may be inaccurate and that Fineas.ai assumes no liability for any decisions made based on information provided.</span>
+      </label>
+      <button class="tos-accept" id="tos-accept" disabled onclick="acceptTos()">Accept & Continue</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=18"></script>
 </body>
 </html>

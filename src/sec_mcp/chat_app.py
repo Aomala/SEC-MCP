@@ -101,119 +101,267 @@ class CompsRequest(BaseModel):
 
 
 # ── Peer comparison map ────────────────────────────────────────────────────
-# Industry-based peer groups: primary ticker → [up to 4 peers]
-PEER_MAP: dict[str, list[str]] = {
-    # Big Tech
-    "AAPL": ["MSFT", "GOOG", "AMZN", "META"],
-    "MSFT": ["AAPL", "GOOG", "AMZN", "ORCL"],
-    "GOOG": ["META", "MSFT", "AMZN", "SNAP"],
-    "GOOGL": ["META", "MSFT", "AMZN", "SNAP"],
-    "META": ["GOOG", "SNAP", "PINS", "NFLX"],
-    "AMZN": ["MSFT", "AAPL", "GOOG", "WMT"],
-    # Semiconductors
-    "NVDA": ["AMD", "INTC", "QCOM", "AVGO"],
-    "AMD": ["NVDA", "INTC", "QCOM", "AVGO"],
-    "INTC": ["AMD", "NVDA", "QCOM", "TSM"],
-    "QCOM": ["NVDA", "AMD", "INTC", "AVGO"],
-    "AVGO": ["NVDA", "AMD", "QCOM", "INTC"],
-    "TSM": ["INTC", "NVDA", "AMAT", "LRCX"],
-    "ASML": ["AMAT", "LRCX", "KLAC", "TER"],
-    "AMAT": ["ASML", "LRCX", "KLAC", "NVDA"],
-    "LRCX": ["AMAT", "ASML", "KLAC", "TER"],
-    # Enterprise Software
-    "ORCL": ["SAP", "MSFT", "IBM", "CRM"],
-    "SAP": ["ORCL", "MSFT", "IBM", "CRM"],
-    "CRM": ["MSFT", "ORCL", "SAP", "NOW"],
-    "NOW": ["CRM", "MSFT", "ORCL", "SAP"],
-    "IBM": ["ORCL", "MSFT", "HPE", "ACN"],
-    "CSCO": ["JNPR", "PANW", "FTNT", "HPE"],
-    "ADBE": ["CRM", "MSFT", "NOW", "WDAY"],
-    "WDAY": ["CRM", "ADBE", "SAP", "ORCL"],
-    "INTU": ["MSFT", "ADBE", "CRM", "NOW"],
+# ═══════════════════════════════════════════════════════════════════════════
+#  Rules-Based Comparable Company Engine
+#
+#  Matching rules (applied in order):
+#    1. Sector match — same SECTOR_UNIVERSE bucket
+#    2. Size filter — revenue within 0.2x–5x of target
+#    3. Rank by revenue proximity (closest size = best comp)
+#    4. Return top 5 comps
+#
+#  If target ticker is unknown or has no revenue data,
+#  falls back to the static PEER_MAP.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Sector universe: sector_id → list of tickers (ordered roughly by size)
+# Each ticker appears in exactly one sector.
+SECTOR_UNIVERSE: dict[str, list[str]] = {
+    "mega_tech": ["AAPL", "MSFT", "GOOG", "GOOGL", "AMZN", "META", "NFLX"],
+    "semiconductors": [
+        "NVDA", "TSM", "AVGO", "ASML", "AMD", "QCOM", "TXN", "INTC",
+        "AMAT", "LRCX", "KLAC", "MRVL", "ADI", "NXPI", "MU", "ON",
+        "MCHP", "SWKS", "MPWR", "TER", "ENTG", "WOLF",
+    ],
+    "enterprise_software": [
+        "ORCL", "SAP", "CRM", "ADBE", "IBM", "INTU", "NOW", "WDAY",
+        "SNPS", "CDNS", "ANSS", "PLTR", "TEAM", "HUBS", "DDOG", "MDB",
+        "SNOW", "ZS", "NET", "VEEV", "BILL", "TTD", "ESTC", "DOCN",
+    ],
+    "cybersecurity": ["PANW", "CRWD", "FTNT", "ZS", "OKTA", "S", "QLYS", "TENB", "RPD"],
+    "it_services": ["ACN", "CSCO", "HPE", "HPQ", "DELL", "CDW", "LDOS", "SAIC"],
+    "fintech_payments": [
+        "V", "MA", "PYPL", "AXP", "SQ", "FIS", "FISV", "GPN",
+        "AFRM", "COIN", "TOST", "BILL", "FOUR", "RPAY",
+    ],
+    "banks_mega": ["JPM", "BAC", "WFC", "C", "GS", "MS"],
+    "banks_regional": [
+        "USB", "PNC", "TFC", "COF", "SCHW", "BK", "STT", "FITB",
+        "KEY", "MTB", "HBAN", "RF", "CFG", "ZION", "CMA", "ALLY",
+    ],
+    "insurance": [
+        "BRK-B", "BRK-A", "ALL", "PGR", "MET", "AIG", "PRU", "AFL",
+        "TRV", "HIG", "CB", "CINF", "GL", "RGA", "EG", "WRB",
+    ],
+    "pharma_large": [
+        "LLY", "JNJ", "ABBV", "MRK", "PFE", "AZN", "NVO", "BMY",
+        "AMGN", "GILD", "REGN", "VRTX", "SNY", "GSK", "TAK",
+    ],
+    "biotech": [
+        "MRNA", "BNTX", "BIIB", "SGEN", "ALNY", "BMRN", "INCY",
+        "SAREPTA", "IONS", "PCVX", "EXEL", "RARE", "HALO",
+    ],
+    "healthcare_services": [
+        "UNH", "ELV", "CI", "HUM", "CNC", "MOH",
+        "CVS", "WBA", "HCA", "THC", "UHS",
+    ],
+    "medtech": [
+        "ABT", "MDT", "SYK", "BSX", "ISRG", "EW", "ZBH",
+        "DXCM", "ALGN", "HOLX", "BAX", "BDX",
+    ],
+    "energy_majors": ["XOM", "CVX", "SHEL", "BP", "TTE", "COP", "EOG", "SLB"],
+    "energy_ep": [
+        "PXD", "DVN", "FANG", "MPC", "VLO", "PSX", "HES",
+        "OXY", "HAL", "BKR", "CTRA",
+    ],
+    "utilities": [
+        "NEE", "DUK", "SO", "AEP", "D", "SRE", "EXC", "XEL",
+        "WEC", "ED", "ES", "DTE", "PPL", "FE", "CMS", "AES",
+    ],
+    "telecom": ["T", "VZ", "TMUS", "CMCSA", "CHTR", "LUMN"],
+    "retail_broadline": ["WMT", "AMZN", "COST", "TGT", "DG", "DLTR", "BJ", "KR"],
+    "retail_specialty": [
+        "HD", "LOW", "TJX", "ROST", "BURL", "ULTA", "BBY",
+        "FIVE", "ORLY", "AZO", "AAP", "WSM", "RH",
+    ],
+    "restaurants": ["MCD", "SBUX", "CMG", "YUM", "DPZ", "QSR", "DINE", "SHAK", "WING", "CAVA"],
+    "consumer_staples": [
+        "PG", "KO", "PEP", "UL", "CL", "MDLZ", "KHC", "GIS",
+        "SJM", "HSY", "CPB", "CAG", "KDP", "MNST", "CLX", "KMB",
+    ],
+    "auto": ["TSLA", "TM", "GM", "F", "STLA", "HMC", "RIVN", "LCID", "NIO", "LI", "XPEV"],
+    "aerospace_defense": ["BA", "LMT", "RTX", "NOC", "GD", "LHX", "HII", "TXT", "HWM"],
+    "industrials": [
+        "GE", "HON", "MMM", "CAT", "DE", "EMR", "ETN", "ROK",
+        "ITW", "PH", "CMI", "DOV", "IR", "AME",
+    ],
+    "reits": [
+        "PLD", "AMT", "EQIX", "CCI", "SPG", "O", "DLR", "PSA",
+        "WELL", "AVB", "EQR", "VTR", "ARE", "SUI", "MAA", "WPC",
+        "SBAC", "IRM", "VICI", "INVH", "GLPI",
+    ],
+    "media_entertainment": [
+        "DIS", "WBD", "PARA", "CMCSA", "FOX", "NWSA", "LYV",
+        "SPOT", "ROKU", "IMAX", "MSGS",
+    ],
+    "airlines": ["DAL", "UAL", "AAL", "LUV", "ALK", "JBLU", "SAVE", "HA"],
+    "crypto": ["COIN", "MSTR", "MARA", "RIOT", "CLSK", "HUT", "BITF", "WULF", "CIFR"],
+    "materials_mining": [
+        "NEM", "GOLD", "AEM", "FNV", "WPM", "FCX", "BHP", "RIO",
+        "NUE", "STLD", "CLF", "X", "AA",
+    ],
+    "logistics": ["UPS", "FDX", "XPO", "JBHT", "ODFL", "CHRW", "EXPD", "SAIA"],
+}
+
+# Build reverse lookup: ticker → sector_id
+_TICKER_TO_SECTOR: dict[str, str] = {}
+for _sect, _tickers in SECTOR_UNIVERSE.items():
+    for _t in _tickers:
+        _TICKER_TO_SECTOR[_t] = _sect
+
+# Revenue estimates (in billions) for size-tier matching
+# These are approximate and used ONLY for sizing comps when we can't fetch live data.
+# Updated periodically. If a ticker isn't here, we fetch from XBRL.
+_REVENUE_ESTIMATES_B: dict[str, float] = {
+    # Mega tech
+    "AAPL": 390, "MSFT": 245, "GOOG": 340, "GOOGL": 340, "AMZN": 640, "META": 160, "NFLX": 39,
+    # Semis
+    "NVDA": 130, "TSM": 90, "AVGO": 50, "ASML": 30, "AMD": 24, "QCOM": 38, "TXN": 18,
+    "INTC": 54, "AMAT": 27, "LRCX": 15, "KLAC": 11, "MRVL": 6, "ADI": 12, "NXPI": 13,
+    "MU": 25, "ON": 8, "MCHP": 8, "SWKS": 5, "MPWR": 2, "TER": 3,
+    # Enterprise SW
+    "ORCL": 53, "SAP": 35, "CRM": 35, "ADBE": 21, "IBM": 62, "INTU": 16, "NOW": 10,
+    "WDAY": 8, "SNPS": 6, "CDNS": 4, "PLTR": 3, "TEAM": 4, "HUBS": 2, "DDOG": 2,
+    "SNOW": 3, "ZS": 2, "NET": 2, "VEEV": 2, "MDB": 2, "TTD": 2,
     # Cybersecurity
-    "PANW": ["FTNT", "CSCO", "CRWD", "OKTA"],
-    "CRWD": ["PANW", "FTNT", "OKTA", "ZS"],
-    "FTNT": ["PANW", "CRWD", "CSCO", "OKTA"],
-    # Cloud / SaaS
-    "SNOW": ["DBRX", "CRM", "MSFT", "GOOG"],
-    "DDOG": ["SNOW", "MSFT", "NOW", "SPLK"],
-    # E-commerce / Retail
-    "WMT": ["TGT", "AMZN", "COST", "KR"],
-    "TGT": ["WMT", "AMZN", "COST", "DLTR"],
-    "COST": ["WMT", "TGT", "BJ", "SFM"],
-    # Auto
-    "TSLA": ["GM", "F", "NIO", "RIVN"],
-    "GM": ["F", "TSLA", "STLA", "TM"],
-    "F": ["GM", "TSLA", "STLA", "TM"],
-    "TM": ["HMC", "GM", "F", "STLA"],
-    "RIVN": ["TSLA", "NIO", "LCID", "F"],
-    # Streaming / Media
-    "NFLX": ["DIS", "WBD", "PARA", "CMCSA"],
-    "DIS": ["NFLX", "WBD", "PARA", "CMCSA"],
-    "WBD": ["DIS", "NFLX", "PARA", "CMCSA"],
-    # Financials — Banks
-    "JPM": ["BAC", "WFC", "C", "GS"],
-    "BAC": ["JPM", "WFC", "C", "USB"],
-    "WFC": ["JPM", "BAC", "C", "USB"],
-    "C": ["JPM", "BAC", "WFC", "GS"],
-    "GS": ["MS", "JPM", "BAC", "C"],
-    "MS": ["GS", "JPM", "BAC", "C"],
-    "USB": ["JPM", "BAC", "WFC", "PNC"],
-    "PNC": ["USB", "JPM", "BAC", "WFC"],
-    # Financials — Payments
-    "V": ["MA", "AXP", "PYPL", "FIS"],
-    "MA": ["V", "AXP", "PYPL", "FIS"],
-    "PYPL": ["V", "MA", "AFRM", "SQ"],
-    "SQ": ["PYPL", "V", "MA", "AFRM"],
-    "AXP": ["V", "MA", "JPM", "C"],
-    # Pharma / Biotech
-    "JNJ": ["PFE", "ABBV", "MRK", "LLY"],
-    "PFE": ["JNJ", "MRNA", "ABBV", "MRK"],
-    "MRNA": ["PFE", "BNTX", "JNJ", "AZN"],
-    "LLY": ["JNJ", "PFE", "ABBV", "MRK"],
-    "ABBV": ["JNJ", "PFE", "MRK", "LLY"],
-    "MRK": ["JNJ", "PFE", "ABBV", "LLY"],
+    "PANW": 8, "CRWD": 4, "FTNT": 6, "OKTA": 2, "ZS": 2, "S": 1, "QLYS": 0.6,
+    # IT Services
+    "ACN": 65, "CSCO": 57, "HPE": 30, "HPQ": 54, "DELL": 102, "CDW": 21,
+    # Fintech
+    "V": 35, "MA": 27, "PYPL": 30, "AXP": 60, "SQ": 22, "FIS": 15, "FISV": 20, "GPN": 10,
+    "COIN": 5, "AFRM": 2, "TOST": 4,
+    # Banks
+    "JPM": 170, "BAC": 100, "WFC": 82, "C": 78, "GS": 50, "MS": 55,
+    "USB": 24, "PNC": 22, "TFC": 23, "COF": 37, "SCHW": 20, "BK": 18, "STT": 12,
+    # Insurance
+    "BRK-B": 370, "BRK-A": 370, "ALL": 57, "PGR": 62, "MET": 70, "AIG": 46,
+    "PRU": 60, "AFL": 20, "TRV": 42, "CB": 45,
+    # Pharma
+    "LLY": 42, "JNJ": 85, "ABBV": 58, "MRK": 60, "PFE": 58, "AZN": 46, "NVO": 33,
+    "BMY": 45, "AMGN": 28, "GILD": 27, "REGN": 14, "VRTX": 10,
+    # Biotech
+    "MRNA": 7, "BNTX": 4, "BIIB": 10,
     # Healthcare Services
-    "UNH": ["CI", "CVS", "HUM", "CNC"],
-    "CI": ["UNH", "CVS", "HUM", "CNC"],
-    "CVS": ["WBA", "UNH", "CI", "HUM"],
+    "UNH": 370, "ELV": 170, "CI": 230, "HUM": 110, "CNC": 154,
+    "CVS": 360, "WBA": 140, "HCA": 65,
     # Energy
-    "XOM": ["CVX", "BP", "SHEL", "COP"],
-    "CVX": ["XOM", "BP", "SHEL", "COP"],
-    "COP": ["XOM", "CVX", "EOG", "PXD"],
+    "XOM": 350, "CVX": 200, "SHEL": 380, "BP": 220, "TTE": 220, "COP": 60, "EOG": 23,
+    "SLB": 36, "PXD": 20, "DVN": 15, "MPC": 150, "VLO": 145, "PSX": 150,
+    # Utilities
+    "NEE": 28, "DUK": 29, "SO": 25, "AEP": 19, "D": 15, "SRE": 17, "EXC": 22,
     # Telecom
-    "T": ["VZ", "TMUS", "CMCSA", "CHTR"],
-    "VZ": ["T", "TMUS", "CMCSA", "CHTR"],
-    "TMUS": ["T", "VZ", "CMCSA", "CHTR"],
-    # Consumer Staples
-    "KO": ["PEP", "MNST", "STZ", "TAP"],
-    "PEP": ["KO", "MNST", "STZ", "TAP"],
-    "PG": ["UL", "CL", "CLX", "KMB"],
-    "UL": ["PG", "CL", "CLX", "KMB"],
+    "T": 122, "VZ": 134, "TMUS": 80, "CMCSA": 122, "CHTR": 55,
+    # Retail
+    "WMT": 650, "COST": 250, "TGT": 107, "DG": 40, "DLTR": 30, "KR": 150,
+    "HD": 157, "LOW": 87, "TJX": 54, "BBY": 43,
     # Restaurants
-    "MCD": ["SBUX", "YUM", "CMG", "DPZ"],
-    "SBUX": ["MCD", "CMG", "YUM", "DPZ"],
-    "CMG": ["MCD", "SBUX", "YUM", "DPZ"],
-    # Airlines
-    "DAL": ["UAL", "AAL", "LUV", "ALK"],
-    "UAL": ["DAL", "AAL", "LUV", "ALK"],
-    "AAL": ["DAL", "UAL", "LUV", "ALK"],
-    # REITs
-    "SPG": ["O", "AMT", "PLD", "WPC"],
-    "AMT": ["CCI", "SBAC", "PLD", "SPG"],
+    "MCD": 26, "SBUX": 36, "CMG": 10, "YUM": 7, "DPZ": 4.5,
+    # Consumer Staples
+    "PG": 84, "KO": 46, "PEP": 91, "UL": 62, "CL": 20, "MDLZ": 36,
+    "KHC": 26, "GIS": 20, "CLX": 7, "KMB": 20,
+    # Auto
+    "TSLA": 97, "TM": 310, "GM": 172, "F": 176, "STLA": 190, "RIVN": 4, "NIO": 8,
+    # Aero/Defense
+    "BA": 78, "LMT": 68, "RTX": 69, "NOC": 40, "GD": 43,
     # Industrials
-    "BA": ["LMT", "RTX", "NOC", "GD"],
-    "LMT": ["BA", "RTX", "NOC", "GD"],
-    "GE": ["HON", "MMM", "RTX", "EMR"],
-    "HON": ["GE", "MMM", "RTX", "EMR"],
-    # Mining / Materials
-    "NEM": ["GOLD", "AEM", "FNV", "WPM"],
-    "GOLD": ["NEM", "AEM", "FNV", "WPM"],
-    # Crypto / Blockchain-adjacent
-    "COIN": ["MSTR", "MARA", "RIOT", "CLSK"],
-    "MSTR": ["COIN", "MARA", "RIOT", "CLSK"],
-    # Music / Audio
-    "SPOT": ["AAPL", "AMZN", "GOOG", "NFLX"],
+    "GE": 68, "HON": 37, "MMM": 33, "CAT": 67, "DE": 55, "EMR": 17, "ETN": 24,
+    # REITs
+    "PLD": 8, "AMT": 12, "EQIX": 8, "CCI": 7, "SPG": 6, "O": 4, "DLR": 6, "PSA": 4,
+    # Media
+    "DIS": 90, "WBD": 40, "PARA": 30, "SPOT": 16, "ROKU": 4,
+    # Airlines
+    "DAL": 58, "UAL": 55, "AAL": 53, "LUV": 27, "ALK": 11,
+    # Crypto
+    "MSTR": 0.5, "MARA": 0.4, "RIOT": 0.3, "CLSK": 0.2,
+    # Materials
+    "NEM": 12, "GOLD": 5, "FCX": 23, "BHP": 55, "NUE": 35, "STLD": 18,
+    # Logistics
+    "UPS": 91, "FDX": 88, "XPO": 8, "ODFL": 6,
+}
+
+
+def _find_comps(
+    ticker: str,
+    *,
+    max_comps: int = 5,
+    size_range: tuple[float, float] = (0.2, 5.0),
+) -> list[str]:
+    """Find comparable companies using sector + size rules.
+
+    Rules:
+      1. Find the ticker's sector from SECTOR_UNIVERSE
+      2. Get all tickers in the same sector (excluding the target)
+      3. Filter by revenue size: keep those within size_range of target
+      4. Sort by revenue proximity (closest match first)
+      5. Return top max_comps
+
+    If ticker is not in any sector, returns empty list.
+    If we can't determine revenue, returns sector peers by position (assumes size ordering).
+    """
+    tk = ticker.upper()
+    sector = _TICKER_TO_SECTOR.get(tk)
+    if not sector:
+        return []
+
+    sector_peers = [t for t in SECTOR_UNIVERSE[sector] if t != tk]
+    if not sector_peers:
+        return []
+
+    # Get target revenue for size matching
+    target_rev = _REVENUE_ESTIMATES_B.get(tk)
+
+    # If we don't know the target's revenue, return the closest peers by list position
+    # (SECTOR_UNIVERSE lists are ordered roughly by size)
+    if target_rev is None or target_rev <= 0:
+        # Find target's position in the sector list
+        full_list = SECTOR_UNIVERSE[sector]
+        try:
+            idx = full_list.index(tk)
+        except ValueError:
+            idx = 0
+        # Take neighbors: 2 above, 3 below (or adjust if at edges)
+        start = max(0, idx - 2)
+        end = min(len(full_list), idx + 4)
+        neighbors = [t for t in full_list[start:end] if t != tk]
+        return neighbors[:max_comps]
+
+    # Size-filtered matching
+    lo, hi = target_rev * size_range[0], target_rev * size_range[1]
+    scored: list[tuple[str, float]] = []
+
+    for peer in sector_peers:
+        peer_rev = _REVENUE_ESTIMATES_B.get(peer)
+        if peer_rev is None:
+            # Unknown size — include with low priority (distance = large)
+            scored.append((peer, 1000.0))
+            continue
+        if lo <= peer_rev <= hi:
+            # Revenue ratio distance: how many "x" away from 1:1
+            ratio = max(peer_rev / target_rev, target_rev / peer_rev)
+            scored.append((peer, ratio))
+
+    # Sort by distance (closest match first)
+    scored.sort(key=lambda x: x[1])
+
+    # If size filtering is too restrictive (< 3 results), widen to full sector
+    if len(scored) < 3:
+        for peer in sector_peers:
+            if peer not in [s[0] for s in scored]:
+                peer_rev = _REVENUE_ESTIMATES_B.get(peer, 0)
+                ratio = max(peer_rev / target_rev, target_rev / peer_rev) if peer_rev > 0 else 100.0
+                scored.append((peer, ratio))
+        scored.sort(key=lambda x: x[1])
+
+    return [t for t, _ in scored[:max_comps]]
+
+
+# Legacy static fallback (used when ticker isn't in SECTOR_UNIVERSE)
+PEER_MAP: dict[str, list[str]] = {
+    tk: _find_comps(tk, max_comps=5) or peers
+    for tk, peers in {
+        "AAPL": ["MSFT", "GOOG", "AMZN", "META"],
+        "MSFT": ["AAPL", "GOOG", "AMZN", "ORCL"],
+    }.items()
 }
 
 
@@ -509,8 +657,8 @@ def _handle_entity(ticker: str) -> dict:
                             ceo_name = m.group(1).strip()
                             ceo_source = f"10-K filed {recent_10k[0].filing_date}"
                             break
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("CEO extraction from filing text failed: %s", exc)
 
         # Fallback: try Claude to extract CEO if we have the API key
         if not ceo_name:
@@ -536,8 +684,8 @@ def _handle_entity(ticker: str) -> dict:
                     if name_text and name_text.lower() != "unknown" and len(name_text) < 60:
                         ceo_name = name_text
                         ceo_source = "AI lookup (may not be current)"
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Claude CEO lookup failed: %s", exc)
 
         profile["ceo"] = ceo_name
         profile["ceo_source"] = ceo_source
@@ -734,7 +882,8 @@ async def chat(req: ChatRequest, bg: BackgroundTasks) -> dict:
                 bg.add_task(run_historical_extraction, tickers[0])
 
         return {"type": "result", **meta, **result}
-    except Exception:
+    except Exception as exc:
+        log.exception("Chat request failed")
         return {"type": "error", "message": traceback.format_exc(), **meta}
 
 
@@ -880,10 +1029,223 @@ async def cache_stats():
 
 @app.get("/api/peers/{ticker}")
 async def get_peers(ticker: str):
-    """Return suggested peer companies for the comps view."""
+    """Return suggested peer companies using rules-based sector + size matching.
+
+    Rules:
+      1. Sector match — same SECTOR_UNIVERSE bucket
+      2. Size filter — revenue within 0.2x–5x of target
+      3. Ranked by revenue proximity
+    """
     tk = ticker.upper()
-    peers = PEER_MAP.get(tk, [])
-    return {"ticker": tk, "peers": peers}
+    # Dynamic comp engine
+    comps = _find_comps(tk, max_comps=5)
+    # Fallback to legacy map
+    if not comps:
+        comps = PEER_MAP.get(tk, [])
+    sector = _TICKER_TO_SECTOR.get(tk, "unknown")
+    target_rev = _REVENUE_ESTIMATES_B.get(tk)
+    return {
+        "ticker": tk,
+        "peers": comps,
+        "sector": sector,
+        "target_revenue_est": target_rev,
+        "match_method": "sector_size" if comps else "fallback",
+    }
+
+
+@app.get("/api/geo-revenue/{ticker}")
+async def get_geo_revenue(ticker: str, period: str = "annual"):
+    """Geographic revenue breakdown — FMP first, then XBRL, then filing text."""
+    tk = ticker.upper()
+
+    # Check Supabase cache
+    from sec_mcp import supabase_cache
+    cached = supabase_cache.get_cached(tk, "geo_segments", period)
+    if cached:
+        return cached
+
+    # 1. Try FMP API (best: structured, multi-year)
+    try:
+        from sec_mcp.fmp_client import get_geo_segments, is_available as fmp_ok
+        if fmp_ok():
+            fmp_data = get_geo_segments(tk, period=period)
+            if fmp_data and fmp_data[0].get("segments"):
+                # Return current + historical
+                current = fmp_data[0]["segments"]
+                geo_formatted = [
+                    {"segment": s["name"], "value": s["value"]}
+                    for s in current
+                ]
+                result = {
+                    "ticker": tk,
+                    "geographic_segments": geo_formatted,
+                    "history": fmp_data,
+                    "source": "fmp",
+                }
+                supabase_cache.set_cached(tk, "geo_segments", result, period)
+                return result
+    except Exception as exc:
+        log.debug("FMP geo failed for %s: %s", tk, exc)
+
+    # 2. Try XBRL segment data
+    try:
+        data = extract_financials(tk, include_segments=True)
+        if data:
+            geo = (data.get("segments") or {}).get("geographic_segments", [])
+            if len(geo) >= 2:
+                result = {"ticker": tk, "geographic_segments": geo, "source": "xbrl"}
+                supabase_cache.set_cached(tk, "geo_segments", result, period)
+                return result
+    except Exception as exc:
+        log.warning("XBRL geo extraction failed for %s: %s", tk, exc)
+
+    # 3. Fall back to filing text parsing
+    try:
+        from sec_mcp.financials import _parse_geo_from_filing_text
+
+        filing_result = _handle_filing_text(tk, section="financial_statements", form_type="10-K")
+        text = filing_result.get("text", "")
+        total_rev = None
+        try:
+            data = extract_financials(tk)
+            total_rev = (data or {}).get("metrics", {}).get("revenue")
+        except Exception as exc:
+            log.debug("Revenue fetch for geo scale failed for %s: %s", tk, exc)
+
+        geo = _parse_geo_from_filing_text(text, total_revenue=total_rev)
+        if geo:
+            result = {"ticker": tk, "geographic_segments": geo, "source": "filing_text"}
+            supabase_cache.set_cached(tk, "geo_segments", result, period)
+            return result
+    except Exception as e:
+        log.warning("Geo revenue parsing failed for %s: %s", tk, e)
+
+    return {"ticker": tk, "geographic_segments": [], "source": "none"}
+
+
+@app.get("/api/segments/{ticker}")
+async def get_segments(ticker: str, period: str = "annual"):
+    """Revenue segments — FMP first, then XBRL, then filing text."""
+    tk = ticker.upper()
+
+    # Check Supabase cache
+    from sec_mcp import supabase_cache
+    cached = supabase_cache.get_cached(tk, "product_segments", period)
+    if cached:
+        return cached
+
+    # 1. Try FMP API (best: structured product/business segments)
+    try:
+        from sec_mcp.fmp_client import get_product_segments, is_available as fmp_ok
+        if fmp_ok():
+            fmp_data = get_product_segments(tk, period=period)
+            if fmp_data and fmp_data[0].get("segments"):
+                current = fmp_data[0]["segments"]
+                seg_formatted = [
+                    {"segment": s["name"], "value": s["value"]}
+                    for s in current
+                ]
+                result = {
+                    "ticker": tk,
+                    "segments": seg_formatted,
+                    "history": fmp_data,
+                    "source": "fmp",
+                }
+                supabase_cache.set_cached(tk, "product_segments", result, period)
+                return result
+    except Exception as exc:
+        log.debug("FMP segments failed for %s: %s", tk, exc)
+
+    # 2. Try XBRL segments
+    try:
+        data = extract_financials(tk, include_segments=True)
+        if data:
+            segs = (data.get("segments") or {}).get("revenue_segments", [])
+            if len(segs) >= 2:
+                result = {"ticker": tk, "segments": segs, "source": "xbrl"}
+                supabase_cache.set_cached(tk, "product_segments", result, period)
+                return result
+    except Exception as exc:
+        log.warning("XBRL segment extraction failed for %s: %s", tk, exc)
+
+    # 3. Fall back to filing text parsing
+    try:
+        from sec_mcp.financials import _parse_segments_from_filing_text
+
+        total_rev = None
+        try:
+            data = extract_financials(tk)
+            total_rev = (data or {}).get("metrics", {}).get("revenue")
+        except Exception as exc:
+            log.debug("Revenue fetch for segment scale failed for %s: %s", tk, exc)
+
+        for section in ("mda", "financial_statements"):
+            filing_result = _handle_filing_text(tk, section=section, form_type="10-K")
+            text = filing_result.get("text", "")
+            segs = _parse_segments_from_filing_text(text, total_revenue=total_rev)
+            if len(segs) >= 2:
+                result = {"ticker": tk, "segments": segs, "source": "filing_text"}
+                supabase_cache.set_cached(tk, "product_segments", result, period)
+                return result
+    except Exception as e:
+        log.warning("Segment parsing failed for %s: %s", tk, e)
+
+    return {"ticker": tk, "segments": [], "source": "none"}
+
+
+@app.get("/api/financials-history/{ticker}")
+async def get_financials_history(ticker: str, period: str = "annual",
+                                  date_from: str = "", date_to: str = "",
+                                  limit: int = 10):
+    """Multi-year income statement, balance sheet, and cash flow data from FMP.
+
+    Used by the frontend for date-range chart rendering.
+    """
+    tk = ticker.upper()
+
+    from sec_mcp import supabase_cache
+    cache_type = "income_history"
+    cached = supabase_cache.get_cached(tk, cache_type, period, date_from, date_to)
+    if cached:
+        return cached
+
+    try:
+        from sec_mcp.fmp_client import (
+            get_income_statements,
+            get_balance_sheet,
+            get_cash_flow,
+            is_available as fmp_ok,
+        )
+        if not fmp_ok():
+            return {"ticker": tk, "error": "FMP API not configured", "income": [], "balance": [], "cashflow": []}
+
+        income = get_income_statements(tk, period=period, limit=limit)
+        balance = get_balance_sheet(tk, period=period, limit=limit)
+        cashflow = get_cash_flow(tk, period=period, limit=limit)
+
+        # Apply date range filter if provided
+        if date_from:
+            income = [r for r in income if r.get("date", "") >= date_from]
+            balance = [r for r in balance if r.get("date", "") >= date_from]
+            cashflow = [r for r in cashflow if r.get("date", "") >= date_from]
+        if date_to:
+            income = [r for r in income if r.get("date", "") <= date_to]
+            balance = [r for r in balance if r.get("date", "") <= date_to]
+            cashflow = [r for r in cashflow if r.get("date", "") <= date_to]
+
+        result = {
+            "ticker": tk,
+            "period": period,
+            "income": income,
+            "balance": balance,
+            "cashflow": cashflow,
+            "source": "fmp",
+        }
+        supabase_cache.set_cached(tk, cache_type, result, period, date_from, date_to)
+        return result
+    except Exception as exc:
+        log.warning("FMP history fetch failed for %s: %s", tk, exc)
+        return {"ticker": tk, "error": str(exc), "income": [], "balance": [], "cashflow": []}
 
 
 @app.post("/api/comps")
@@ -1010,8 +1372,8 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
                     for k, v in data.get("metrics", {}).items():
                         if v is not None:
                             context_parts.append(f"  {k}: {v}")
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Financial context fetch failed for chatbot: %s", exc)
 
         context_text = (
             "\n".join(context_parts) if context_parts
@@ -1029,12 +1391,19 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
             "- Simple factual questions (\"what's revenue?\") → 1-2 sentences with the number and source.\n"
             "- Analytical questions (\"how are margins trending?\") → 2-3 paragraphs with bullets.\n"
             "- Deep-dive requests (\"executive summary\", \"analyze\") → full structured breakdown with ## headers.\n\n"
-            "ALWAYS:\n"
-            "- Reference specific numbers from the data (format: **$1.23B**, **$456M**, **12.3%**).\n"
+            "FORMAT — Your response is rendered as full Markdown (GFM). Use rich formatting:\n"
+            "- **Bold** for key numbers, terms, and company names.\n"
+            "- Use `## Headers` and `### Subheaders` to organize longer responses.\n"
+            "- Use bullet points (`- item`) for lists of 3+ items.\n"
+            "- Use **Markdown tables** for side-by-side comparisons or multi-metric summaries:\n"
+            "  ```\n"
+            "  | Metric | Current | Prior | Change |\n"
+            "  |--------|---------|-------|--------|\n"
+            "  | Revenue | $100B | $90B | +11.1% |\n"
+            "  ```\n"
+            "- Reference specific numbers (format: **$1.23B**, **$456M**, **12.3%**).\n"
             "- Start with a direct answer on the first line — no preamble.\n"
             "- Cite the filing source (e.g., 'per the 10-K filed 2024-11-01').\n"
-            "- Use **bold** for key numbers, terms, and company names.\n"
-            "- Use bullet points (- item) for lists of 3+ items.\n"
             "- Compare to prior periods when data is available — calculate % changes.\n"
             "- If data is missing, say exactly what's missing and suggest how to get it.\n\n"
             "FOR DEEP ANALYSIS:\n"

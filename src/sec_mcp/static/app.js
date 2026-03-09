@@ -51,6 +51,11 @@ const _dataCache = {};
 /** Current main view ('dashboard', 'compare', 'filing') */
 let _activeView = 'dashboard';
 
+/** Date range state for multi-year charts */
+let _chartRange = 3;          // years (0 = all)
+let _chartPeriod = 'annual';  // 'annual' or 'quarter'
+let _fmpHistory = null;       // cached FMP history data
+
 /** Debounce timer for search input */
 let _searchTimeout = null;
 
@@ -77,22 +82,223 @@ const CHART_COLORS = {
  * Initialize the application on DOMContentLoaded.
  * Wires up all event listeners and renders initial state.
  */
+// Register Chart.js datalabels plugin globally
+if (typeof ChartDataLabels !== 'undefined') {
+  Chart.register(ChartDataLabels);
+  // Default: datalabels OFF globally (opt-in per chart)
+  Chart.defaults.plugins.datalabels = { display: false };
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   // Initialize Lucide icons (convert data-lucide to SVG)
   lucide.createIcons();
-  
+
   // Setup theme from localStorage
   initTheme();
-  
+
   // Wire up all event handlers
   initKeyboardShortcuts();
   initNavigation();
   initSearch();
   initChat();
-  
+
+  // Terms of Service gate
+  initTos();
+
   // Log initialization complete
   console.log('[Fineas.ai] Application initialized');
 });
+
+// ========================================
+// TERMS OF SERVICE GATE
+// ========================================
+
+function initTos() {
+  const overlay = document.getElementById('tos-overlay');
+  const checkbox = document.getElementById('tos-agree');
+  const btn = document.getElementById('tos-accept');
+  if (!overlay || !checkbox || !btn) return;
+
+  // Check if already accepted
+  if (localStorage.getItem('fineas-tos-accepted') === '1') {
+    overlay.style.display = 'none';
+    return;
+  }
+
+  // Show overlay, disable app interaction
+  overlay.style.display = 'flex';
+
+  checkbox.addEventListener('change', () => {
+    btn.disabled = !checkbox.checked;
+  });
+}
+
+function acceptTos() {
+  localStorage.setItem('fineas-tos-accepted', '1');
+  const overlay = document.getElementById('tos-overlay');
+  if (overlay) {
+    overlay.style.opacity = '0';
+    overlay.style.transition = 'opacity 0.3s ease';
+    setTimeout(() => { overlay.style.display = 'none'; }, 300);
+  }
+}
+
+// ========================================
+// DATE RANGE & FMP HISTORY
+// ========================================
+
+function setDateRange(years) {
+  _chartRange = years;
+  document.querySelectorAll('.range-presets .range-btn').forEach(b => {
+    b.classList.toggle('active', parseInt(b.dataset.range) === years);
+  });
+  if (_tk) loadFmpHistory();
+}
+
+function setChartPeriod(period) {
+  _chartPeriod = period;
+  document.querySelectorAll('.range-period .range-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.period === period);
+  });
+  if (_tk) loadFmpHistory();
+}
+
+function applyCustomRange() {
+  const from = document.getElementById('range-from')?.value;
+  const to = document.getElementById('range-to')?.value;
+  if (from && to && parseInt(from) <= parseInt(to)) {
+    _chartRange = -1; // custom
+    document.querySelectorAll('.range-presets .range-btn').forEach(b => b.classList.remove('active'));
+    if (_tk) loadFmpHistory(from + '-01-01', to + '-12-31');
+  }
+}
+
+function loadFmpHistory(dateFrom, dateTo) {
+  if (!_tk) return;
+  const rangeBar = document.getElementById('date-range-bar');
+  if (rangeBar) rangeBar.style.display = 'flex';
+
+  let url = '/api/financials-history/' + encodeURIComponent(_tk) +
+    '?period=' + _chartPeriod + '&limit=20';
+  if (dateFrom) url += '&date_from=' + dateFrom;
+  if (dateTo) url += '&date_to=' + dateTo;
+
+  const sub = document.getElementById('revenue-subtitle');
+  if (sub) sub.textContent = 'Loading history...';
+
+  fetch(url)
+    .then(r => r.json())
+    .then(j => {
+      if (j.error) {
+        if (sub) sub.textContent = 'FMP unavailable — showing SEC XBRL';
+        return;
+      }
+      _fmpHistory = j;
+      renderMultiYearChart(j);
+    })
+    .catch(() => {
+      if (sub) sub.textContent = 'History unavailable — showing SEC XBRL';
+    });
+}
+
+function renderMultiYearChart(hist) {
+  if (_charts.revenue) _charts.revenue.destroy();
+  const ctx = document.getElementById('revenue-chart');
+  if (!ctx) return;
+
+  let income = (hist.income || []).slice().reverse(); // oldest first
+
+  // Apply date range filter
+  if (_chartRange > 0) {
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - _chartRange);
+    const cutStr = cutoff.toISOString().slice(0, 10);
+    income = income.filter(r => (r.date || '') >= cutStr);
+  }
+
+  if (!income.length) {
+    const sub = document.getElementById('revenue-subtitle');
+    if (sub) sub.textContent = 'No data for selected range';
+    return;
+  }
+
+  const labels = income.map(r => {
+    if (_chartPeriod === 'quarter') return r.period + ' ' + (r.fiscalYear || r.date?.slice(0, 4));
+    return r.fiscalYear || r.date?.slice(0, 4) || '';
+  });
+  const revenue = income.map(r => (r.revenue || 0) / 1e9);
+  const netIncome = income.map(r => (r.netIncome || 0) / 1e9);
+  const fcf = [];
+  // Match cash flow by date if available
+  const cfMap = {};
+  for (const cf of (hist.cashflow || [])) {
+    cfMap[cf.date] = cf;
+  }
+  for (const r of income) {
+    const cf = cfMap[r.date];
+    if (cf) {
+      fcf.push(((cf.operatingCashFlow || 0) - Math.abs(cf.capitalExpenditure || 0)) / 1e9);
+    } else {
+      fcf.push(0);
+    }
+  }
+
+  const defaults = getChartDefaults();
+
+  _charts.revenue = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Revenue ($B)', data: revenue,
+          backgroundColor: CHART_COLORS.brandBg, borderColor: CHART_COLORS.brand,
+          borderWidth: 2, borderRadius: 6, order: 2,
+        },
+        {
+          label: 'Net Income ($B)', data: netIncome,
+          backgroundColor: CHART_COLORS.successBg, borderColor: CHART_COLORS.success,
+          borderWidth: 2, borderRadius: 6, order: 3,
+        },
+        {
+          label: 'FCF ($B)', data: fcf,
+          backgroundColor: CHART_COLORS.infoBg, borderColor: CHART_COLORS.info,
+          borderWidth: 2, borderRadius: 6, order: 4,
+        },
+      ],
+    },
+    options: {
+      ...defaults,
+      layout: { padding: { top: 24 } },
+      plugins: {
+        ...defaults.plugins,
+        legend: {
+          display: true,
+          labels: { color: CHART_COLORS.text, usePointStyle: true, pointStyle: 'rect', padding: 12, font: { size: 11 } }
+        },
+        datalabels: {
+          display: income.length <= 8,
+          anchor: 'end', align: 'top', offset: 2,
+          font: { size: 9, weight: 600, family: "'JetBrains Mono', monospace" },
+          color: function(c) { return c.dataset.borderColor || CHART_COLORS.text; },
+          formatter: function(v) {
+            if (v == null || v === 0) return '';
+            return '$' + v.toFixed(1) + 'B';
+          },
+        },
+      },
+      scales: {
+        ...defaults.scales,
+        y: { ...defaults.scales.y, ticks: { ...defaults.scales.y.ticks, callback: (v) => '$' + v.toFixed(0) + 'B' } },
+      },
+    },
+  });
+
+  const sub = document.getElementById('revenue-subtitle');
+  const src = hist.source === 'fmp' ? 'Financial Modeling Prep' : 'SEC XBRL';
+  const rangeLabel = _chartRange > 0 ? _chartRange + 'Y' : 'All';
+  if (sub) sub.textContent = src + ' · ' + rangeLabel + ' ' + (_chartPeriod === 'quarter' ? 'Quarterly' : 'Annual');
+}
 
 // ========================================
 // 3. THEME MANAGEMENT
@@ -322,30 +528,50 @@ function initNavigation() {
 }
 
 /**
- * Switch to a different view (dashboard, compare, filing, etc).
+ * Switch to a different view (dashboard, statements, comps, filings, insights).
  */
 function switchView(view) {
   _activeView = view;
-  
+
   // Update sidebar active state
   document.querySelectorAll('.nav-item').forEach((i) => i.classList.remove('active'));
   const activeNav = document.querySelector('.nav-item[data-view="' + view + '"]');
   if (activeNav) activeNav.classList.add('active');
-  
+
   // Update header tabs active state
   document.querySelectorAll('.view-tab').forEach((t) => t.classList.remove('active'));
   const activeTab = document.querySelector('.view-tab[data-view="' + view + '"]');
   if (activeTab) activeTab.classList.add('active');
-  
-  // Hide all view panels, show active one
+
+  // Hide dashboard and all view panels
+  const dashboard = document.getElementById('dashboard');
+  if (dashboard) dashboard.style.display = 'none';
+  const welcome = document.getElementById('welcome');
+  if (welcome) welcome.style.display = 'none';
   document.querySelectorAll('.view-panel').forEach((p) => p.style.display = 'none');
-  const panel = document.getElementById('panel-' + view);
-  if (panel) panel.style.display = 'block';
-  
-  // For dashboard, make sure dashboard content is visible
+
   if (view === 'dashboard') {
-    const dashboard = document.getElementById('dashboard');
-    if (dashboard) dashboard.style.display = 'block';
+    // Show dashboard if data is loaded, otherwise show welcome
+    if (_curData) {
+      if (dashboard) dashboard.style.display = 'block';
+    } else {
+      if (welcome) welcome.style.display = 'flex';
+    }
+  } else {
+    // Show the matching panel
+    const panel = document.getElementById('panel-' + view);
+    if (panel) panel.style.display = 'block';
+
+    // Trigger data loading for each view
+    if (view === 'statements' && _curData) renderFullStatement('income');
+    if (view === 'comps') loadCompsView();
+    if (view === 'filings') loadFilingsView();
+    if (view === 'insights') { /* content stays until Generate is clicked */ }
+
+    // Invalidate Leaflet map size when switching back to dashboard
+    if (view === 'dashboard' && _geoMap) {
+      setTimeout(() => { _geoMap.invalidateSize(); }, 100);
+    }
   }
 }
 
@@ -682,21 +908,30 @@ function renderDashboard(d) {
   
   // 1. Render KPI cards
   renderKPIs(m, r, pm);
-  
-  // 2. Render charts with slight delay to allow DOM rendering
+
+  // 2. Render company overview
+  renderCompanyOverview(d);
+
+  // 3. Render charts with slight delay to allow DOM rendering
   setTimeout(() => {
     renderRevenueChart(d);
     renderSegmentChart(d);
     renderMarginChart(d);
+    renderGeoMap(d);
+    // Load FMP multi-year history for the revenue chart
+    loadFmpHistory();
   }, 100);
-  
-  // 3. Render peer comparison table
+
+  // 4. Render peer comparison table
   renderPeerTable(d);
-  
+
   // 4. Render provenance/validation bar
   renderProvenance(d);
-  
-  // 5. Render financial statement preview
+
+  // 5. Render confidence scores + validation details
+  renderConfidence(d);
+
+  // 6. Render financial statement preview
   renderStatementPreview(d);
 }
 
@@ -815,6 +1050,169 @@ function buildKpiCard(label, value, change, icon, color, index) {
   );
 }
 
+/**
+ * SIC code to business description mapping (top ~50 codes).
+ */
+const SIC_DESCRIPTIONS = {
+  '3571': 'Electronic computers',
+  '3572': 'Computer storage devices',
+  '3674': 'Semiconductors & related devices',
+  '3672': 'Printed circuit boards',
+  '7372': 'Prepackaged software',
+  '7371': 'Computer programming & data processing',
+  '7374': 'Computer processing & data preparation',
+  '5045': 'Computers & peripherals (wholesale)',
+  '5961': 'Catalog & mail-order houses',
+  '5065': 'Electronic parts (wholesale)',
+  '4813': 'Telephone communications',
+  '4812': 'Radiotelephone communications',
+  '4841': 'Cable & pay television services',
+  '4911': 'Electric services',
+  '4931': 'Electric & other services combined',
+  '2834': 'Pharmaceutical preparations',
+  '2836': 'Biological products',
+  '2835': 'In-vitro diagnostics',
+  '2860': 'Industrial chemicals',
+  '3841': 'Surgical & medical instruments',
+  '6022': 'State commercial banks',
+  '6020': 'National commercial banks',
+  '6021': 'National commercial banks',
+  '6035': 'Savings institutions (federally chartered)',
+  '6036': 'Savings institutions (not federally chartered)',
+  '6311': 'Life insurance',
+  '6321': 'Fire, marine & casualty insurance',
+  '6331': 'Accident & health insurance',
+  '6199': 'Finance services',
+  '6211': 'Security brokers & dealers',
+  '6141': 'Personal credit institutions',
+  '6153': 'Short-term business credit',
+  '6159': 'Federal-sponsored credit agencies',
+  '6798': 'Real estate investment trusts',
+  '5411': 'Grocery stores',
+  '5311': 'Department stores',
+  '5331': 'Variety stores',
+  '5912': 'Drug stores & proprietary stores',
+  '5812': 'Eating places',
+  '3711': 'Motor vehicles & passenger car bodies',
+  '3714': 'Motor vehicle parts & accessories',
+  '3721': 'Aircraft',
+  '3724': 'Aircraft engines & parts',
+  '3760': 'Guided missiles & space vehicles',
+  '1311': 'Crude petroleum & natural gas',
+  '2911': 'Petroleum refining',
+  '1040': 'Gold mining',
+  '1000': 'Metal mining',
+  '7370': 'Services — computer programming, data processing',
+};
+
+/**
+ * Render company overview card — data-driven summary with business description,
+ * size metrics, performance highlights.
+ */
+function renderCompanyOverview(d) {
+  const el = document.getElementById('company-overview');
+  const titleEl = document.getElementById('overview-title');
+  const subEl = document.getElementById('overview-subtitle');
+  if (!el) return;
+
+  const m = d.metrics || {};
+  const r = d.ratios || {};
+  const pm = d.prior_metrics || {};
+  const fi = d.filing_info || {};
+  const name = d.company_name || _tk || 'Company';
+  const sic = d.sic_code || '';
+
+  if (titleEl) titleEl.textContent = name;
+  if (subEl) subEl.textContent = _tk + ' · ' + (fi.form_type || '10-K') + ' · ' + (fi.filing_date || '');
+
+  // Business description from SIC
+  const sicDesc = SIC_DESCRIPTIONS[sic] || d.industry_class || 'Public company';
+
+  // Revenue growth
+  let revGrowth = null;
+  if (m.revenue && pm.revenue) {
+    revGrowth = ((m.revenue - pm.revenue) / Math.abs(pm.revenue)) * 100;
+  }
+
+  // Net income growth
+  let niGrowth = null;
+  if (m.net_income != null && pm.net_income != null && pm.net_income !== 0) {
+    niGrowth = ((m.net_income - pm.net_income) / Math.abs(pm.net_income)) * 100;
+  }
+
+  // Market cap estimate (shares × EPS × ~PE, or just note shares)
+  const shares = m.shares_outstanding;
+  const eps = m.eps_diluted;
+
+  // Performance assessment
+  let perfLabel = 'stable';
+  let perfColor = 'var(--text-secondary)';
+  if (revGrowth != null) {
+    if (revGrowth > 15) { perfLabel = 'strong growth'; perfColor = 'var(--success)'; }
+    else if (revGrowth > 5) { perfLabel = 'moderate growth'; perfColor = 'var(--success)'; }
+    else if (revGrowth > -5) { perfLabel = 'stable'; perfColor = 'var(--warning)'; }
+    else { perfLabel = 'declining'; perfColor = 'var(--danger)'; }
+  }
+
+  // Build HTML
+  let h = '';
+
+  // Business description
+  h += '<div class="overview-section">';
+  h += '<div class="overview-label">BUSINESS</div>';
+  h += '<p class="overview-text">' + esc(name) + ' operates in <strong>' + esc(sicDesc) + '</strong>';
+  h += ' (SIC ' + esc(sic) + '). ';
+  if (m.revenue) {
+    h += 'The company generated <strong>' + fmtN(m.revenue) + '</strong> in revenue';
+    if (fi.filing_date && fi.filing_date.length >= 4) h += ' for the period ending ' + fi.filing_date.substring(0, 4);
+    h += '.';
+  }
+  h += '</p></div>';
+
+  // Size & Scale
+  h += '<div class="overview-section">';
+  h += '<div class="overview-label">SIZE & SCALE</div>';
+  h += '<div class="overview-metrics">';
+  if (m.revenue) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.revenue) + '</span><span class="ov-key">Revenue</span></div>';
+  if (m.total_assets) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.total_assets) + '</span><span class="ov-key">Total Assets</span></div>';
+  if (shares) {
+    const sharesStr = shares >= 1e9 ? (shares / 1e9).toFixed(1) + 'B' : shares >= 1e6 ? (shares / 1e6).toFixed(0) + 'M' : shares.toLocaleString();
+    h += '<div class="ov-metric"><span class="ov-val">' + sharesStr + '</span><span class="ov-key">Shares Out</span></div>';
+  }
+  if (m.total_equity) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.total_equity) + '</span><span class="ov-key">Equity</span></div>';
+  h += '</div></div>';
+
+  // Performance
+  h += '<div class="overview-section">';
+  h += '<div class="overview-label">PERFORMANCE <span style="color:' + perfColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + perfLabel + '</span></div>';
+  h += '<div class="overview-metrics">';
+  if (revGrowth != null) {
+    const cls = revGrowth >= 0 ? 'positive' : 'negative';
+    h += '<div class="ov-metric"><span class="ov-val ' + cls + '">' + (revGrowth >= 0 ? '+' : '') + revGrowth.toFixed(1) + '%</span><span class="ov-key">Rev Growth</span></div>';
+  }
+  if (niGrowth != null) {
+    const cls = niGrowth >= 0 ? 'positive' : 'negative';
+    h += '<div class="ov-metric"><span class="ov-val ' + cls + '">' + (niGrowth >= 0 ? '+' : '') + niGrowth.toFixed(1) + '%</span><span class="ov-key">NI Growth</span></div>';
+  }
+  if (r.gross_margin != null) h += '<div class="ov-metric"><span class="ov-val">' + (r.gross_margin * 100).toFixed(1) + '%</span><span class="ov-key">Gross Margin</span></div>';
+  if (r.net_margin != null) h += '<div class="ov-metric"><span class="ov-val">' + (r.net_margin * 100).toFixed(1) + '%</span><span class="ov-key">Net Margin</span></div>';
+  if (r.roe != null) h += '<div class="ov-metric"><span class="ov-val">' + (r.roe * 100).toFixed(1) + '%</span><span class="ov-key">ROE</span></div>';
+  if (eps != null) h += '<div class="ov-metric"><span class="ov-val">$' + eps.toFixed(2) + '</span><span class="ov-key">EPS (Diluted)</span></div>';
+  h += '</div></div>';
+
+  // Financial health
+  h += '<div class="overview-section">';
+  h += '<div class="overview-label">FINANCIAL HEALTH</div>';
+  h += '<div class="overview-metrics">';
+  if (r.current_ratio != null) h += '<div class="ov-metric"><span class="ov-val">' + r.current_ratio.toFixed(2) + 'x</span><span class="ov-key">Current Ratio</span></div>';
+  if (r.debt_to_equity != null) h += '<div class="ov-metric"><span class="ov-val">' + r.debt_to_equity.toFixed(2) + 'x</span><span class="ov-key">D/E Ratio</span></div>';
+  if (m.free_cash_flow) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.free_cash_flow) + '</span><span class="ov-key">Free Cash Flow</span></div>';
+  if (m.net_debt != null) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.net_debt) + '</span><span class="ov-key">Net Debt</span></div>';
+  h += '</div></div>';
+
+  el.innerHTML = h;
+}
+
 // ========================================
 // 9. CHART RENDERING (Chart.js)
 // ========================================
@@ -854,24 +1252,51 @@ function getChartDefaults() {
 
 /**
  * Render revenue trend chart (bar chart: revenue, net income, FCF).
+ * Shows multi-year comparison when prior_metrics are available.
  */
 function renderRevenueChart(d) {
-  // Destroy existing chart
   if (_charts.revenue) _charts.revenue.destroy();
-  
+
   const ctx = document.getElementById('revenue-chart');
   if (!ctx) return;
-  
+
   const m = d.metrics || {};
-  
-  // For single-period display, show current year metrics
-  const labels = [d.fiscal_year_end || d.fiscal_year || 'Current'];
-  const revenue = [m.revenue ? m.revenue / 1e9 : 0];
-  const netIncome = [m.net_income ? m.net_income / 1e9 : 0];
-  const fcf = [m.free_cash_flow ? m.free_cash_flow / 1e9 : 0];
-  
+  const pm = d.prior_metrics || {};
+  const qm = d.qoq_metrics || {};
+
+  // Build multi-period labels + data
+  const labels = [];
+  const revenue = [];
+  const netIncome = [];
+  const fcf = [];
+
+  const fy = d.fiscal_year || 'Current';
+  const isQuarterly = d.period_type === 'quarterly';
+
+  // Prior year data (leftmost)
+  if (pm.revenue != null || pm.net_income != null) {
+    labels.push(isQuarterly ? 'Prior Yr' : (typeof fy === 'number' ? fy - 1 : 'Prior'));
+    revenue.push(pm.revenue ? pm.revenue / 1e9 : 0);
+    netIncome.push(pm.net_income ? pm.net_income / 1e9 : 0);
+    fcf.push(pm.free_cash_flow ? pm.free_cash_flow / 1e9 : 0);
+  }
+
+  // QoQ data (middle, quarterly only)
+  if (isQuarterly && (qm.revenue != null || qm.net_income != null)) {
+    labels.push('Prior Qtr');
+    revenue.push(qm.revenue ? qm.revenue / 1e9 : 0);
+    netIncome.push(qm.net_income ? qm.net_income / 1e9 : 0);
+    fcf.push(qm.free_cash_flow ? qm.free_cash_flow / 1e9 : 0);
+  }
+
+  // Current period (rightmost)
+  labels.push(d.quarter_label || fy);
+  revenue.push(m.revenue ? m.revenue / 1e9 : 0);
+  netIncome.push(m.net_income ? m.net_income / 1e9 : 0);
+  fcf.push(m.free_cash_flow ? m.free_cash_flow / 1e9 : 0);
+
   const defaults = getChartDefaults();
-  
+
   _charts.revenue = new Chart(ctx, {
     type: 'bar',
     data: {
@@ -908,6 +1333,28 @@ function renderRevenueChart(d) {
     },
     options: {
       ...defaults,
+      layout: { padding: { top: 24 } },
+      plugins: {
+        ...defaults.plugins,
+        legend: {
+          display: labels.length > 1,
+          labels: { color: CHART_COLORS.text, usePointStyle: true, pointStyle: 'rect', padding: 12, font: { size: 11 } }
+        },
+        datalabels: {
+          display: true,
+          anchor: 'end',
+          align: 'top',
+          offset: 2,
+          font: { size: 10, weight: 600, family: "'JetBrains Mono', monospace" },
+          color: function(ctx) {
+            return ctx.dataset.borderColor || CHART_COLORS.text;
+          },
+          formatter: function(v) {
+            if (v == null || v === 0) return '';
+            return '$' + v.toFixed(1) + 'B';
+          },
+        },
+      },
       scales: {
         ...defaults.scales,
         y: {
@@ -920,6 +1367,99 @@ function renderRevenueChart(d) {
       },
     },
   });
+
+  // Show YTD badge if applicable
+  const periodInfo = ctx.closest('.chart-card')?.querySelector('.chart-period-info');
+  if (!periodInfo && d.is_ytd) {
+    const badge = document.createElement('div');
+    badge.className = 'chart-period-info';
+    badge.innerHTML = '<span class="ytd-badge">YTD</span> ' + (d.quarter_label || '');
+    ctx.closest('.chart-card')?.querySelector('.card-header')?.appendChild(badge);
+  }
+}
+
+/**
+ * Render confidence scores grid and validation list.
+ */
+// Confidence score explanations for hover tooltips
+const CONF_EXPLANATIONS = {
+  revenue: 'Total revenue/sales. 99% = exact XBRL match. Lower scores mean the value was derived from partial matches or component aggregation.',
+  net_income: 'Net income (bottom line). 99% = exact XBRL tag found. Lower = fallback to contains-match or custom extension concepts.',
+  gross_profit: 'Revenue minus cost of goods sold. Often derived (revenue conf × COGS conf × 0.9) rather than directly reported.',
+  operating_income: 'Income from core operations. May be computed from gross profit minus operating expenses (0.70 confidence).',
+  ebitda: 'Earnings before interest, taxes, depreciation & amortization. 0.85 = full calculation, 0.65 = fallback (OI + D&A).',
+  total_assets: 'Sum of all assets on the balance sheet. High confidence = directly reported XBRL concept.',
+  stockholders_equity: 'Net assets belonging to shareholders. Usually a direct XBRL match.',
+  operating_cash_flow: 'Cash generated from operations. Direct XBRL match preferred.',
+  free_cash_flow: 'Operating cash flow minus capex. Confidence = min(OCF, capex) since it requires both values.',
+  eps_diluted: 'Diluted earnings per share. Direct XBRL match is typical for this metric.',
+  cost_of_revenue: 'Direct costs of producing goods/services. High confidence when exact XBRL concept is found.',
+  capital_expenditures: 'Money spent on property, plant & equipment. May require sign adjustment.',
+  current_assets: 'Assets expected to convert to cash within 1 year. May be aggregated from components (0.70).',
+  current_liabilities: 'Obligations due within 1 year. Usually a direct XBRL match.',
+  long_term_debt: 'Debt maturing beyond 1 year. Multiple XBRL concepts may be tried.',
+};
+
+function renderConfidence(d) {
+  const card = document.getElementById('confidence-card');
+  const grid = document.getElementById('confidence-grid');
+  const valList = document.getElementById('validation-list');
+  if (!card || !grid || !valList) return;
+
+  const conf = d.confidence_scores || {};
+  const sourced = d.metrics_sourced || {};
+  const validation = d.validation || [];
+
+  // Only show if we have confidence data
+  const entries = Object.entries(conf).filter(([k, v]) => v > 0);
+  if (!entries.length) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'block';
+
+  // Sort by confidence (lowest first to highlight issues)
+  entries.sort((a, b) => a[1] - b[1]);
+
+  // Key metrics to always show
+  const keyMetrics = new Set(['revenue', 'net_income', 'gross_profit', 'operating_income',
+    'ebitda', 'total_assets', 'stockholders_equity', 'operating_cash_flow', 'free_cash_flow',
+    'eps_diluted', 'cost_of_revenue']);
+
+  const displayed = entries.filter(([k]) => keyMetrics.has(k));
+
+  let h = '';
+  for (const [metric, score] of displayed) {
+    const pct = Math.round(score * 100);
+    const level = pct >= 80 ? 'high' : pct >= 50 ? 'medium' : 'low';
+    const label = metric.replace(/_/g, ' ');
+    const src = sourced[metric] || '';
+    const explanation = CONF_EXPLANATIONS[metric] || '';
+    const srcTip = src ? '\nXBRL concept: ' + src : '';
+    const levelLabel = pct >= 80 ? 'Exact XBRL match' : pct >= 50 ? 'Partial/contains match' : 'Aggregated or fallback';
+    const tip = explanation + srcTip + '\nMethod: ' + levelLabel;
+
+    h += '<div class="conf-item" title="' + esc(tip) + '">' +
+      '<span class="conf-label">' + esc(label) + '<span class="conf-info">?</span></span>' +
+      '<div class="conf-bar-wrap"><div class="conf-bar ' + level + '" style="width:' + pct + '%"></div></div>' +
+      '<span class="conf-pct ' + level + '">' + pct + '%</span>' +
+      '</div>';
+  }
+  grid.innerHTML = h;
+
+  // Validation messages
+  let vh = '';
+  if (!validation.length) {
+    vh = '<div class="validation-item success"><i data-lucide="shield-check"></i> All validation checks passed</div>';
+  } else {
+    for (const v of validation) {
+      const cls = v.severity === 'error' ? 'error' : 'warning';
+      const icon = v.severity === 'error' ? 'alert-circle' : 'alert-triangle';
+      vh += '<div class="validation-item ' + cls + '"><i data-lucide="' + icon + '"></i> ' + esc(v.message) + '</div>';
+    }
+  }
+  valList.innerHTML = vh;
+  lucide.createIcons();
 }
 
 /**
@@ -928,67 +1468,128 @@ function renderRevenueChart(d) {
 function renderSegmentChart(d) {
   // Destroy existing chart
   if (_charts.segment) _charts.segment.destroy();
-  
+
   const ctx = document.getElementById('segment-chart');
   if (!ctx) return;
-  
-  const segments = d.segments?.revenue_segments || [];
-  if (!segments.length) {
-    if (ctx.parentElement) ctx.parentElement.style.display = 'none';
+
+  let segments = d.segments?.revenue_segments || [];
+
+  // If XBRL has < 2 segments, try fetching from filing text
+  if (segments.length < 2 && _tk) {
+    const card = ctx.closest('.chart-card');
+    if (card) card.style.display = 'block';
+    ctx.style.display = 'none';
+    const legendEl = document.getElementById('segment-legend');
+    if (legendEl) legendEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:24px;color:var(--text-tertiary);font-size:12px;gap:8px"><div class="spinner" style="width:16px;height:16px"></div>Loading segments...</div>';
+
+    fetch('/api/segments/' + encodeURIComponent(_tk))
+      .then(r => r.json())
+      .then(j => {
+        if (j.segments && j.segments.length >= 2) {
+          d.segments = d.segments || {};
+          d.segments.revenue_segments = j.segments;
+          ctx.style.display = 'block';
+          renderSegmentChart(d);
+          const sub = document.getElementById('segments-subtitle');
+          const srcLabels = { fmp: 'Financial Modeling Prep', filing_text: '10-K filing text', xbrl: 'SEC XBRL' };
+          if (sub) sub.textContent = 'Source: ' + (srcLabels[j.source] || j.source);
+        } else {
+          if (card) card.style.display = 'none';
+        }
+      })
+      .catch(() => {
+        if (card) card.style.display = 'none';
+      });
     return;
   }
-  
-  if (ctx.parentElement) ctx.parentElement.style.display = 'block';
-  
+
+  if (!segments.length) {
+    if (ctx.closest('.chart-card')) ctx.closest('.chart-card').style.display = 'none';
+    return;
+  }
+
+  const card = ctx.closest('.chart-card');
+  if (card) card.style.display = 'block';
+  ctx.style.display = 'block';
+
+  // Premium color palette — distinct, readable, ordered by contrast
+  const PIE_COLORS = [
+    '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#a855f7',
+    '#22d3ee', '#fb923c',
+  ];
+
+  const total = segments.reduce((sum, s) => sum + (s.value || 0), 0);
+
   _charts.segment = new Chart(ctx, {
-    type: 'doughnut',
+    type: 'pie',
     data: {
       labels: segments.map((s) => s.segment || s.name),
-      datasets: [
-        {
-          data: segments.map((s) => s.value || 0),
-          backgroundColor: CHART_COLORS.palette,
-          borderWidth: 3,
-          borderColor: 'var(--bg-secondary)',
-          hoverOffset: 6,
-        },
-      ],
+      datasets: [{
+        data: segments.map((s) => s.value || 0),
+        backgroundColor: PIE_COLORS.slice(0, segments.length),
+        borderWidth: 2,
+        borderColor: getComputedStyle(document.documentElement).getPropertyValue('--bg-secondary').trim() || '#111827',
+        hoverOffset: 8,
+        hoverBorderWidth: 3,
+        hoverBorderColor: '#fff',
+      }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      cutout: '62%',
+      layout: { padding: 4 },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1e293b',
+          backgroundColor: '#0f172a',
           titleColor: '#f1f5f9',
-          bodyColor: '#94a3b8',
+          titleFont: { size: 13, weight: 600 },
+          bodyColor: '#cbd5e1',
+          bodyFont: { size: 12 },
           borderColor: '#334155',
           borderWidth: 1,
+          padding: 12,
+          cornerRadius: 8,
+          callbacks: {
+            label: function(ctx) {
+              const val = ctx.parsed || 0;
+              const pct = total > 0 ? (val / total * 100).toFixed(1) : '0';
+              return ' ' + fmtN(val) + '  (' + pct + '%)';
+            },
+          },
+        },
+        datalabels: {
+          display: function(ctx) {
+            // Only show label if slice is > 8% of total
+            const val = ctx.dataset.data[ctx.dataIndex];
+            return total > 0 && (val / total) > 0.08;
+          },
+          color: '#fff',
+          font: { size: 11, weight: 600, family: "'Inter', sans-serif" },
+          textShadowColor: 'rgba(0,0,0,0.6)',
+          textShadowBlur: 4,
+          formatter: function(val, ctx) {
+            const pct = total > 0 ? (val / total * 100).toFixed(0) : '0';
+            return pct + '%';
+          },
         },
       },
     },
   });
-  
-  // Build custom legend
+
+  // Build rich legend with values
   const legendEl = document.getElementById('segment-legend');
   if (legendEl) {
-    const total = segments.reduce((sum, s) => sum + (s.value || 0), 0);
     legendEl.innerHTML = segments
       .map((s, i) => {
         const pct = total > 0 ? ((s.value / total) * 100).toFixed(1) : '0';
         return (
           '<div class="seg-item">' +
-          '<span class="seg-dot" style="background:' +
-          CHART_COLORS.palette[i % CHART_COLORS.palette.length] +
-          '"></span>' +
-          '<span class="seg-name">' +
-          esc(s.segment || s.name) +
-          '</span>' +
-          '<span class="seg-pct">' +
-          pct +
-          '%</span>' +
+          '<span class="seg-dot" style="background:' + PIE_COLORS[i % PIE_COLORS.length] + '"></span>' +
+          '<span class="seg-name">' + esc(s.segment || s.name) + '</span>' +
+          '<span class="seg-val">' + fmtN(s.value) + '</span>' +
+          '<span class="seg-pct">' + pct + '%</span>' +
           '</div>'
         );
       })
@@ -1113,9 +1714,29 @@ function renderProvenance(d) {
       val.length +
       ' validation issues</span>';
   
+  // Compute average confidence
+  const conf = d.confidence_scores || {};
+  const confVals = Object.values(conf).filter(v => v > 0);
+  const avgConf = confVals.length ? Math.round((confVals.reduce((a, b) => a + b, 0) / confVals.length) * 100) : 0;
+  const confLevel = avgConf >= 80 ? 'success' : avgConf >= 50 ? 'warning' : 'error';
+  const confBadge = avgConf > 0
+    ? '<span class="prov-badge ' + (confLevel === 'error' ? 'warning' : confLevel) + '"><i data-lucide="gauge"></i>Confidence: ' + avgConf + '%</span>'
+    : '';
+
+  // Cache status
+  const cacheBadge = d._from_cache
+    ? '<span class="prov-badge success"><i data-lucide="zap"></i>Cached</span>'
+    : '';
+
+  // YTD badge
+  const ytdBadge = d.is_ytd
+    ? '<span class="prov-badge warning"><i data-lucide="clock"></i>' + esc(d.quarter_label || 'YTD') + '</span>'
+    : '';
+
   el.innerHTML =
     '<div class="prov-badges">' +
     validationStatus +
+    confBadge +
     '<span class="prov-badge neutral"><i data-lucide="database"></i>Source: ' +
     esc(fi.form_type || '10-K') +
     ' filed ' +
@@ -1125,6 +1746,8 @@ function renderProvenance(d) {
     '<span class="prov-badge brand"><i data-lucide="layers"></i>Industry: ' +
     esc(d.industry_class || 'standard') +
     '</span>' +
+    ytdBadge +
+    cacheBadge +
     '</div>';
   
   lucide.createIcons();
@@ -1239,6 +1862,34 @@ function populatePeriodDropdown() {
   let h = '<option value="">Select Period</option>';
   for (const f of filtered) {
     const selected = _curAcc === f.accession ? ' selected' : '';
+    // Extract fiscal year from filing date
+    // Annual filings (10-K/20-F): fiscal year is usually the year before filing date
+    // or the year of the period end. We approximate from filing_date.
+    const filingDate = f.filing_date || '';
+    const filingYear = filingDate ? parseInt(filingDate.substring(0, 4)) : '';
+    const filingMonth = filingDate ? parseInt(filingDate.substring(5, 7)) : 0;
+    const isAnnual = ['10-K', '20-F', '40-F'].includes(f.form_type);
+    const isQuarterly = ['10-Q', '6-K'].includes(f.form_type);
+
+    let periodLabel = '';
+    if (isAnnual && filingYear) {
+      // Annual filings are typically filed 60-90 days after fiscal year end
+      // If filed Jan-Mar, it's usually for the prior year
+      const fy = filingMonth <= 3 ? filingYear - 1 : filingYear;
+      periodLabel = 'FY' + fy;
+    } else if (isQuarterly && filingYear) {
+      // Determine quarter from filing month
+      // Q1 filed ~May, Q2 filed ~Aug, Q3 filed ~Nov
+      let q = '';
+      if (filingMonth >= 1 && filingMonth <= 2) q = 'Q4';      // Q4 of prior year
+      else if (filingMonth >= 3 && filingMonth <= 5) q = 'Q1';
+      else if (filingMonth >= 6 && filingMonth <= 8) q = 'Q2';
+      else if (filingMonth >= 9 && filingMonth <= 11) q = 'Q3';
+      else q = 'Q4';
+      const qYear = (q === 'Q4' && filingMonth <= 2) ? filingYear - 1 : filingYear;
+      periodLabel = q + ' ' + qYear;
+    }
+
     h +=
       '<option value="' +
       esc(f.accession) +
@@ -1248,6 +1899,7 @@ function populatePeriodDropdown() {
       selected +
       '>' +
       esc(f.form_type) +
+      (periodLabel ? ' · ' + periodLabel : '') +
       ' · ' +
       shortDate(f.filing_date) +
       '</option>';
@@ -1399,14 +2051,938 @@ function renderFilingText(j) {
 }
 
 // ========================================
-// 13. UTILITIES & HELPERS
+// 13. VIEW RENDERERS (Statements, Comps, Filings, Insights)
+// ========================================
+
+/**
+ * Render full financial statement by type (income, balance, cashflow).
+ * Prefers the richer statement arrays from backend if available,
+ * falls back to top-level metrics.
+ */
+function renderFullStatement(type) {
+  if (!_curData) return;
+
+  // Update toggle buttons
+  document.querySelectorAll('#stmt-type-toggle .toggle-btn').forEach((b) => {
+    b.classList.toggle('active', b.dataset.stmt === type);
+  });
+
+  const title = document.getElementById('full-stmt-title');
+  const sub = document.getElementById('full-stmt-sub');
+  const tbody = document.getElementById('full-stmt-tbody');
+  if (!tbody) return;
+
+  if (sub) {
+    sub.textContent = (_curData.company_name || _tk || '') + ' · ' + (_curData.filing_info?.form_type || '') + ' ' + (_curData.filing_info?.filing_date || '');
+  }
+
+  // Try to use the richer statement arrays from backend
+  const stmtKey = type === 'income' ? 'income_statement' : type === 'balance' ? 'balance_sheet' : 'cash_flow_statement';
+  const stmtData = _curData[stmtKey];
+
+  if (stmtData && stmtData.length > 0) {
+    // Use backend statement array: [{label, value, prior_value, concept}, ...]
+    if (title) title.textContent = type === 'income' ? 'Income Statement' : type === 'balance' ? 'Balance Sheet' : 'Cash Flow Statement';
+
+    let h = '';
+    for (const row of stmtData) {
+      if (row.value == null && row.prior_value == null) continue;
+      const change = calcChange(row.value, row.prior_value);
+      const changeHtml = change != null
+        ? '<span class="' + (change >= 0 ? 'positive' : 'negative') + '">' + (change >= 0 ? '+' : '') + change.toFixed(1) + '%</span>'
+        : '—';
+      // Bold totals / key lines
+      const isBold = /^(total|net income|revenue|gross profit|operating income|free cash flow|stockholders)/i.test(row.label);
+      const boldStyle = isBold ? ' style="font-weight:600;color:var(--text-primary)"' : '';
+      h += '<tr>' +
+        '<td class="stmt-label"' + boldStyle + '>' + esc(row.label) + '</td>' +
+        '<td class="stmt-value">' + fmtN(row.value) + '</td>' +
+        '<td class="stmt-value">' + fmtN(row.prior_value) + '</td>' +
+        '<td class="stmt-change">' + changeHtml + '</td>' +
+        '</tr>';
+    }
+    if (!h) h = '<tr><td colspan="4" class="text-center text-muted">No data in statement</td></tr>';
+    tbody.innerHTML = h;
+    return;
+  }
+
+  // Fallback: build from top-level metrics
+  const m = _curData.metrics || {};
+  const pm = _curData.prior_metrics || {};
+
+  let rows = [];
+
+  if (type === 'income') {
+    if (title) title.textContent = 'Income Statement';
+    rows = [
+      { label: 'Revenue', current: m.revenue, prior: pm?.revenue, bold: true },
+      { label: 'Cost of Revenue', current: m.cost_of_revenue, prior: pm?.cost_of_revenue },
+      { label: 'Gross Profit', current: m.gross_profit, prior: pm?.gross_profit, bold: true },
+      { label: 'Research & Development', current: m.rd_expense, prior: pm?.rd_expense },
+      { label: 'SG&A Expenses', current: m.sga_expense, prior: pm?.sga_expense },
+      { label: 'Operating Expenses', current: m.operating_expenses, prior: pm?.operating_expenses },
+      { label: 'Operating Income', current: m.operating_income, prior: pm?.operating_income, bold: true },
+      { label: 'Interest Expense', current: m.interest_expense, prior: pm?.interest_expense },
+      { label: 'Other Income/Expense', current: m.other_income, prior: pm?.other_income },
+      { label: 'Pretax Income', current: m.pretax_income, prior: pm?.pretax_income },
+      { label: 'Income Tax', current: m.income_tax, prior: pm?.income_tax },
+      { label: 'Net Income', current: m.net_income, prior: pm?.net_income, bold: true },
+      { label: 'EPS (Diluted)', current: m.eps_diluted, prior: pm?.eps_diluted, fmt: 'eps' },
+      { label: 'Shares Outstanding', current: m.shares_outstanding, prior: pm?.shares_outstanding, fmt: 'shares' },
+    ];
+  } else if (type === 'balance') {
+    if (title) title.textContent = 'Balance Sheet';
+    rows = [
+      { label: 'Cash & Equivalents', current: m.cash, prior: pm?.cash },
+      { label: 'Short-term Investments', current: m.short_term_investments, prior: pm?.short_term_investments },
+      { label: 'Accounts Receivable', current: m.accounts_receivable, prior: pm?.accounts_receivable },
+      { label: 'Inventory', current: m.inventory, prior: pm?.inventory },
+      { label: 'Total Current Assets', current: m.current_assets, prior: pm?.current_assets, bold: true },
+      { label: 'PP&E (Net)', current: m.ppe_net, prior: pm?.ppe_net },
+      { label: 'Goodwill', current: m.goodwill, prior: pm?.goodwill },
+      { label: 'Total Assets', current: m.total_assets, prior: pm?.total_assets, bold: true },
+      { label: 'Accounts Payable', current: m.accounts_payable, prior: pm?.accounts_payable },
+      { label: 'Short-term Debt', current: m.short_term_debt, prior: pm?.short_term_debt },
+      { label: 'Total Current Liabilities', current: m.current_liabilities, prior: pm?.current_liabilities, bold: true },
+      { label: 'Long-term Debt', current: m.long_term_debt, prior: pm?.long_term_debt },
+      { label: 'Total Liabilities', current: m.total_liabilities, prior: pm?.total_liabilities, bold: true },
+      { label: "Stockholders' Equity", current: m.stockholders_equity, prior: pm?.stockholders_equity, bold: true },
+    ];
+  } else if (type === 'cashflow') {
+    if (title) title.textContent = 'Cash Flow Statement';
+    rows = [
+      { label: 'Net Income', current: m.net_income, prior: pm?.net_income },
+      { label: 'Depreciation & Amortization', current: m.depreciation, prior: pm?.depreciation },
+      { label: 'Cash from Operations', current: m.operating_cash_flow, prior: pm?.operating_cash_flow, bold: true },
+      { label: 'Capital Expenditures', current: m.capex, prior: pm?.capex },
+      { label: 'Cash from Investing', current: m.investing_cash_flow, prior: pm?.investing_cash_flow, bold: true },
+      { label: 'Dividends Paid', current: m.dividends_paid, prior: pm?.dividends_paid },
+      { label: 'Share Repurchases', current: m.share_repurchases, prior: pm?.share_repurchases },
+      { label: 'Cash from Financing', current: m.financing_cash_flow, prior: pm?.financing_cash_flow, bold: true },
+      { label: 'Free Cash Flow', current: m.free_cash_flow, prior: pm?.free_cash_flow, bold: true },
+    ];
+  }
+
+  let h = '';
+  for (const row of rows) {
+    if (row.current == null && row.prior == null) continue;
+    const change = calcChange(row.current, row.prior);
+    const fmtCur = row.fmt === 'eps' ? (row.current != null ? '$' + row.current.toFixed(2) : '—') :
+                   row.fmt === 'shares' ? (row.current != null ? (row.current / 1e6).toFixed(0) + 'M' : '—') :
+                   fmtN(row.current);
+    const fmtPr = row.fmt === 'eps' ? (row.prior != null ? '$' + row.prior.toFixed(2) : '—') :
+                  row.fmt === 'shares' ? (row.prior != null ? (row.prior / 1e6).toFixed(0) + 'M' : '—') :
+                  fmtN(row.prior);
+    const changeHtml = change != null
+      ? '<span class="' + (change >= 0 ? 'positive' : 'negative') + '">' + (change >= 0 ? '+' : '') + change.toFixed(1) + '%</span>'
+      : '—';
+    const boldStyle = row.bold ? ' style="font-weight:600;color:var(--text-primary)"' : '';
+    h += '<tr>' +
+      '<td class="stmt-label"' + boldStyle + '>' + row.label + '</td>' +
+      '<td class="stmt-value">' + fmtCur + '</td>' +
+      '<td class="stmt-value">' + fmtPr + '</td>' +
+      '<td class="stmt-change">' + changeHtml + '</td>' +
+      '</tr>';
+  }
+
+  if (!h) h = '<tr><td colspan="4" class="text-center text-muted">No data available for this statement</td></tr>';
+  tbody.innerHTML = h;
+}
+
+/**
+ * Comps view state: list of tickers to compare.
+ */
+let _compsTickers = [];
+
+/**
+ * Load comps view — auto-add current ticker + peers.
+ */
+async function loadCompsView() {
+  if (_tk && !_compsTickers.includes(_tk)) {
+    _compsTickers = [_tk];
+  }
+  // Auto-load suggested peers if we only have the target ticker
+  if (_tk && _compsTickers.length <= 1) {
+    try {
+      const r = await fetch('/api/peers/' + encodeURIComponent(_tk));
+      if (r.ok) {
+        const j = await r.json();
+        const peers = j.peers || [];
+        for (const p of peers) {
+          if (!_compsTickers.includes(p)) _compsTickers.push(p);
+        }
+        // Show sector info in subtitle
+        const sub = document.getElementById('comps-sub');
+        if (sub && j.sector && j.sector !== 'unknown') {
+          const sectorLabel = j.sector.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+          sub.textContent = sectorLabel + ' sector · Ranked by revenue proximity';
+        }
+      }
+    } catch (e) {
+      console.warn('[Comps] Failed to fetch peers:', e);
+    }
+  }
+  renderCompsChips();
+  if (_compsTickers.length > 0) fetchComps();
+}
+
+/**
+ * Add a ticker to the comps list.
+ */
+function addCompTicker() {
+  const inp = document.getElementById('comps-input');
+  if (!inp) return;
+  const tk = inp.value.trim().toUpperCase();
+  if (!tk || _compsTickers.includes(tk)) { inp.value = ''; return; }
+  _compsTickers.push(tk);
+  inp.value = '';
+  renderCompsChips();
+  fetchComps();
+}
+
+/**
+ * Remove a ticker from comps.
+ */
+function removeCompTicker(tk) {
+  _compsTickers = _compsTickers.filter((t) => t !== tk);
+  renderCompsChips();
+  if (_compsTickers.length > 0) fetchComps();
+  else document.getElementById('comps-tbody').innerHTML = '<tr><td colspan="7" class="text-center text-muted">Add tickers above to compare</td></tr>';
+}
+
+/**
+ * Render comps ticker chips.
+ */
+function renderCompsChips() {
+  const el = document.getElementById('comps-chips');
+  if (!el) return;
+  el.innerHTML = _compsTickers.map((t) =>
+    '<span class="chip" style="cursor:default">' + esc(t) +
+    ' <span style="cursor:pointer;margin-left:4px;opacity:0.6" onclick="removeCompTicker(\'' + esc(t) + '\')">&times;</span></span>'
+  ).join('');
+}
+
+/**
+ * Fetch comps data from API.
+ */
+async function fetchComps() {
+  const tbody = document.getElementById('comps-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner" style="margin:8px auto"></div></td></tr>';
+
+  try {
+    const r = await fetch('/api/comps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tickers: _compsTickers }),
+    });
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    const j = await r.json();
+
+    const comps = j.comparisons || j.results || [];
+    if (!comps.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No comparison data returned</td></tr>';
+      return;
+    }
+
+    let h = '';
+    for (const c of comps) {
+      const m = c.metrics || c;
+      const ra = c.ratios || {};
+      h += '<tr>' +
+        '<td class="peer-name">' + esc(c.ticker || '') + '</td>' +
+        '<td class="stmt-value">' + fmtN(m.revenue) + '</td>' +
+        '<td class="stmt-value">' + fmtN(m.net_income) + '</td>' +
+        '<td class="stmt-value">' + (ra.gross_margin != null ? (ra.gross_margin * 100).toFixed(1) + '%' : m.gross_margin != null ? (m.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="stmt-value">' + (ra.net_margin != null ? (ra.net_margin * 100).toFixed(1) + '%' : m.net_margin != null ? (m.net_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="stmt-value">' + fmtN(m.total_assets) + '</td>' +
+        '<td class="stmt-value">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = h;
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Error: ' + esc(e.message) + '</td></tr>';
+    console.error('[Comps Error]', e);
+  }
+}
+
+// ========================================
+// 10-K EXPLORER (Filing sections + AI Q&A)
+// ========================================
+
+/** Currently loaded explorer section text (for AI context) */
+let _explorerSectionText = '';
+let _explorerSectionName = '';
+
+/**
+ * Load the filings overview (All Filings tab).
+ */
+async function loadFilingsView() {
+  // Default to overview tab
+  loadExplorerSection('overview');
+}
+
+/**
+ * Switch explorer section tab.
+ */
+function loadExplorerSection(section) {
+  // Update tab active state
+  document.querySelectorAll('.explorer-tab').forEach((t) => {
+    t.classList.toggle('active', t.dataset.section === section);
+  });
+
+  const overview = document.getElementById('explorer-overview');
+  const sectionPanel = document.getElementById('explorer-section');
+
+  if (section === 'overview') {
+    if (overview) overview.style.display = 'block';
+    if (sectionPanel) sectionPanel.style.display = 'none';
+    if (_tk) loadFilingsTable();
+  } else {
+    if (overview) overview.style.display = 'none';
+    if (sectionPanel) sectionPanel.style.display = 'block';
+    loadSectionContent(section);
+  }
+
+  lucide.createIcons();
+}
+
+/**
+ * Load the filings table for overview.
+ */
+async function loadFilingsTable() {
+  if (!_tk) return;
+  const tbody = document.getElementById('filings-tbody');
+  const sub = document.getElementById('filings-sub');
+  if (sub) sub.textContent = _tk + ' — Recent SEC filings';
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="4" class="text-center"><div class="spinner" style="margin:8px auto"></div></td></tr>';
+
+  try {
+    const r = await fetch('/api/filings/' + encodeURIComponent(_tk));
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    const j = await r.json();
+    const filings = j.filings || [];
+
+    if (!filings.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No filings found</td></tr>';
+      return;
+    }
+
+    let h = '';
+    for (const f of filings) {
+      h += '<tr>' +
+        '<td><span class="ticker-badge" style="font-size:11px">' + esc(f.form_type) + '</span></td>' +
+        '<td>' + esc(f.filing_date || '') + '</td>' +
+        '<td style="color:var(--text-secondary)">' + esc(f.description || '') + '</td>' +
+        '<td class="right"><button class="text-btn" onclick="viewFilingInExplorer(\'' + esc(f.accession) + '\',\'' + esc(f.form_type) + '\')">View</button></td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = h;
+  } catch (e) {
+    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Error: ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+/**
+ * View a filing inline from the filings table.
+ */
+async function viewFilingInExplorer(accession, formType) {
+  const overview = document.getElementById('explorer-overview');
+  const sectionPanel = document.getElementById('explorer-section');
+  if (overview) overview.style.display = 'none';
+  if (sectionPanel) sectionPanel.style.display = 'block';
+
+  // Clear tab active states
+  document.querySelectorAll('.explorer-tab').forEach((t) => t.classList.remove('active'));
+
+  const title = document.getElementById('explorer-section-title');
+  const sub = document.getElementById('explorer-section-sub');
+  const body = document.getElementById('explorer-section-body');
+  if (title) title.textContent = formType + ' Filing';
+  if (sub) sub.textContent = 'Loading...';
+  if (body) body.innerHTML = '<div class="spinner" style="margin:20px auto"></div>';
+
+  // Clear Q&A
+  const qaMessages = document.getElementById('explorer-qa-messages');
+  if (qaMessages) qaMessages.innerHTML = '';
+
+  try {
+    const r = await fetch('/api/filing-text/' + encodeURIComponent(_tk) + '/full?accession=' + encodeURIComponent(accession) + '&form_type=' + encodeURIComponent(formType));
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    const j = await r.json();
+
+    if (sub) sub.textContent = (j.form_type || formType) + ' · Filed ' + (j.filing_date || '') + ' · ' + ((j.text_length || 0) / 1000).toFixed(0) + 'K chars';
+    const text = j.text || 'No content available.';
+    _explorerSectionText = text;
+    _explorerSectionName = formType + ' filing';
+    if (body) body.textContent = text;
+  } catch (e) {
+    if (body) body.innerHTML = '<p class="text-muted">Error: ' + esc(e.message) + '</p>';
+  }
+}
+
+/** Section label map */
+const SECTION_LABELS = {
+  business: { title: 'Business Overview', item: 'Item 1', icon: 'building-2' },
+  risk_factors: { title: 'Risk Factors', item: 'Item 1A', icon: 'alert-triangle' },
+  mda: { title: "Management's Discussion & Analysis", item: 'Item 7', icon: 'bar-chart-3' },
+  financial_statements: { title: 'Financial Statements & Notes', item: 'Item 8', icon: 'calculator' },
+  executive_compensation: { title: 'Executive Compensation', item: 'Item 11', icon: 'users' },
+  controls: { title: 'Controls & Procedures', item: 'Item 9A', icon: 'shield-check' },
+};
+
+/**
+ * Load a specific 10-K section (business, risk_factors, mda, etc.)
+ */
+async function loadSectionContent(section) {
+  if (!_tk) {
+    const body = document.getElementById('explorer-section-body');
+    if (body) body.innerHTML = '<p class="text-muted">Search for a company first</p>';
+    return;
+  }
+
+  const info = SECTION_LABELS[section] || { title: section, item: '', icon: 'file-text' };
+  const title = document.getElementById('explorer-section-title');
+  const sub = document.getElementById('explorer-section-sub');
+  const body = document.getElementById('explorer-section-body');
+
+  if (title) title.textContent = info.title;
+  if (sub) sub.textContent = _tk + ' · ' + info.item + ' · Loading...';
+  if (body) body.innerHTML = '<div style="display:flex;align-items:center;gap:12px;padding:24px 0"><div class="spinner"></div><span class="text-muted">Extracting ' + info.title.toLowerCase() + ' from SEC filing...</span></div>';
+
+  // Clear previous Q&A
+  const qaMessages = document.getElementById('explorer-qa-messages');
+  if (qaMessages) qaMessages.innerHTML = '';
+
+  try {
+    const accession = _curAcc || '';
+    let url = '/api/filing-text/' + encodeURIComponent(_tk) + '/' + encodeURIComponent(section);
+    if (accession) url += '?accession=' + encodeURIComponent(accession);
+
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    const j = await r.json();
+
+    if (j.error) {
+      if (body) body.innerHTML = '<p class="text-muted">Error: ' + esc(j.error) + '</p>';
+      return;
+    }
+
+    const text = j.text || 'No content found for this section.';
+    const chars = text.length;
+    if (sub) sub.textContent = _tk + ' · ' + (j.form_type || info.item) + ' · Filed ' + (j.filing_date || '') + ' · ' + (chars / 1000).toFixed(0) + 'K chars';
+
+    _explorerSectionText = text;
+    _explorerSectionName = info.title;
+
+    if (body) body.textContent = text;
+  } catch (e) {
+    if (body) body.innerHTML = '<p class="text-muted">Error loading section: ' + esc(e.message) + '</p>';
+  }
+}
+
+/**
+ * Copy explorer section text to clipboard.
+ */
+function copyExplorerText() {
+  if (_explorerSectionText) {
+    navigator.clipboard.writeText(_explorerSectionText).then(() => {
+      showToast('Section text copied to clipboard');
+    });
+  }
+}
+
+/**
+ * Ask AI a question about the currently loaded explorer section.
+ */
+async function askExplorerAI() {
+  const inp = document.getElementById('explorer-qa-inp');
+  const msg = inp?.value?.trim();
+  if (!msg || !_explorerSectionText) return;
+  inp.value = '';
+
+  const messagesEl = document.getElementById('explorer-qa-messages');
+  if (!messagesEl) return;
+
+  // Add user question
+  messagesEl.innerHTML += '<div class="msg msg-user"><div class="msg-bubble">' + esc(msg) + '</div></div>';
+
+  // Add loading
+  messagesEl.innerHTML += '<div class="msg msg-assistant" id="explorer-qa-loading"><div class="msg-bubble"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div></div>';
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  try {
+    // Send the section text as context, trimmed to ~30K chars
+    const contextText = _explorerSectionText.substring(0, 30000);
+    const body = {
+      message: msg + '\n\nContext — ' + _explorerSectionName + ' section:\n' + contextText,
+      ticker: _tk || '',
+      context: _curData || {},
+      history: [],
+    };
+
+    const r = await fetch('/api/chatbot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    const j = await r.json();
+
+    // Remove loading
+    const loading = document.getElementById('explorer-qa-loading');
+    if (loading) loading.remove();
+
+    // Add AI response
+    messagesEl.innerHTML += '<div class="msg msg-assistant"><div class="msg-bubble">' + md(j.answer || 'No response.') + '</div></div>';
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  } catch (e) {
+    const loading = document.getElementById('explorer-qa-loading');
+    if (loading) loading.remove();
+    messagesEl.innerHTML += '<div class="msg msg-assistant"><div class="msg-bubble">Error: ' + esc(e.message) + '</div></div>';
+  }
+}
+
+// ========================================
+// GEOGRAPHIC MAP (Leaflet)
+// ========================================
+
+/** Leaflet map instance */
+let _geoMap = null;
+let _geoLayers = [];
+
+/** Map geographic segment labels to precise lat/lng coordinates */
+/**
+ * Sub-regions for broad geographic segments. Used for drill-down markers
+ * on the map. Each entry has estimated % share of the parent region.
+ */
+const GEO_SUB_REGIONS = {
+  'americas': [
+    { lat: 40.7, lng: -74.0, label: 'New York', pct: 0.18 },
+    { lat: 37.8, lng: -122.4, label: 'San Francisco', pct: 0.12 },
+    { lat: 34.1, lng: -118.2, label: 'Los Angeles', pct: 0.10 },
+    { lat: 41.9, lng: -87.6, label: 'Chicago', pct: 0.08 },
+    { lat: 29.8, lng: -95.4, label: 'Houston', pct: 0.06 },
+    { lat: 33.7, lng: -84.4, label: 'Atlanta', pct: 0.05 },
+    { lat: 25.8, lng: -80.2, label: 'Miami', pct: 0.04 },
+    { lat: 47.6, lng: -122.3, label: 'Seattle', pct: 0.04 },
+    { lat: 43.7, lng: -79.4, label: 'Toronto', pct: 0.05 },
+    { lat: 19.4, lng: -99.1, label: 'Mexico City', pct: 0.04 },
+    { lat: -23.5, lng: -46.6, label: 'São Paulo', pct: 0.06 },
+    { lat: 42.4, lng: -71.1, label: 'Boston', pct: 0.05 },
+    { lat: 39.1, lng: -77.2, label: 'D.C. Metro', pct: 0.05 },
+    { lat: 32.8, lng: -96.8, label: 'Dallas', pct: 0.04 },
+    { lat: 38.9, lng: -104.8, label: 'Denver', pct: 0.04 },
+  ],
+  'united states': [
+    { lat: 40.7, lng: -74.0, label: 'New York', pct: 0.20 },
+    { lat: 37.8, lng: -122.4, label: 'San Francisco', pct: 0.14 },
+    { lat: 34.1, lng: -118.2, label: 'Los Angeles', pct: 0.11 },
+    { lat: 41.9, lng: -87.6, label: 'Chicago', pct: 0.09 },
+    { lat: 29.8, lng: -95.4, label: 'Houston', pct: 0.07 },
+    { lat: 33.7, lng: -84.4, label: 'Atlanta', pct: 0.06 },
+    { lat: 47.6, lng: -122.3, label: 'Seattle', pct: 0.05 },
+    { lat: 25.8, lng: -80.2, label: 'Miami', pct: 0.05 },
+    { lat: 42.4, lng: -71.1, label: 'Boston', pct: 0.06 },
+    { lat: 39.1, lng: -77.2, label: 'D.C. Metro', pct: 0.05 },
+    { lat: 32.8, lng: -96.8, label: 'Dallas', pct: 0.06 },
+    { lat: 38.9, lng: -104.8, label: 'Denver', pct: 0.04 },
+    { lat: 36.2, lng: -115.2, label: 'Las Vegas', pct: 0.02 },
+  ],
+  'europe': [
+    { lat: 51.5, lng: -0.1, label: 'London', pct: 0.22 },
+    { lat: 52.5, lng: 13.4, label: 'Berlin', pct: 0.10 },
+    { lat: 48.9, lng: 2.3, label: 'Paris', pct: 0.12 },
+    { lat: 52.4, lng: 4.9, label: 'Amsterdam', pct: 0.06 },
+    { lat: 48.2, lng: 16.4, label: 'Vienna', pct: 0.03 },
+    { lat: 55.7, lng: 12.6, label: 'Copenhagen', pct: 0.04 },
+    { lat: 59.3, lng: 18.1, label: 'Stockholm', pct: 0.05 },
+    { lat: 53.3, lng: -6.3, label: 'Dublin', pct: 0.06 },
+    { lat: 47.4, lng: 8.5, label: 'Zurich', pct: 0.05 },
+    { lat: 41.9, lng: 12.5, label: 'Rome', pct: 0.04 },
+    { lat: 40.4, lng: -3.7, label: 'Madrid', pct: 0.04 },
+    { lat: 50.8, lng: 4.4, label: 'Brussels', pct: 0.03 },
+    { lat: 48.1, lng: 11.6, label: 'Munich', pct: 0.06 },
+    { lat: 52.2, lng: 21.0, label: 'Warsaw', pct: 0.03 },
+    { lat: 60.2, lng: 24.9, label: 'Helsinki', pct: 0.03 },
+    { lat: 28.6, lng: 77.2, label: 'New Delhi', pct: 0.04 },
+  ],
+  'greater china': [
+    { lat: 39.9, lng: 116.4, label: 'Beijing', pct: 0.20 },
+    { lat: 31.2, lng: 121.5, label: 'Shanghai', pct: 0.25 },
+    { lat: 22.5, lng: 114.1, label: 'Shenzhen', pct: 0.15 },
+    { lat: 23.1, lng: 113.3, label: 'Guangzhou', pct: 0.10 },
+    { lat: 22.3, lng: 114.2, label: 'Hong Kong', pct: 0.15 },
+    { lat: 25.0, lng: 121.5, label: 'Taipei', pct: 0.08 },
+    { lat: 30.6, lng: 104.1, label: 'Chengdu', pct: 0.07 },
+  ],
+  'japan': [
+    { lat: 35.7, lng: 139.7, label: 'Tokyo', pct: 0.45 },
+    { lat: 34.7, lng: 135.5, label: 'Osaka', pct: 0.20 },
+    { lat: 35.2, lng: 136.9, label: 'Nagoya', pct: 0.10 },
+    { lat: 33.6, lng: 130.4, label: 'Fukuoka', pct: 0.08 },
+    { lat: 43.1, lng: 141.3, label: 'Sapporo', pct: 0.05 },
+    { lat: 35.0, lng: 135.8, label: 'Kyoto', pct: 0.05 },
+    { lat: 34.4, lng: 132.5, label: 'Hiroshima', pct: 0.04 },
+    { lat: 38.3, lng: 140.9, label: 'Sendai', pct: 0.03 },
+  ],
+  'rest of asia': [
+    { lat: -33.9, lng: 151.2, label: 'Sydney', pct: 0.15 },
+    { lat: 1.4, lng: 103.8, label: 'Singapore', pct: 0.15 },
+    { lat: 37.6, lng: 127.0, label: 'Seoul', pct: 0.18 },
+    { lat: 13.8, lng: 100.5, label: 'Bangkok', pct: 0.08 },
+    { lat: -37.8, lng: 145.0, label: 'Melbourne', pct: 0.08 },
+    { lat: 3.1, lng: 101.7, label: 'Kuala Lumpur', pct: 0.06 },
+    { lat: 21.0, lng: 105.8, label: 'Hanoi', pct: 0.06 },
+    { lat: -6.2, lng: 106.8, label: 'Jakarta', pct: 0.06 },
+    { lat: 14.6, lng: 121.0, label: 'Manila', pct: 0.05 },
+    { lat: 19.1, lng: 72.9, label: 'Mumbai', pct: 0.07 },
+    { lat: -36.8, lng: 174.8, label: 'Auckland', pct: 0.03 },
+    { lat: 12.9, lng: 77.6, label: 'Bangalore', pct: 0.03 },
+  ],
+  'rest of asia pacific': [
+    { lat: -33.9, lng: 151.2, label: 'Sydney', pct: 0.15 },
+    { lat: 1.4, lng: 103.8, label: 'Singapore', pct: 0.15 },
+    { lat: 37.6, lng: 127.0, label: 'Seoul', pct: 0.18 },
+    { lat: 13.8, lng: 100.5, label: 'Bangkok', pct: 0.08 },
+    { lat: -37.8, lng: 145.0, label: 'Melbourne', pct: 0.08 },
+    { lat: 3.1, lng: 101.7, label: 'Kuala Lumpur', pct: 0.06 },
+    { lat: 21.0, lng: 105.8, label: 'Hanoi', pct: 0.06 },
+    { lat: -6.2, lng: 106.8, label: 'Jakarta', pct: 0.06 },
+    { lat: 14.6, lng: 121.0, label: 'Manila', pct: 0.05 },
+    { lat: 19.1, lng: 72.9, label: 'Mumbai', pct: 0.07 },
+    { lat: -36.8, lng: 174.8, label: 'Auckland', pct: 0.03 },
+    { lat: 12.9, lng: 77.6, label: 'Bangalore', pct: 0.03 },
+  ],
+  'asia pacific': [
+    { lat: 35.7, lng: 139.7, label: 'Tokyo', pct: 0.18 },
+    { lat: 31.2, lng: 121.5, label: 'Shanghai', pct: 0.15 },
+    { lat: 1.4, lng: 103.8, label: 'Singapore', pct: 0.10 },
+    { lat: 37.6, lng: 127.0, label: 'Seoul', pct: 0.12 },
+    { lat: -33.9, lng: 151.2, label: 'Sydney', pct: 0.10 },
+    { lat: 22.3, lng: 114.2, label: 'Hong Kong', pct: 0.08 },
+    { lat: 19.1, lng: 72.9, label: 'Mumbai', pct: 0.07 },
+    { lat: 13.8, lng: 100.5, label: 'Bangkok', pct: 0.05 },
+    { lat: 3.1, lng: 101.7, label: 'Kuala Lumpur', pct: 0.05 },
+    { lat: -6.2, lng: 106.8, label: 'Jakarta', pct: 0.05 },
+    { lat: 25.0, lng: 121.5, label: 'Taipei', pct: 0.05 },
+  ],
+  'international': [
+    { lat: 51.5, lng: -0.1, label: 'London', pct: 0.15 },
+    { lat: 48.9, lng: 2.3, label: 'Paris', pct: 0.08 },
+    { lat: 35.7, lng: 139.7, label: 'Tokyo', pct: 0.10 },
+    { lat: 31.2, lng: 121.5, label: 'Shanghai', pct: 0.10 },
+    { lat: 52.5, lng: 13.4, label: 'Berlin', pct: 0.06 },
+    { lat: -33.9, lng: 151.2, label: 'Sydney', pct: 0.05 },
+    { lat: 37.6, lng: 127.0, label: 'Seoul', pct: 0.06 },
+    { lat: 1.4, lng: 103.8, label: 'Singapore', pct: 0.05 },
+    { lat: 43.7, lng: -79.4, label: 'Toronto', pct: 0.05 },
+    { lat: 19.1, lng: 72.9, label: 'Mumbai', pct: 0.05 },
+    { lat: -23.5, lng: -46.6, label: 'São Paulo', pct: 0.05 },
+    { lat: 19.4, lng: -99.1, label: 'Mexico City', pct: 0.03 },
+  ],
+};
+
+const GEO_REGIONS = {
+  // ── Americas ──
+  'americas': { lat: 20, lng: -90, label: 'Americas' },
+  'north america': { lat: 40, lng: -100, label: 'North America' },
+  'united states': { lat: 39, lng: -98, label: 'United States' },
+  'us': { lat: 39, lng: -98, label: 'United States' },
+  'u.s.': { lat: 39, lng: -98, label: 'United States' },
+  'u.s': { lat: 39, lng: -98, label: 'United States' },
+  'domestic': { lat: 39, lng: -98, label: 'United States' },
+  'canada': { lat: 56, lng: -106, label: 'Canada' },
+  'latin america': { lat: -10, lng: -60, label: 'Latin America' },
+  'south america': { lat: -15, lng: -60, label: 'South America' },
+  'central america': { lat: 14, lng: -87, label: 'Central America' },
+  'brazil': { lat: -14, lng: -51, label: 'Brazil' },
+  'mexico': { lat: 23, lng: -102, label: 'Mexico' },
+  'argentina': { lat: -34, lng: -64, label: 'Argentina' },
+  'colombia': { lat: 4, lng: -72, label: 'Colombia' },
+  'chile': { lat: -33, lng: -71, label: 'Chile' },
+  'peru': { lat: -12, lng: -77, label: 'Peru' },
+  'caribbean': { lat: 18, lng: -72, label: 'Caribbean' },
+  // ── Europe ──
+  'europe': { lat: 50, lng: 10, label: 'Europe' },
+  'emea': { lat: 40, lng: 20, label: 'EMEA' },
+  'european union': { lat: 50, lng: 10, label: 'European Union' },
+  'western europe': { lat: 48, lng: 5, label: 'Western Europe' },
+  'eastern europe': { lat: 50, lng: 25, label: 'Eastern Europe' },
+  'uk': { lat: 54, lng: -2, label: 'United Kingdom' },
+  'united kingdom': { lat: 54, lng: -2, label: 'United Kingdom' },
+  'great britain': { lat: 54, lng: -2, label: 'United Kingdom' },
+  'germany': { lat: 51, lng: 10, label: 'Germany' },
+  'france': { lat: 46, lng: 2, label: 'France' },
+  'netherlands': { lat: 52, lng: 5, label: 'Netherlands' },
+  'ireland': { lat: 53, lng: -8, label: 'Ireland' },
+  'switzerland': { lat: 47, lng: 8, label: 'Switzerland' },
+  'italy': { lat: 42, lng: 12, label: 'Italy' },
+  'spain': { lat: 40, lng: -4, label: 'Spain' },
+  'sweden': { lat: 62, lng: 15, label: 'Sweden' },
+  'norway': { lat: 62, lng: 10, label: 'Norway' },
+  'denmark': { lat: 56, lng: 10, label: 'Denmark' },
+  'finland': { lat: 64, lng: 26, label: 'Finland' },
+  'belgium': { lat: 51, lng: 4, label: 'Belgium' },
+  'austria': { lat: 48, lng: 14, label: 'Austria' },
+  'poland': { lat: 52, lng: 20, label: 'Poland' },
+  'czech republic': { lat: 50, lng: 15, label: 'Czech Republic' },
+  'portugal': { lat: 39, lng: -8, label: 'Portugal' },
+  'greece': { lat: 39, lng: 22, label: 'Greece' },
+  'russia': { lat: 56, lng: 38, label: 'Russia' },
+  'luxembourg': { lat: 50, lng: 6, label: 'Luxembourg' },
+  'nordics': { lat: 60, lng: 15, label: 'Nordics' },
+  // ── Asia Pacific ──
+  'asia pacific': { lat: 20, lng: 110, label: 'Asia Pacific' },
+  'asia': { lat: 30, lng: 105, label: 'Asia' },
+  'apac': { lat: 20, lng: 110, label: 'Asia Pacific' },
+  'greater china': { lat: 35, lng: 105, label: 'Greater China' },
+  'china': { lat: 35, lng: 105, label: 'China' },
+  'mainland china': { lat: 35, lng: 105, label: 'China' },
+  'hong kong': { lat: 22, lng: 114, label: 'Hong Kong' },
+  'taiwan': { lat: 24, lng: 121, label: 'Taiwan' },
+  'japan': { lat: 36, lng: 138, label: 'Japan' },
+  'india': { lat: 20, lng: 77, label: 'India' },
+  'korea': { lat: 36, lng: 128, label: 'South Korea' },
+  'south korea': { lat: 36, lng: 128, label: 'South Korea' },
+  'australia': { lat: -25, lng: 134, label: 'Australia' },
+  'new zealand': { lat: -41, lng: 174, label: 'New Zealand' },
+  'singapore': { lat: 1, lng: 104, label: 'Singapore' },
+  'malaysia': { lat: 4, lng: 102, label: 'Malaysia' },
+  'thailand': { lat: 15, lng: 101, label: 'Thailand' },
+  'indonesia': { lat: -2, lng: 118, label: 'Indonesia' },
+  'vietnam': { lat: 16, lng: 108, label: 'Vietnam' },
+  'philippines': { lat: 13, lng: 122, label: 'Philippines' },
+  'southeast asia': { lat: 5, lng: 110, label: 'Southeast Asia' },
+  'rest of asia': { lat: 15, lng: 100, label: 'Rest of Asia' },
+  'rest of asia pacific': { lat: 10, lng: 105, label: 'Rest of Asia Pacific' },
+  // ── Middle East & Africa ──
+  'middle east': { lat: 25, lng: 45, label: 'Middle East' },
+  'middle east & africa': { lat: 20, lng: 40, label: 'Middle East & Africa' },
+  'middle east and africa': { lat: 20, lng: 40, label: 'Middle East & Africa' },
+  'africa': { lat: 5, lng: 25, label: 'Africa' },
+  'south africa': { lat: -30, lng: 25, label: 'South Africa' },
+  'israel': { lat: 31, lng: 35, label: 'Israel' },
+  'saudi arabia': { lat: 24, lng: 45, label: 'Saudi Arabia' },
+  'uae': { lat: 24, lng: 54, label: 'UAE' },
+  'united arab emirates': { lat: 24, lng: 54, label: 'UAE' },
+  'turkey': { lat: 39, lng: 35, label: 'Turkey' },
+  'egypt': { lat: 27, lng: 30, label: 'Egypt' },
+  'nigeria': { lat: 10, lng: 8, label: 'Nigeria' },
+  'kenya': { lat: -1, lng: 37, label: 'Kenya' },
+  // ── Generic ──
+  'rest of world': { lat: 0, lng: 0, label: 'Rest of World' },
+  'other': { lat: 0, lng: 30, label: 'Other' },
+  'international': { lat: 20, lng: 30, label: 'International' },
+  'other countries': { lat: 0, lng: 30, label: 'Other Countries' },
+  'outside united states': { lat: 20, lng: 30, label: 'International' },
+  'foreign': { lat: 20, lng: 30, label: 'International' },
+  'all other': { lat: 0, lng: 30, label: 'Other' },
+};
+
+/**
+ * Render geographic revenue map using Leaflet.
+ */
+function renderGeoMap(d) {
+  const container = document.getElementById('geo-map');
+  const legendEl = document.getElementById('geo-legend');
+  if (!container) return;
+
+  let geoSegs = d.segments?.geographic_segments || [];
+  const geoSub = document.getElementById('geo-subtitle');
+
+  // If no XBRL geo segments, try fetching from filing text parser
+  if (!geoSegs.length && _tk) {
+    // Show loading state
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-tertiary);font-size:12px;gap:8px"><div class="spinner" style="width:16px;height:16px"></div>Loading geographic data...</div>';
+
+    fetch('/api/geo-revenue/' + encodeURIComponent(_tk))
+      .then(r => r.json())
+      .then(j => {
+        if (j.geographic_segments && j.geographic_segments.length > 0) {
+          // Re-render with real data
+          d._geoFromApi = j.geographic_segments;
+          d._geoSource = j.source;
+          _renderGeoMapWithData(container, legendEl, geoSub, j.geographic_segments, j.source);
+        } else {
+          container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-tertiary);font-size:12px">No geographic revenue data found in filing</div>';
+          if (legendEl) legendEl.innerHTML = '';
+          if (geoSub) geoSub.textContent = 'No geographic breakdown available';
+        }
+      })
+      .catch(() => {
+        container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-tertiary);font-size:12px">Geographic data unavailable</div>';
+      });
+    return;
+  }
+
+  const source = geoSegs.length > 0 ? 'xbrl' : 'none';
+  _renderGeoMapWithData(container, legendEl, geoSub, geoSegs, source);
+}
+
+/**
+ * Internal: render the map with resolved geo segments.
+ */
+function _renderGeoMapWithData(container, legendEl, geoSub, geoSegs, source) {
+  if (geoSub) {
+    const labels = {
+      'fmp': 'Revenue by region (Financial Modeling Prep)',
+      'xbrl': 'Revenue by region (XBRL)',
+      'filing_text': 'Revenue by region (from 10-K text)',
+      'none': 'No geographic breakdown available',
+    };
+    geoSub.textContent = labels[source] || labels.xbrl;
+  }
+
+  if (!geoSegs.length) {
+    container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-tertiary);font-size:12px">No geographic data available</div>';
+    if (legendEl) legendEl.innerHTML = '';
+    return;
+  }
+
+  // Initialize map if needed
+  if (!_geoMap) {
+    _geoMap = L.map('geo-map', {
+      center: [25, 10],
+      zoom: 1,
+      minZoom: 1,
+      maxZoom: 6,
+      zoomControl: true,
+      attributionControl: false,
+      worldCopyJump: true,
+    });
+
+    // Dark tile layer with labels
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      subdomains: 'abcd',
+      maxZoom: 19,
+    }).addTo(_geoMap);
+  }
+
+  // Clear old layers
+  _geoLayers.forEach((l) => _geoMap.removeLayer(l));
+  _geoLayers = [];
+
+  // Find max value for scaling
+  const maxVal = Math.max(...geoSegs.map((s) => s.value || 0));
+  const total = geoSegs.reduce((sum, s) => sum + (s.value || 0), 0);
+
+  // Place one circle per region — sized by revenue share
+  geoSegs.forEach((seg, i) => {
+    const rawName = (seg.segment || seg.name || '').trim();
+    const name = rawName.toLowerCase();
+    let coords = GEO_REGIONS[name];
+    if (!coords) {
+      const match = Object.keys(GEO_REGIONS).find((k) => name.includes(k) || k.includes(name));
+      if (match) coords = GEO_REGIONS[match];
+    }
+    // Fallback: "Other" / "Rest of World" → place in Atlantic so it's not on Africa
+    if (!coords) {
+      coords = { lat: 15, lng: -30, label: rawName };
+    }
+
+    const pct = total > 0 ? (seg.value / total * 100) : 0;
+    const color = CHART_COLORS.palette[i % CHART_COLORS.palette.length];
+    const radius = Math.max(14, Math.sqrt(seg.value / maxVal) * 45);
+
+    // Glow ring
+    const glow = L.circleMarker([coords.lat, coords.lng], {
+      radius: radius + 6,
+      fillColor: color, fillOpacity: 0.12,
+      color: color, weight: 0, opacity: 0,
+    }).addTo(_geoMap);
+    _geoLayers.push(glow);
+
+    // Main circle
+    const circle = L.circleMarker([coords.lat, coords.lng], {
+      radius: radius,
+      fillColor: color, fillOpacity: 0.6,
+      color: color, weight: 2, opacity: 0.9,
+    }).addTo(_geoMap);
+
+    circle.bindTooltip(
+      '<div class="geo-tooltip">' +
+      '<div class="region-name">' + esc(coords.label || rawName) + '</div>' +
+      '<div class="region-value">' + fmtN(seg.value) + '</div>' +
+      '<div class="region-pct">' + pct.toFixed(1) + '% of total</div>' +
+      '</div>',
+      { className: 'geo-tooltip-wrapper', direction: 'top' }
+    );
+
+    circle.on('mouseover', function() { this.setStyle({ fillOpacity: 0.85, weight: 3 }); });
+    circle.on('mouseout', function() { this.setStyle({ fillOpacity: 0.6, weight: 2 }); });
+
+    _geoLayers.push(circle);
+  });
+
+  // Render legend
+  if (legendEl) {
+    legendEl.innerHTML = geoSegs.map((s, i) => {
+      const pct = total > 0 ? (s.value / total * 100).toFixed(1) : '0';
+      return '<div class="seg-item">' +
+        '<span class="seg-dot" style="background:' + CHART_COLORS.palette[i % CHART_COLORS.palette.length] + '"></span>' +
+        '<span class="seg-name">' + esc(s.segment || s.name) + '</span>' +
+        '<span class="seg-pct">' + fmtN(s.value) + ' (' + pct + '%)</span>' +
+        '</div>';
+    }).join('');
+  }
+
+  // Fit bounds to show all markers
+  if (_geoLayers.length > 0) {
+    const group = L.featureGroup(_geoLayers);
+    _geoMap.fitBounds(group.getBounds().pad(0.3));
+  }
+}
+
+/**
+ * Generate AI insights for the currently loaded company.
+ */
+async function generateInsights() {
+  if (!_tk || !_curData) {
+    showError('Load a company first');
+    return;
+  }
+
+  const el = document.getElementById('insights-content');
+  if (!el) return;
+  el.innerHTML = '<div style="display:flex;align-items:center;gap:12px;padding:16px 0"><div class="spinner"></div><span class="text-muted">Generating AI insights...</span></div>';
+
+  try {
+    const body = {
+      message: 'Give me a comprehensive executive summary and key insights for ' + _tk + '. Cover: financial performance, margins, growth trends, strengths, risks, and outlook.',
+      ticker: _tk,
+      context: _curData,
+      history: [],
+    };
+
+    const r = await fetch('/api/chatbot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    const j = await r.json();
+
+    el.innerHTML = '<div style="line-height:1.8">' + md(j.answer || 'No insights generated.') + '</div>';
+  } catch (e) {
+    el.innerHTML = '<p class="text-muted">Error: ' + esc(e.message) + '</p>';
+    console.error('[Insights Error]', e);
+  }
+}
+
+// ========================================
+// 14. UTILITIES & HELPERS
 // ========================================
 
 /**
  * Format a number as currency with K/M/B/T suffix.
  */
 function fmtN(n) {
-  if (n == null) return '—';
+  if (n == null || isNaN(n) || !isFinite(n)) return '—';
   const abs = Math.abs(n);
   const sign = n < 0 ? '-' : '';
   if (abs >= 1e12) return sign + '$' + (abs / 1e12).toFixed(1) + 'T';
@@ -1452,18 +3028,22 @@ function esc(s) {
  */
 function md(s) {
   if (!s) return '';
-  
-  // Escape HTML first
+
+  // Use marked.js for full markdown rendering (headers, tables, lists, code)
+  if (typeof marked !== 'undefined' && marked.parse) {
+    try {
+      return marked.parse(s, { breaks: true, gfm: true });
+    } catch (e) {
+      console.warn('[md] marked.parse error, falling back:', e);
+    }
+  }
+
+  // Fallback: basic markdown
   let h = esc(s);
-  
-  // Convert markdown
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
   h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-  
-  // Line breaks
   h = h.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>');
-  
   return h;
 }
 
@@ -1495,18 +3075,31 @@ function buildLoadedSummary(d) {
  * Show an error message to the user.
  */
 function showError(msg) {
-  // Show toast notification
   const toast = document.createElement('div');
   toast.className = 'toast toast-error';
   toast.innerHTML = '<i data-lucide="alert-circle"></i><span>' + esc(msg) + '</span>';
   document.body.appendChild(toast);
-  
   lucide.createIcons();
-  
-  // Auto-remove after 5 seconds
-  setTimeout(() => {
-    toast.remove();
-  }, 5000);
+  setTimeout(() => { toast.remove(); }, 5000);
+}
+
+/**
+ * Show a neutral toast message.
+ */
+function showToast(msg) {
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.innerHTML = '<i data-lucide="check"></i><span>' + esc(msg) + '</span>';
+  document.body.appendChild(toast);
+  lucide.createIcons();
+  setTimeout(() => { toast.remove(); }, 3000);
+}
+
+/**
+ * Navigate to the full statement view.
+ */
+function showFullStatement() {
+  switchView('statements');
 }
 
 /**

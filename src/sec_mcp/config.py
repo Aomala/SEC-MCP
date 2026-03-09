@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     market_data_provider: str = "yfinance"
     alpha_vantage_api_key: str = ""
 
+    # Financial Modeling Prep API
+    fmp_api_key: str = ""
+
+    # Supabase for persistent caching
+    supabase_url: str = ""
+    supabase_key: str = ""
+
     # Cache TTLs (seconds)
     cache_l1_ttl: int = 300      # 5 min in-memory
     cache_l2_ttl: int = 3600     # 1 hr disk
@@ -53,7 +60,7 @@ class Settings(BaseSettings):
 
     # Strip whitespace from string fields — the .env file often has
     # trailing spaces that break connection strings
-    @field_validator("mongodb_uri", "anthropic_api_key", "edgar_identity", "alpha_vantage_api_key", mode="before")
+    @field_validator("mongodb_uri", "anthropic_api_key", "edgar_identity", "alpha_vantage_api_key", "fmp_api_key", "supabase_url", "supabase_key", mode="before")
     @classmethod
     def strip_whitespace(cls, v: str) -> str:
         if isinstance(v, str):

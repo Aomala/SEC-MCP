@@ -31,11 +31,13 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import pandas as pd
 
+from sec_mcp import disk_cache
 from sec_mcp.config import get_config
 from sec_mcp.sec_client import get_sec_client
 from sec_mcp.xbrl_mappings import (
@@ -200,8 +202,8 @@ def _apply_quality_filters(df: pd.DataFrame) -> pd.DataFrame:
                 level_mask = levels.isna() | (levels <= MAX_ACCEPTABLE_LEVEL)
                 if level_mask.any():
                     filtered = filtered[level_mask]
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Level filtering failed on column %s: %s", col, exc)
             break
 
     # If filtering removed everything, fall back to the original
@@ -282,7 +284,7 @@ def _resolve_metric(
                            match_mode="exact", duration_pref=dp,
                            target_fp=tfp, target_fy=tfy)
         if val is not None:
-            return ResolvedMetric(val, entry.display_name, confidence=0.95, method="exact")
+            return ResolvedMetric(val, entry.display_name, confidence=0.99, method="exact")
 
     # --- Pass 2: Non-aggregate contains match (broader) ---
     for entry in concepts:
@@ -296,7 +298,7 @@ def _resolve_metric(
                            match_mode="contains", duration_pref=dp,
                            target_fp=tfp, target_fy=tfy)
         if val is not None:
-            return ResolvedMetric(val, entry.display_name, confidence=0.80, method="contains")
+            return ResolvedMetric(val, entry.display_name, confidence=0.90, method="contains")
 
     # --- Pass 3: Custom extension patterns (banks, large filers) ---
     if industry == IndustryClass.BANK:
@@ -304,13 +306,13 @@ def _resolve_metric(
             clean_df, is_custom_net_revenue, "Custom Net Revenue", period_index
         )
         if val is not None:
-            return ResolvedMetric(val, src, confidence=0.70, method="custom_ext")
+            return ResolvedMetric(val, src, confidence=0.85, method="custom_ext")
     else:
         val, src = _resolve_custom_extension(
             clean_df, is_custom_revenue, "Custom Revenue", period_index
         )
         if val is not None:
-            return ResolvedMetric(val, src, confidence=0.65, method="custom_ext")
+            return ResolvedMetric(val, src, confidence=0.80, method="custom_ext")
 
     # --- Pass 4: Aggregate fallback ---
     total = 0.0
@@ -330,7 +332,7 @@ def _resolve_metric(
 
     if matched_any:
         label = " + ".join(components)
-        conf = min(0.60, 0.30 + 0.10 * len(components))
+        conf = min(0.85, 0.60 + 0.05 * len(components))
         return ResolvedMetric(total, label, confidence=conf, method="aggregate")
 
     return ResolvedMetric(None, None)
@@ -351,6 +353,11 @@ def _resolve_custom_extension(
     for _, row in facts_df.iterrows():
         concept_name = str(row[concept_col])
         if pattern_fn(concept_name):
+            # Skip guidance/forecast/estimate concepts
+            concept_lo = concept_name.lower()
+            if any(kw in concept_lo for kw in ("guidance", "forecast", "estimated",
+                                                 "expected", "projected", "outlook")):
+                continue
             val = _safe(row[value_col])
             if val is not None:
                 return val, f"{label_prefix} ({concept_name})"
@@ -421,8 +428,8 @@ def _lookup_fact(
             end_col = pcol
             try:
                 matches = matches.sort_values(pcol, ascending=False)
-            except Exception:
-                pass
+            except Exception as exc:
+                log.debug("Sort by %s failed: %s", pcol, exc)
             break
 
     # Duration-aware filtering for flow metrics
@@ -714,39 +721,124 @@ def _extract_segments(
 
     # ── Geographic concept name → display label mapping ────────────────────
     GEO_MAP: list[tuple[str, str]] = [
-        ("GreaterChina",          "Greater China"),
-        ("ChinaMainland",         "China"),
-        ("UnitedStates",          "United States"),
-        ("Americas",              "Americas"),
-        ("NorthAmerica",          "North America"),
-        ("Europe",                "Europe"),
-        ("MiddleEastAndAfrica",   "Middle East & Africa"),
-        ("AsiaPacific",           "Asia Pacific"),
-        ("Japan",                 "Japan"),
-        ("Korea",                 "Korea"),
-        ("International",         "International"),
-        ("Domestic",              "Domestic"),
-        ("RestOfWorld",           "Rest of World"),
-        ("RestOfAsia",            "Rest of Asia"),
+        # Americas
+        ("UnitedStates",           "United States"),
+        ("Domestic",               "United States"),
+        ("NorthAmerica",           "North America"),
+        ("Americas",               "Americas"),
+        ("LatinAmerica",           "Latin America"),
+        ("SouthAmerica",           "South America"),
+        ("Brazil",                 "Brazil"),
+        ("Mexico",                 "Mexico"),
+        ("Canada",                 "Canada"),
+        ("Argentina",              "Argentina"),
+        ("Colombia",               "Colombia"),
+        ("Chile",                  "Chile"),
+        # Europe
+        ("Europe",                 "Europe"),
+        ("EMEA",                   "EMEA"),
+        ("UnitedKingdom",          "United Kingdom"),
+        ("UK",                     "United Kingdom"),
+        ("Germany",                "Germany"),
+        ("France",                 "France"),
+        ("Netherlands",            "Netherlands"),
+        ("Ireland",                "Ireland"),
+        ("Switzerland",            "Switzerland"),
+        ("Italy",                  "Italy"),
+        ("Spain",                  "Spain"),
+        ("Sweden",                 "Sweden"),
+        ("Norway",                 "Norway"),
+        ("Denmark",                "Denmark"),
+        ("Finland",                "Finland"),
+        ("Belgium",                "Belgium"),
+        ("Austria",                "Austria"),
+        ("Poland",                 "Poland"),
+        ("EuropeanUnion",          "European Union"),
+        ("WesternEurope",          "Western Europe"),
+        ("EasternEurope",          "Eastern Europe"),
+        # Asia Pacific
+        ("GreaterChina",           "Greater China"),
+        ("ChinaMainland",          "China"),
+        ("China",                  "China"),
+        ("HongKong",               "Hong Kong"),
+        ("Taiwan",                 "Taiwan"),
+        ("Japan",                  "Japan"),
+        ("Korea",                  "South Korea"),
+        ("SouthKorea",             "South Korea"),
+        ("India",                  "India"),
+        ("AsiaPacific",            "Asia Pacific"),
+        ("APAC",                   "Asia Pacific"),
+        ("Australia",              "Australia"),
+        ("NewZealand",             "New Zealand"),
+        ("Singapore",              "Singapore"),
+        ("Malaysia",               "Malaysia"),
+        ("Thailand",               "Thailand"),
+        ("Indonesia",              "Indonesia"),
+        ("Vietnam",                "Vietnam"),
+        ("Philippines",            "Philippines"),
+        ("SoutheastAsia",          "Southeast Asia"),
+        ("RestOfAsia",             "Rest of Asia"),
+        # Middle East & Africa
+        ("MiddleEast",             "Middle East"),
+        ("MiddleEastAndAfrica",    "Middle East & Africa"),
+        ("Africa",                 "Africa"),
+        ("SouthAfrica",            "South Africa"),
+        ("Israel",                 "Israel"),
+        ("SaudiArabia",            "Saudi Arabia"),
+        ("UAE",                    "UAE"),
+        ("UnitedArabEmirates",     "UAE"),
+        ("Turkey",                 "Turkey"),
+        ("Egypt",                  "Egypt"),
+        ("Nigeria",                "Nigeria"),
+        # Generic
+        ("International",          "International"),
+        ("RestOfWorld",            "Rest of World"),
+        ("AllOtherCountries",      "Other Countries"),
+        ("OtherCountries",         "Other Countries"),
+        ("OtherGeographic",        "Other"),
+        ("ForeignCountries",       "International"),
+        ("OutsideUnitedStates",    "International"),
     ]
     GEO_KEYS = {k.lower() for k, _ in GEO_MAP}
 
     # ── Revenue segment concept patterns (product/business) ───────────────
     # These match standalone segment revenue tags some companies use.
+    # IMPORTANT: concept must also contain "Revenue" or "Sales" or "Segment"
+    # to avoid matching expense/fee/liability concepts.
     REV_SEG_PATTERNS = [
         # Tech product lines
         "DataCenter", "ComputeAndNetworking", "Gaming", "Automotive",
-        "Professional", "Visualization", "CloudRevenue",
+        "Visualization", "CloudRevenue",
         "OnlineStore", "PhysicalStore", "ThirdPartySeller",
         "MacRevenue", "iPhoneRevenue", "iPadRevenue", "WearableRevenue",
         "ProductRevenue", "ServiceRevenue",
         # Media / ad
         "AdvertisingRevenue", "SubscriptionRevenue",
         # Broad segments
-        "OnlineStore", "Retail", "Wholesale",
+        "Retail", "Wholesale",
+        # Banking / financial
+        "InstitutionalSecurities", "WealthManagement", "InvestmentManagement",
+        "InvestmentBanking", "TradingRevenue", "AssetManagement",
+        "CommercialBanking", "ConsumerBanking", "CorporateBanking",
+        "GlobalBanking", "GlobalMarkets", "CardServices",
+        "NetInterestIncome", "NonInterestRevenue",
+        # Insurance
+        "PremiumRevenue", "Underwriting",
         # Generic
         "OtherRevenue", "OtherSalesRevenue",
     ]
+
+    # Words that MUST appear in the concept for it to be a revenue segment
+    _REV_QUALIFIERS = {"revenue", "sales", "income", "segment", "net"}
+
+    # Words that disqualify a concept from being a revenue segment
+    _REV_BLOCKERS = {
+        "expense", "cost", "fee", "loss", "liability", "payable",
+        "depreciation", "amortization", "provision", "impairment",
+        "accrued", "deferred", "allowance", "reserve", "tax",
+        "receivable", "asset", "inventory", "equity", "dividend",
+        "compensation", "stock", "share", "warrant", "option",
+    }
 
     # Concept names that are almost certainly the TOTAL (not a sub-segment)
     TOTAL_CONCEPTS = {
@@ -769,20 +861,30 @@ def _extract_segments(
 
         concept_lo = concept_name.lower()
 
+        # Quick blocker check — skip expense/liability concepts entirely
+        if any(b in concept_lo for b in _REV_BLOCKERS):
+            continue
+
         # ── Geographic match ──────────────────────────────────────────────
+        # Require the concept to also contain a revenue-like word
         matched_geo = False
-        for key, display in GEO_MAP:
-            if key.lower() in concept_lo:
-                # Prefer the larger value (handles multiple periods in same df)
-                if display not in seen_geo or val > seen_geo[display]:
-                    seen_geo[display] = val
-                matched_geo = True
-                break
+        has_rev_word = any(q in concept_lo for q in _REV_QUALIFIERS)
+        if has_rev_word:
+            for key, display in GEO_MAP:
+                if key.lower() in concept_lo:
+                    if display not in seen_geo or val > seen_geo[display]:
+                        seen_geo[display] = val
+                    matched_geo = True
+                    break
 
         if not matched_geo:
             # ── Product/business segment match ────────────────────────────
+            # Concept must contain a revenue qualifier OR be a known segment pattern
             for pat in REV_SEG_PATTERNS:
                 if pat.lower() in concept_lo:
+                    # Require revenue qualifier for generic patterns
+                    if not has_rev_word and pat.lower() not in concept_lo:
+                        continue
                     label = _clean_segment_label(concept_name) or pat
                     if label not in seen_rev or val > seen_rev[label]:
                         seen_rev[label] = val
@@ -809,6 +911,616 @@ def _extract_segments(
         result["note"] = ""
 
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Filing-text geographic revenue parser (fallback when XBRL has no geo data)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Known region/country names to match in filing text tables
+_GEO_TEXT_LABELS: list[tuple[re.Pattern, str]] = [
+    # Order matters — more specific patterns first
+    (re.compile(r"\bUnited\s+States\b", re.I),               "United States"),
+    (re.compile(r"\bU\.?S\.?A?\.?\b"),                        "United States"),
+    (re.compile(r"\bNorth\s+America\b", re.I),                "North America"),
+    (re.compile(r"\bLatin\s+America\b", re.I),                "Latin America"),
+    (re.compile(r"\bSouth\s+America\b", re.I),                "South America"),
+    (re.compile(r"\bAmericas\b", re.I),                       "Americas"),
+    (re.compile(r"\bCanada\b", re.I),                         "Canada"),
+    (re.compile(r"\bMexico\b", re.I),                         "Mexico"),
+    (re.compile(r"\bBrazil\b", re.I),                         "Brazil"),
+    (re.compile(r"\bArgentina\b", re.I),                      "Argentina"),
+    (re.compile(r"\bColombia\b", re.I),                       "Colombia"),
+    (re.compile(r"\bChile\b", re.I),                          "Chile"),
+    (re.compile(r"\bUnited\s+Kingdom\b", re.I),               "United Kingdom"),
+    (re.compile(r"\bU\.?K\.?\b"),                              "United Kingdom"),
+    (re.compile(r"\bGermany\b", re.I),                        "Germany"),
+    (re.compile(r"\bFrance\b", re.I),                         "France"),
+    (re.compile(r"\bNetherlands\b", re.I),                    "Netherlands"),
+    (re.compile(r"\bIreland\b", re.I),                        "Ireland"),
+    (re.compile(r"\bSwitzerland\b", re.I),                    "Switzerland"),
+    (re.compile(r"\bItaly\b", re.I),                          "Italy"),
+    (re.compile(r"\bSpain\b", re.I),                          "Spain"),
+    (re.compile(r"\bSweden\b", re.I),                         "Sweden"),
+    (re.compile(r"\bNorway\b", re.I),                         "Norway"),
+    (re.compile(r"\bDenmark\b", re.I),                        "Denmark"),
+    (re.compile(r"\bFinland\b", re.I),                        "Finland"),
+    (re.compile(r"\bBelgium\b", re.I),                        "Belgium"),
+    (re.compile(r"\bAustria\b", re.I),                        "Austria"),
+    (re.compile(r"\bPoland\b", re.I),                         "Poland"),
+    (re.compile(r"\bWestern\s+Europe\b", re.I),               "Western Europe"),
+    (re.compile(r"\bEastern\s+Europe\b", re.I),               "Eastern Europe"),
+    (re.compile(r"\bEMEA\b"),                                  "EMEA"),
+    (re.compile(r"\bEurope,?\s*Middle\s+East", re.I),         "EMEA"),
+    (re.compile(r"\bEurope\b", re.I),                         "Europe"),
+    (re.compile(r"\bGreater\s*China\b", re.I),                "Greater China"),
+    (re.compile(r"\bMainland\s+China\b", re.I),               "China"),
+    (re.compile(r"\bChina\b", re.I),                          "China"),
+    (re.compile(r"\bHong\s+Kong\b", re.I),                    "Hong Kong"),
+    (re.compile(r"\bTaiwan\b", re.I),                         "Taiwan"),
+    (re.compile(r"\bJapan\b", re.I),                          "Japan"),
+    (re.compile(r"\bSouth\s+Korea\b", re.I),                  "South Korea"),
+    (re.compile(r"\bKorea\b", re.I),                          "South Korea"),
+    (re.compile(r"\bIndia\b", re.I),                          "India"),
+    (re.compile(r"\bAsia\s*[/-]?\s*Pacific\b", re.I),         "Asia Pacific"),
+    (re.compile(r"\bAPAC\b"),                                  "Asia Pacific"),
+    (re.compile(r"\bAustralia\b", re.I),                      "Australia"),
+    (re.compile(r"\bNew\s+Zealand\b", re.I),                  "New Zealand"),
+    (re.compile(r"\bSingapore\b", re.I),                      "Singapore"),
+    (re.compile(r"\bMalaysia\b", re.I),                       "Malaysia"),
+    (re.compile(r"\bThailand\b", re.I),                       "Thailand"),
+    (re.compile(r"\bIndonesia\b", re.I),                      "Indonesia"),
+    (re.compile(r"\bVietnam\b", re.I),                        "Vietnam"),
+    (re.compile(r"\bPhilippines\b", re.I),                    "Philippines"),
+    (re.compile(r"\bSoutheast\s+Asia\b", re.I),               "Southeast Asia"),
+    (re.compile(r"\bMiddle\s+East\s*(and|&)\s*Africa\b", re.I), "Middle East & Africa"),
+    (re.compile(r"\bMiddle\s+East\b", re.I),                  "Middle East"),
+    (re.compile(r"\bAfrica\b", re.I),                         "Africa"),
+    (re.compile(r"\bSouth\s+Africa\b", re.I),                 "South Africa"),
+    (re.compile(r"\bIsrael\b", re.I),                         "Israel"),
+    (re.compile(r"\bSaudi\s+Arabia\b", re.I),                 "Saudi Arabia"),
+    (re.compile(r"\bUnited\s+Arab\s+Emirates\b", re.I),       "UAE"),
+    (re.compile(r"\bUAE\b"),                                   "UAE"),
+    (re.compile(r"\bTurkey\b", re.I),                         "Turkey"),
+    (re.compile(r"\bTürkiye\b", re.I),                        "Turkey"),
+    (re.compile(r"\bEgypt\b", re.I),                          "Egypt"),
+    (re.compile(r"\bNigeria\b", re.I),                        "Nigeria"),
+    (re.compile(r"\bRest\s+of\s+(?:the\s+)?World\b", re.I),  "Rest of World"),
+    (re.compile(r"\bInternational\b", re.I),                  "International"),
+    (re.compile(r"\bOther\s+Countries\b", re.I),              "Other Countries"),
+    (re.compile(r"\bAll\s+Other\b", re.I),                    "Other"),
+    (re.compile(r"\bRest\s*of\s*Asia\b", re.I),              "Rest of Asia"),
+    (re.compile(r"\bRest\s+of\s+Europe\b", re.I),            "Rest of Europe"),
+    (re.compile(r"\bRest\s+of\s+Americas\b", re.I),          "Rest of Americas"),
+]
+
+# Section headers that signal a geographic revenue table
+_GEO_SECTION_RE = re.compile(
+    r"(?:geographic|geographical)\s+(?:information|areas?|breakdown|data)"
+    r"|revenue\s+by\s+(?:geography|region|country|area)"
+    r"|(?:revenue|net\s+sales|net\s+revenues)\s+(?:by|from)\s+(?:geographic|geographical)"
+    r"|disaggregation\s+of\s+revenue"
+    r"|revenue\s+(?:from|earned\s+in)\s+(?:external\s+)?customers?\s+by\s+geography"
+    r"|information\s+by\s+geographic\s+area"
+    r"|(?:net\s+)?(?:revenue|sales)\s+by\s+reportable\s+segment\s+and\s+geograph",
+    re.IGNORECASE,
+)
+
+# Dollar amount pattern: $12,345 or 12,345 or $12.3 (context-dependent)
+_DOLLAR_RE = re.compile(
+    r"\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d+)?)"   # e.g. $12,345.6 or 12,345
+    r"|\$?\s*(\d+(?:\.\d+)?)\s*(billion|million|thousand|bn|mm|m|k)"  # e.g. $12.3 billion
+    , re.IGNORECASE,
+)
+
+
+def _parse_dollar_amount(match: re.Match) -> float | None:
+    """Convert a dollar regex match to a numeric value."""
+    if match.group(1):
+        # Plain number like 12,345 or 12,345.6
+        return float(match.group(1).replace(",", ""))
+    if match.group(2) and match.group(3):
+        base = float(match.group(2))
+        suffix = match.group(3).lower()
+        multipliers = {
+            "billion": 1_000_000_000, "bn": 1_000_000_000,
+            "million": 1_000_000, "mm": 1_000_000, "m": 1_000_000,
+            "thousand": 1_000, "k": 1_000,
+        }
+        return base * multipliers.get(suffix, 1)
+    return None
+
+
+def _parse_geo_from_filing_text(
+    text: str,
+    total_revenue: float | None = None,
+) -> list[dict]:
+    """Extract geographic revenue breakdown from 10-K filing text.
+
+    Handles two common table formats:
+    1. Row-based: "Americas ... $178,353" (label + value on same line)
+    2. Columnar: headers on one line, "Net sales $X $Y $Z" on next line
+       (common in AAPL-style segment tables)
+
+    Returns list of {segment, value, pct} dicts sorted by value descending.
+    """
+    if not text or len(text) < 200:
+        return []
+
+    results: dict[str, float] = {}  # display_label → dollar value
+
+    # Find all potential geo-revenue sections
+    section_starts: list[int] = []
+    for m in _GEO_SECTION_RE.finditer(text):
+        section_starts.append(m.start())
+
+    if not section_starts:
+        return []
+
+    # ── Detect scale from the BEST section (one with actual table data) ──
+    scale = 1.0
+    # We'll scan broader windows for scale markers
+    for start in section_starts:
+        header_window = text[max(0, start - 300):start + 1500].lower()
+        if "in millions" in header_window or "(millions)" in header_window:
+            scale = 1_000_000
+            break
+        elif "in thousands" in header_window or "(thousands)" in header_window:
+            scale = 1_000
+            break
+        elif "in billions" in header_window or "(billions)" in header_window:
+            scale = 1_000_000_000
+            break
+
+    # ── Parse each section ──
+    columnar_found = False
+    for start in section_starts:
+        window = text[start:start + 4000]
+        lines = window.split("\n")
+
+        # ── Strategy 1: Columnar table ──
+        # Look for a header line with 2+ geo labels, then a "Net sales" or
+        # revenue line with corresponding dollar values
+        if _try_columnar_parse(lines, results):
+            columnar_found = True
+
+    # ── Strategy 2: Row-based (label + value on same line) ──
+    # Only try this if columnar parsing didn't find anything
+    if not columnar_found:
+        for start in section_starts:
+            window = text[start:start + 4000]
+            lines = window.split("\n")
+            _try_row_parse(lines, results)
+
+    if not results:
+        return []
+
+    # If no explicit scale found, infer from total_revenue comparison
+    if scale == 1.0 and total_revenue is not None and total_revenue > 0:
+        raw_total = sum(results.values())
+        if raw_total > 0:
+            ratio = total_revenue / raw_total
+            if ratio > 500_000:
+                scale = 1_000_000
+            elif ratio > 500:
+                scale = 1_000
+
+    # Apply scale
+    if scale != 1.0:
+        results = {k: v * scale for k, v in results.items()}
+
+    # Remove entries that are subsets of other entries (e.g. "China" when
+    # "Greater China" exists, or "Asia" when "Rest of Asia" exists)
+    _SUBSET_PAIRS = [
+        ("China", "Greater China"),
+        ("Asia", "Rest of Asia"),
+        ("Asia", "Asia Pacific"),
+        ("Asia", "Southeast Asia"),
+        ("Europe", "Rest of Europe"),
+        ("Americas", "Rest of Americas"),
+    ]
+    for child, parent in _SUBSET_PAIRS:
+        if child in results and parent in results:
+            del results[child]
+
+    # Build output with percentages
+    total = sum(results.values()) or 1
+    segments = sorted(
+        [{"segment": k, "value": v, "pct": round(v / total * 100, 1)}
+         for k, v in results.items()],
+        key=lambda x: x["value"],
+        reverse=True,
+    )
+
+    return segments
+
+
+def _try_columnar_parse(lines: list[str], results: dict[str, float]) -> bool:
+    """Parse columnar geo tables (headers on one line, values on the next).
+
+    Example (AAPL format):
+        Americas  Europe  GreaterChina  Japan  Rest of Asia Pacific  Total
+        Net sales $ 178,353  $ 111,032  $ 64,377  $ 28,703  $ 33,696  $ 416,161
+    """
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        # Check if this line has 2+ geo labels and NO dollar amounts
+        # (candidate column header line)
+        geo_matches_on_line: list[str] = []
+        for pat, display in _GEO_TEXT_LABELS:
+            if pat.search(stripped):
+                geo_matches_on_line.append(display)
+
+        if len(geo_matches_on_line) < 2:
+            continue
+
+        # This line has multiple geo labels — look at subsequent lines for dollar values
+        dollar_line = None
+        for j in range(i + 1, min(i + 6, len(lines))):
+            candidate = lines[j].strip()
+            if not candidate:
+                continue
+            # Must have dollar amounts and mention revenue/sales or just have $
+            dollars = list(_DOLLAR_RE.finditer(candidate))
+            if len(dollars) >= 2 and (
+                re.search(r"net\s+sales|revenue|total", candidate, re.I) or
+                "$" in candidate
+            ):
+                dollar_line = candidate
+                break
+
+        if not dollar_line:
+            continue
+
+        # Extract dollar values from the value line
+        dollars = list(_DOLLAR_RE.finditer(dollar_line))
+
+        # Filter out "Total" from geo labels — it's not a region
+        geo_labels = [g for g in geo_matches_on_line
+                      if g.lower() not in ("other", "all other")]
+
+        # Try to match each geo label position to dollar values.
+        # The trick: find positions of labels on the header line, and positions
+        # of dollar amounts on the value line, then pair by column position.
+
+        # Get character positions of each geo label on the header line
+        label_positions: list[tuple[int, str]] = []
+        for pat, display in _GEO_TEXT_LABELS:
+            m = pat.search(stripped)
+            if m and display in geo_labels:
+                label_positions.append((m.start(), display))
+        label_positions.sort(key=lambda x: x[0])
+
+        # Get character positions of dollar amounts on the value line
+        dollar_positions: list[tuple[int, float]] = []
+        for dm in dollars:
+            val = _parse_dollar_amount(dm)
+            if val is not None and val > 0:
+                dollar_positions.append((dm.start(), val))
+
+        # Skip the last dollar amount if it looks like a total
+        # (usually "Total" is the rightmost column)
+        if (len(dollar_positions) == len(label_positions) + 1 and
+                re.search(r"\btotal\b", stripped, re.I)):
+            dollar_positions = dollar_positions[:-1]
+
+        # Pair labels to values by position order
+        n_pairs = min(len(label_positions), len(dollar_positions))
+        if n_pairs >= 2:
+            for idx in range(n_pairs):
+                label = label_positions[idx][1]
+                val = dollar_positions[idx][1]
+                if label not in results or val > results[label]:
+                    results[label] = val
+            return True  # Columnar parse succeeded
+
+    return False
+
+
+def _try_row_parse(lines: list[str], results: dict[str, float]) -> None:
+    """Parse row-based geo tables (label + value on same line).
+
+    Only matches lines where the geo label appears near the START of the line
+    (within first ~60 chars) to avoid matching random mentions of countries
+    in descriptive text like investment tables.
+
+    Example:
+        Americas    $178,353
+        Europe      $111,032
+    """
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or len(stripped) > 300:
+            continue
+
+        # Skip total/header lines
+        if re.match(r"^\s*Total\b", stripped, re.I):
+            continue
+
+        # Try to match a known geo label — require it near the START of the line
+        matched_label: str | None = None
+        for pat, display in _GEO_TEXT_LABELS:
+            m = pat.search(stripped)
+            if m and m.start() < 60:
+                matched_label = display
+                break
+
+        if not matched_label:
+            continue
+
+        # Find dollar amounts on the same line
+        dollar_matches = list(_DOLLAR_RE.finditer(stripped))
+        if not dollar_matches:
+            continue
+
+        # Take the FIRST dollar amount (most recent year usually leftmost)
+        val = _parse_dollar_amount(dollar_matches[0])
+        if val is None or val <= 0:
+            continue
+
+        # Reject suspiciously small values or values that look like years
+        if 1900 <= val <= 2100:
+            continue
+
+        # Only keep if the label and the dollar amount are "close" —
+        # skip lines where there's a lot of unrelated text between them
+        if matched_label not in results or val > results[matched_label]:
+            results[matched_label] = val
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Filing-text revenue segment parser (fallback when XBRL has < 2 segments)
+# ═══════════════════════════════════════════════════════════════════════════
+
+_SEG_SECTION_RE = re.compile(
+    r"(?:net\s+)?(?:revenue|sales|net\s+revenues)\s+by\s+(?:segment|business|reportable\s+segment|operating\s+segment)"
+    r"|reportable\s+segment\s+(?:information|data|results)"
+    r"|segment\s+(?:information|data|results|reporting|net\s+revenues)"
+    r"|(?:results\s+of\s+)?operations\s+by\s+(?:segment|business\s+segment)"
+    r"|(?:business|operating)\s+segment\s+(?:net\s+)?(?:revenue|sales)"
+    r"|business\s+segments\s*[-—–:]\s*"
+    r"|(?:net\s+)?revenues?\s+(?:by|from)\s+(?:business|operating)\s+segment"
+    r"|selected\s+financial\s+(?:data|information)\s+by\s+segment"
+    r"|segment\s+(?:net\s+)?revenues"
+    r"|(?:the\s+)?following\s+table.*?(?:net\s+)?revenues?\s+.*?segment",
+    re.IGNORECASE,
+)
+
+# Blocklist: lines that look like segment names but aren't
+_SEG_BLOCKLIST = re.compile(
+    r"\b(?:total|consolidat|eliminat|intersegment|corporate|reconcil|"
+    r"unallocated|adjustment|other\s+reconcil|interest\s+expense)\b",
+    re.IGNORECASE,
+)
+
+
+def _parse_segments_from_filing_text(
+    text: str,
+    total_revenue: float | None = None,
+) -> list[dict]:
+    """Extract revenue segment breakdown from 10-K filing text.
+
+    Looks for segment revenue tables and parses segment names + dollar values.
+    Returns list of {segment, value, pct} dicts sorted by value descending.
+    """
+    if not text or len(text) < 200:
+        return []
+
+    results: dict[str, float] = {}
+
+    section_starts: list[int] = []
+    for m in _SEG_SECTION_RE.finditer(text):
+        section_starts.append(m.start())
+
+    if not section_starts:
+        # No explicit segment table headers — try the header-based approach
+        _try_segment_header_parse(text, results)
+
+    # Detect scale — check section headers first, then broader text
+    scale = 1.0
+    scale_windows = [text[max(0, s - 300):s + 1500].lower() for s in section_starts]
+    if not scale_windows:
+        # Search the first 5000 chars for scale indicators (often in MDA header)
+        scale_windows = [text[:5000].lower()]
+    for hw in scale_windows:
+        if "in millions" in hw or "(millions)" in hw or "$ in millions" in hw:
+            scale = 1_000_000
+            break
+        elif "in thousands" in hw or "(thousands)" in hw:
+            scale = 1_000
+            break
+        elif "in billions" in hw or "(billions)" in hw:
+            scale = 1_000_000_000
+            break
+
+    for start in section_starts:
+        window = text[start:start + 3000]
+        lines = window.split("\n")
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or len(stripped) > 200 or len(stripped) < 5:
+                continue
+
+            # Skip blocklisted lines
+            if _SEG_BLOCKLIST.search(stripped):
+                continue
+
+            # Must have dollar amounts
+            dollar_matches = list(_DOLLAR_RE.finditer(stripped))
+            if not dollar_matches:
+                continue
+
+            # Extract the text before the first dollar amount as the segment name
+            first_dollar_pos = dollar_matches[0].start()
+            label_text = stripped[:first_dollar_pos].strip().rstrip("$").strip()
+
+            # Clean up label — remove trailing dots, dashes, whitespace
+            label_text = re.sub(r"[.\-–—:]+$", "", label_text).strip()
+
+            # Skip if label is too short or too long
+            if len(label_text) < 3 or len(label_text) > 80:
+                continue
+
+            # Skip if label looks like a header/date
+            if re.match(r"^\d{4}$", label_text):
+                continue
+            if re.match(r"^(for|year|three|six|nine|twelve|quarter)", label_text, re.I):
+                continue
+
+            val = _parse_dollar_amount(dollar_matches[0])
+            if val is None or val <= 0:
+                continue
+
+            # Skip values that look like years
+            if 1900 <= val <= 2100:
+                continue
+
+            if label_text not in results or val > results[label_text]:
+                results[label_text] = val
+
+    # ── Strategy 2: Segment-header pattern ──
+    # Some companies (banks, diversified) have each segment as its own section
+    # with "Net revenues" as a line item. Pattern: {SegmentName} ... Net revenues {$X}
+    if len(results) < 2:
+        _try_segment_header_parse(text, results)
+
+    if len(results) < 2:
+        return []
+
+    # Infer scale if not found
+    if scale == 1.0 and total_revenue is not None and total_revenue > 0:
+        raw_total = sum(results.values())
+        if raw_total > 0:
+            ratio = total_revenue / raw_total
+            if ratio > 500_000:
+                scale = 1_000_000
+            elif ratio > 500:
+                scale = 1_000
+
+    if scale != 1.0:
+        results = {k: v * scale for k, v in results.items()}
+
+    # Filter out geographic regions — these belong in geo revenue, not segments
+    _GEO_FILTER = {
+        "americas", "europe", "greater china", "japan", "asia pacific",
+        "rest of asia pacific", "rest of asia", "united states", "emea",
+        "north america", "latin america", "middle east", "africa",
+        "international", "rest of world", "asia", "apac", "china",
+        "hong kong", "taiwan", "uk", "united kingdom", "canada",
+        "brazil", "mexico", "india", "south korea", "korea",
+        "australia", "singapore", "germany", "france",
+    }
+    results = {k: v for k, v in results.items()
+               if k.lower() not in _GEO_FILTER}
+
+    # Filter out labels that look like sentences or contain junk characters
+    results = {k: v for k, v in results.items()
+               if (len(k) < 50
+                   and not re.search(r"\b(increased|decreased|during|for|the|was|were|by)\b", k, re.I)
+                   and not re.search(r"[|(){}\[\]]", k))}  # No special chars
+
+    # Filter out parent categories that double-count children
+    # e.g. "Products" = iPhone + Mac + iPad + Wearables
+    if len(results) > 2:
+        total_check = sum(results.values())
+        to_remove = []
+        for k, v in results.items():
+            others_total = total_check - v
+            # If this segment's value ≈ sum of remaining segments, it's a parent
+            if total_check > 0 and abs(v - others_total) / total_check < 0.05:
+                to_remove.append(k)
+        for k in to_remove:
+            results.pop(k, None)
+
+    if len(results) < 2:
+        return []
+
+    total = sum(results.values()) or 1
+    segments = sorted(
+        [{"segment": k, "value": v, "pct": round(v / total * 100, 1)}
+         for k, v in results.items()],
+        key=lambda x: x["value"],
+        reverse=True,
+    )
+
+    # Drop segments < 1% of total (noise)
+    segments = [s for s in segments if s["pct"] >= 1.0]
+
+    # Limit to top 8 segments
+    return segments[:8]
+
+
+def _try_segment_header_parse(text: str, results: dict[str, float]) -> None:
+    """Find segment revenue via section headers.
+
+    Pattern: Each business segment has its own section header, followed by
+    an income statement table with a "Net revenues" line. Example:
+
+        Institutional Securities
+        Income Statement Information
+        ...
+        Net revenues  33,080  28,080  23,060
+    """
+    # Find candidate segment headers — short lines (< 60 chars) that appear
+    # before an "Income Statement" or "Financial Data" sub-header
+    _header_re = re.compile(
+        r"^([A-Z][A-Za-z &/,\-]{3,55})$",
+        re.MULTILINE,
+    )
+
+    # Non-segment headers to skip
+    _skip_headers = re.compile(
+        r"(?i)^(?:table\s+of\s+contents|income\s+tax|provision|non.interest|"
+        r"other\s+net|compensation|expenses?|revenues?|net\s+income|"
+        r"consolidated|new\s+york|overview|forward.looking|risk|"
+        r"liquidity|capital|regulation|selected\s+financial|"
+        r"management|executive|legal|accounting|auditor|balance\s+sheet|"
+        r"cash\s+flow|comprehensive|fair\s+value|goodwill|item\s+\d)",
+    )
+
+    # Geographic region names to filter out of revenue segments
+    _geo_labels = {
+        "americas", "europe", "greater china", "japan", "asia pacific",
+        "rest of asia pacific", "rest of asia", "united states", "emea",
+        "north america", "latin america", "middle east", "africa",
+        "international", "rest of world", "asia", "apac",
+    }
+
+    candidates: list[tuple[str, int]] = []  # (label, position)
+    for m in _header_re.finditer(text):
+        label = m.group(1).strip()
+        # Skip non-segment headers
+        if _skip_headers.match(label):
+            continue
+        # Skip geographic regions
+        if label.lower() in _geo_labels:
+            continue
+        # Verify this is followed by something that looks like financial data
+        after = text[m.end():m.end() + 2000]
+        if re.search(r"(?i)(?:income\s+statement|financial\s+(?:data|information)|statement\s+of\s+(?:income|operations))", after):
+            candidates.append((label, m.end()))
+
+    for label, pos in candidates:
+        # Look for "Net revenues" line within next 2000 chars
+        after = text[pos:pos + 2000]
+        rev_match = re.search(
+            r"(?i)(?:Net\s+revenues?|Total\s+(?:net\s+)?revenues?)\s+"
+            r"(?:\$\s*)?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)",
+            after,
+        )
+        if rev_match:
+            val_str = rev_match.group(1).replace(",", "")
+            try:
+                val = float(val_str)
+                if val > 0 and not (1900 <= val <= 2100):
+                    if label not in results or val > results[label]:
+                        results[label] = val
+            except ValueError:
+                pass
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -887,8 +1599,8 @@ def _llm_disambiguate(
         idx = int(response.content[0].text.strip())
         if 0 <= idx < len(candidates):
             return idx
-    except Exception:
-        pass
+    except Exception as exc:
+        log.debug("Claude disambiguation failed: %s", exc)
     return None
 
 
@@ -910,7 +1622,8 @@ def _stmt_to_records(stmt) -> list[dict]:
         if df is None or df.empty:
             return []
         return df.where(df.notna(), None).to_dict(orient="records")
-    except Exception:
+    except Exception as exc:
+        log.debug("Statement DataFrame conversion failed: %s", exc)
         return []
 
 
@@ -986,6 +1699,11 @@ def _build_statement_from_facts(
         val = _safe(row[value_col])
         end_date = str(row[end_col]) if end_col and end_col in matches.columns else ""
 
+        # Prior period value (second most recent)
+        prior_val = None
+        if len(matches) >= 2:
+            prior_val = _safe(matches.iloc[1][value_col])
+
         # Deduplicate by label (prevents "Intangible Assets" appearing twice)
         if label in seen_labels:
             continue
@@ -995,7 +1713,9 @@ def _build_statement_from_facts(
             records.append({
                 "label": label,
                 "concept": concept_name,
-                end_date: val,
+                "value": val,
+                "prior_value": prior_val,
+                "end_date": end_date,
             })
 
     return records
@@ -1223,8 +1943,8 @@ def extract_financials(
                         break
                 if found:
                     break
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Filing metadata lookup failed for %s: %s", ticker_or_cik, exc)
     else:
         # Search by year/form_type — _find_filing_accession uses get_filings_smart
         # which auto-tries FPI alternatives (20-F for 10-K, 6-K for 10-Q)
@@ -1243,6 +1963,13 @@ def extract_financials(
         acc = filing_meta.get("accession_number")
         if acc and cik_val:
             result["sec_links"].update(_build_sec_links(cik_val, accession=acc))
+
+    # ── Check disk cache ─────────────────────────────────────────────
+    if filing_meta and filing_meta.get("accession_number"):
+        cached = disk_cache.get(ticker_or_cik, filing_meta["accession_number"])
+        if cached and "data" in cached:
+            log.info("Disk cache hit for %s / %s", ticker_or_cik, filing_meta["accession_number"])
+            return cached["data"]
 
     # ── Get XBRL facts ────────────────────────────────────────────────
     # Use companyfacts API — gets ALL facts for this company, then filter.
@@ -1343,6 +2070,15 @@ def extract_financials(
             target_fy = int(fy_vals.mode().iloc[0])
             log.debug("Filing fy (authoritative): %s", target_fy)
 
+    # Flag YTD vs standalone for 10-Q data
+    if is_quarterly and target_fp:
+        fp_upper = target_fp.upper()
+        result["is_ytd"] = fp_upper in ("Q2", "Q3", "H1", "M9")
+        result["quarter_label"] = {
+            "Q1": "Q1 (Standalone)", "Q2": "Q2 (6-month YTD)",
+            "Q3": "Q3 (9-month YTD)", "H1": "H1 (6-month)", "M9": "M9 (9-month)"
+        }.get(fp_upper, fp_upper)
+
     # Revenue (industry-aware, with confidence)
     rev_concepts = get_revenue_concepts(industry)
     resolved = _resolve_metric(
@@ -1370,11 +2106,20 @@ def extract_financials(
     if metrics.get("gross_profit") is None:
         rev_val = metrics.get("revenue")
         cor_val = metrics.get("cost_of_revenue")
+        # If cost_of_revenue is missing, try direct COGS lookup
+        if cor_val is None:
+            for cogs_tag in ("CostOfGoodsSold", "CostOfGoodsAndServicesSold",
+                             "CostOfSales", "CostOfServices"):
+                cor_val = _lookup_fact(facts_df, cogs_tag, period_index,
+                                       match_mode="exact", duration_pref=dur_pref,
+                                       target_fp=target_fp, target_fy=target_fy)
+                if cor_val is not None:
+                    break
         if rev_val is not None and cor_val is not None:
             metrics["gross_profit"] = rev_val - abs(cor_val)
             sourced["gross_profit"] = "Computed: Revenue - Cost of Revenue"
             confidence["gross_profit"] = min(
-                confidence.get("revenue", 0), confidence.get("cost_of_revenue", 0)
+                confidence.get("revenue", 0), confidence.get("cost_of_revenue", 0.5)
             ) * 0.9
             log.info("Gross Profit computed via rollup: %s", _fmt(metrics["gross_profit"]))
 
@@ -1436,37 +2181,42 @@ def extract_financials(
         metrics["free_cash_flow"] = None
         confidence["free_cash_flow"] = 0.0
 
-    # EBITDA (derived: operating income + depreciation & amortization)
-    # D&A tags are ordered broadest→narrowest; take the FIRST match
-    # to avoid double-counting (DDA already includes D + A)
+    # EBITDA = Net Income + Interest Expense + Income Tax + D&A
+    # Fallback: Operating Income + D&A (EBIT + D&A approximation)
     oi = metrics.get("operating_income")
-    if oi is not None:
-        da_val = None
-        # First try the broad totals (exact)
-        for tag in ("DepreciationDepletionAndAmortization",
-                     "DepreciationAndAmortization"):
-            da_val = _lookup_fact(facts_df, tag, period_index,
-                                  match_mode="exact", duration_pref=dur_pref,
-                                  target_fp=target_fp, target_fy=target_fy)
-            if da_val is not None:
-                break
-        # Fallback: sum Depreciation + Amortization separately
-        if da_val is None:
-            dep = _lookup_fact(facts_df, "Depreciation", period_index,
-                               match_mode="exact", duration_pref=dur_pref,
-                               target_fp=target_fp, target_fy=target_fy)
-            amort = _lookup_fact(facts_df, "AmortizationOfIntangibleAssets",
-                                 period_index, match_mode="exact",
-                                 duration_pref=dur_pref,
-                                 target_fp=target_fp, target_fy=target_fy)
-            if dep is not None or amort is not None:
-                da_val = abs(dep or 0) + abs(amort or 0)
+    ni_val = metrics.get("net_income")
+    int_exp = metrics.get("interest_expense")
+    tax_exp = metrics.get("income_tax_expense")
+
+    # D&A lookup: try broad totals first, then sum components
+    da_val = None
+    for tag in ("DepreciationDepletionAndAmortization", "DepreciationAndAmortization"):
+        da_val = _lookup_fact(facts_df, tag, period_index,
+                              match_mode="exact", duration_pref=dur_pref,
+                              target_fp=target_fp, target_fy=target_fy)
         if da_val is not None:
-            metrics["ebitda"] = oi + abs(da_val)
-            confidence["ebitda"] = 0.70
-        else:
-            metrics["ebitda"] = None
-            confidence["ebitda"] = 0.0
+            break
+    if da_val is None:
+        dep = _lookup_fact(facts_df, "Depreciation", period_index,
+                           match_mode="exact", duration_pref=dur_pref,
+                           target_fp=target_fp, target_fy=target_fy)
+        amort = _lookup_fact(facts_df, "AmortizationOfIntangibleAssets",
+                             period_index, match_mode="exact",
+                             duration_pref=dur_pref,
+                             target_fp=target_fp, target_fy=target_fy)
+        if dep is not None or amort is not None:
+            da_val = abs(dep or 0) + abs(amort or 0)
+
+    if ni_val is not None and da_val is not None:
+        # Proper EBITDA: NI + Interest + Tax + D&A
+        ebitda_val = ni_val + abs(int_exp or 0) + abs(tax_exp or 0) + abs(da_val)
+        metrics["ebitda"] = ebitda_val
+        confidence["ebitda"] = 0.85 if (int_exp is not None and tax_exp is not None) else 0.70
+    elif oi is not None and da_val is not None:
+        # Fallback: EBIT + D&A ≈ Operating Income + D&A
+        metrics["ebitda"] = oi + abs(da_val)
+        confidence["ebitda"] = 0.65
+        sourced["ebitda"] = "Approximated: Operating Income + D&A"
     else:
         metrics["ebitda"] = None
         confidence["ebitda"] = 0.0
@@ -1593,6 +2343,14 @@ def extract_financials(
         result["cash_flow_statement"] = _build_statement_from_facts(
             facts_df, _CASHFLOW_CONCEPTS, duration_pref=dur_pref,
             target_fp=target_fp, target_fy=target_fy)
+
+    # ── Write to disk cache ──────────────────────────────────────────
+    if filing_meta and filing_meta.get("accession_number"):
+        try:
+            summary = generate_local_summary(result)
+            disk_cache.put(ticker_or_cik, filing_meta["accession_number"], result, summary)
+        except Exception as exc:
+            log.warning("Disk cache write failed for %s: %s", ticker_or_cik, exc)
 
     return result
 
