@@ -4,16 +4,6 @@
   "buildCommand": "mkdir -p public/static && cp src/sec_mcp/static/* public/static/ && cp src/sec_mcp/static/index.html public/index.html",
   "outputDirectory": "public",
   "installCommand": "echo 'skip install'",
-  "rewrites": [
-    {
-      "source": "/api/:path*",
-      "destination": "https://sec-mcp-production.up.railway.app/api/:path*"
-    },
-    {
-      "source": "/health",
-      "destination": "https://sec-mcp-production.up.railway.app/health"
-    }
-  ],
   "headers": [
     {
       "source": "/static/(.*)",

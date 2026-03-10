@@ -48,6 +48,17 @@ const _charts = {};
 /** Browser-side data cache: "TICKER|accession" -> {data, summary} */
 const _dataCache = {};
 
+/**
+ * API base URL: use Railway directly when deployed on Vercel to avoid
+ * Vercel's 10s rewrite timeout. On localhost, use relative paths.
+ */
+const API_BASE = (function() {
+  const host = window.location.hostname;
+  if (host === 'localhost' || host === '127.0.0.1') return '';
+  // Deployed on Vercel or elsewhere → call Railway API directly
+  return 'https://sec-mcp-production.up.railway.app';
+})();
+
 /** Current main view ('dashboard', 'compare', 'filing') */
 let _activeView = 'dashboard';
 
@@ -183,7 +194,7 @@ function loadFmpFootnote() {
   const el = document.getElementById('data-footnote');
   if (!el) return;
 
-  fetch('/api/financials-history/' + encodeURIComponent(_tk) + '?period=annual&limit=3')
+  fetch(API_BASE + '/api/financials-history/' + encodeURIComponent(_tk) + '?period=annual&limit=3')
     .then(r => r.json())
     .then(j => {
       if (j.error || !j.income || !j.income.length) {
@@ -329,7 +340,7 @@ function debSearch(val) {
   // Debounce for 250ms to avoid hammering API
   _searchTimeout = setTimeout(async () => {
     try {
-      const r = await fetch('/api/search?q=' + encodeURIComponent(val));
+      const r = await fetch(API_BASE + '/api/search?q=' + encodeURIComponent(val));
       if (!r.ok) throw new Error('Search failed: ' + r.status);
       
       const j = await r.json();
@@ -556,7 +567,7 @@ async function send(msg) {
   }
   
   try {
-    const r = await fetch('/api/chat', {
+    const r = await fetch(API_BASE + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg }),
@@ -712,7 +723,7 @@ async function sendCb() {
       history: _chatHistory.slice(-6), // Last 6 messages for context
     };
     
-    const r = await fetch('/api/chatbot', {
+    const r = await fetch(API_BASE + '/api/chatbot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -1428,7 +1439,7 @@ function renderSegmentChart(d) {
     const legendEl = document.getElementById('segment-legend');
     if (legendEl) legendEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:24px;color:var(--text-tertiary);font-size:12px;gap:8px"><div class="spinner" style="width:16px;height:16px"></div>Loading segments...</div>';
 
-    fetch('/api/segments/' + encodeURIComponent(_tk))
+    fetch(API_BASE + '/api/segments/' + encodeURIComponent(_tk))
       .then(r => r.json())
       .then(j => {
         if (j.segments && j.segments.length >= 2) {
@@ -1763,7 +1774,7 @@ function renderStatementPreview(d) {
  */
 async function fetchAvail(tk) {
   try {
-    const r = await fetch('/api/filings/' + encodeURIComponent(tk));
+    const r = await fetch(API_BASE + '/api/filings/' + encodeURIComponent(tk));
     if (!r.ok) throw new Error('Filings API error: ' + r.status);
     
     const j = await r.json();
@@ -1910,7 +1921,7 @@ async function loadFiling(acc, ft) {
   }
   
   try {
-    const r = await fetch('/api/load-filing', {
+    const r = await fetch(API_BASE + '/api/load-filing', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -2150,7 +2161,7 @@ async function loadCompsView() {
   // Auto-load suggested peers if we only have the target ticker
   if (_tk && _compsTickers.length <= 1) {
     try {
-      const r = await fetch('/api/peers/' + encodeURIComponent(_tk));
+      const r = await fetch(API_BASE + '/api/peers/' + encodeURIComponent(_tk));
       if (r.ok) {
         const j = await r.json();
         const peers = j.peers || [];
@@ -2217,7 +2228,7 @@ async function fetchComps() {
   tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner" style="margin:8px auto"></div></td></tr>';
 
   try {
-    const r = await fetch('/api/comps', {
+    const r = await fetch(API_BASE + '/api/comps', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tickers: _compsTickers }),
@@ -2306,7 +2317,7 @@ async function loadFilingsTable() {
   tbody.innerHTML = '<tr><td colspan="4" class="text-center"><div class="spinner" style="margin:8px auto"></div></td></tr>';
 
   try {
-    const r = await fetch('/api/filings/' + encodeURIComponent(_tk));
+    const r = await fetch(API_BASE + '/api/filings/' + encodeURIComponent(_tk));
     if (!r.ok) throw new Error('API error: ' + r.status);
     const j = await r.json();
     const filings = j.filings || [];
@@ -2355,7 +2366,7 @@ async function viewFilingInExplorer(accession, formType) {
   if (qaMessages) qaMessages.innerHTML = '';
 
   try {
-    const r = await fetch('/api/filing-text/' + encodeURIComponent(_tk) + '/full?accession=' + encodeURIComponent(accession) + '&form_type=' + encodeURIComponent(formType));
+    const r = await fetch(API_BASE + '/api/filing-text/' + encodeURIComponent(_tk) + '/full?accession=' + encodeURIComponent(accession) + '&form_type=' + encodeURIComponent(formType));
     if (!r.ok) throw new Error('API error: ' + r.status);
     const j = await r.json();
 
@@ -2469,7 +2480,7 @@ async function askExplorerAI() {
       history: [],
     };
 
-    const r = await fetch('/api/chatbot', {
+    const r = await fetch(API_BASE + '/api/chatbot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -2745,7 +2756,7 @@ function renderGeoMap(d) {
     // Show loading state
     container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--text-tertiary);font-size:12px;gap:8px"><div class="spinner" style="width:16px;height:16px"></div>Loading geographic data...</div>';
 
-    fetch('/api/geo-revenue/' + encodeURIComponent(_tk))
+    fetch(API_BASE + '/api/geo-revenue/' + encodeURIComponent(_tk))
       .then(r => r.json())
       .then(j => {
         if (j.geographic_segments && j.geographic_segments.length > 0) {
@@ -2904,7 +2915,7 @@ async function generateInsights() {
       history: [],
     };
 
-    const r = await fetch('/api/chatbot', {
+    const r = await fetch(API_BASE + '/api/chatbot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
