@@ -41,12 +41,15 @@ _available: bool | None = None
 # Cache TTLs by data type (seconds)
 CACHE_TTLS = {
     "financials": 3600,         # 1 hour — XBRL data changes rarely
+    "cross_check": 86400,       # 24 hours — Polygon validation
     "geo_segments": 86400,      # 24 hours — segments are annual
     "product_segments": 86400,  # 24 hours
     "income_history": 86400,    # 24 hours
     "balance_history": 86400,
     "cashflow_history": 86400,
 }
+# Section text gets 24h TTL (matched by prefix)
+_SECTION_TTL = 86400
 
 
 def _get_client():
@@ -135,7 +138,7 @@ def set_cached(
         return False
 
     key = _cache_key(ticker, data_type, period, date_from, date_to)
-    ttl = CACHE_TTLS.get(data_type, 3600)
+    ttl = CACHE_TTLS.get(data_type, _SECTION_TTL if data_type.startswith("section_") else 3600)
     expires = datetime.now(timezone.utc) + timedelta(seconds=ttl)
 
     try:

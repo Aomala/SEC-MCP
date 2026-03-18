@@ -400,49 +400,77 @@ async def health():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -> dict:
-    """Handle a financial data request for a single company."""
-    try:
-        data = extract_financials(
-            ticker, year=year, form_type=form_type,
-            include_statements=True, include_segments=True,
-        )
-    except Exception as exc:
-        log.exception("extract_financials crashed for %s", ticker)
-        return {
-            "tool": "financials",
-            "data": {"ticker_or_cik": ticker, "error": str(exc), "metrics": {}},
-            "summary": f"Error loading data: {exc}",
-        }
-    if data:
-        learn_company(ticker, data.get("company_name", ""))
-        # Cache by accession so period switches are instant
-        acc = (data.get("filing_info") or {}).get("accession_number")
-        if acc:
-            summary = generate_local_summary(data)
-            _rcache_put(ticker, acc, data, summary)
-            disk_cache.put(ticker, acc, data, summary)
-        else:
-            summary = generate_local_summary(data)
+    """Handle a financial data request for a single company.
+
+    Cache hierarchy:
+      1. Memory (_result_cache) — 10 min TTL, fastest
+      2. Supabase (financial_cache) — 1 hour TTL, persists across deploys
+      3. Disk (disk_cache) — 24 hour TTL, local only
+      4. SEC EDGAR — authoritative source, slowest
+    """
+    from sec_mcp import supabase_cache
+
+    # ── Try Supabase cache first (before hitting SEC EDGAR) ──
+    period_key = f"{form_type}|{year or 'latest'}"
+    sb_cached = supabase_cache.get_cached(ticker.upper(), "financials", period_key)
+    if sb_cached and isinstance(sb_cached, dict) and sb_cached.get("metrics"):
+        log.info("Supabase cache hit for %s financials", ticker)
+        data = sb_cached
+        summary = generate_local_summary(data)
+        # Warm the memory cache too
+        acc = (data.get("filing_info") or {}).get("accession_number", "cached")
+        _rcache_put(ticker, acc, data, summary)
     else:
-        summary = "No data available."
+        # ── Extract from SEC EDGAR ──
+        try:
+            data = extract_financials(
+                ticker, year=year, form_type=form_type,
+                include_statements=True, include_segments=True,
+            )
+        except Exception as exc:
+            log.exception("extract_financials crashed for %s", ticker)
+            return {
+                "tool": "financials",
+                "data": {"ticker_or_cik": ticker, "error": str(exc), "metrics": {}},
+                "summary": f"Error loading data: {exc}",
+            }
+        if data:
+            learn_company(ticker, data.get("company_name", ""))
+            acc = (data.get("filing_info") or {}).get("accession_number")
+            summary = generate_local_summary(data)
+            if acc:
+                _rcache_put(ticker, acc, data, summary)
+                disk_cache.put(ticker, acc, data, summary)
+            # ── Persist to Supabase for cross-deploy caching ──
+            supabase_cache.set_cached(ticker.upper(), "financials", data, period_key)
+        else:
+            summary = "No data available."
 
     # ── Data provenance: cross-validate SEC data with external sources ──
     sources = {"sec_edgar": True, "polygon_validated": False, "web_context": None, "web_citations": []}
     cross_check_results = {}
 
-    # Polygon.io cross-check (non-blocking)
+    # Polygon.io cross-check (non-blocking, cached in Supabase)
     if data and data.get("metrics"):
         try:
             from sec_mcp.polygon_client import cross_check, is_available as poly_avail
             if poly_avail():
-                validation = cross_check(ticker.upper(), data["metrics"])
-                if validation:
+                # Check Supabase for cached cross-check
+                cached_xcheck = supabase_cache.get_cached(ticker.upper(), "cross_check", period_key)
+                if cached_xcheck:
+                    cross_check_results = cached_xcheck
                     sources["polygon_validated"] = True
-                    cross_check_results = validation
+                else:
+                    validation = cross_check(ticker.upper(), data["metrics"])
+                    if validation:
+                        sources["polygon_validated"] = True
+                        cross_check_results = validation
+                        # Cache cross-check results (24h TTL via supabase_cache defaults)
+                        supabase_cache.set_cached(ticker.upper(), "cross_check", validation, period_key)
         except Exception as exc:
             log.debug("Polygon cross-check failed for %s: %s", ticker, exc)
 
-    # Perplexity web context (non-blocking)
+    # Perplexity web context (non-blocking, already cached by perplexity_client)
     try:
         from sec_mcp.perplexity_client import search_financial_news, is_available as pplx_avail
         if pplx_avail():
@@ -466,20 +494,29 @@ def _handle_compare(tickers: list[str], year: int | None, form_type: str = "10-K
     back to the full extract_financials_batch().  Cached hits are spliced in
     so only uncached tickers hit SEC EDGAR.
     """
-    # Try to pull each ticker from cache first (keyed by most recent accession)
+    from sec_mcp import supabase_cache
+
+    # Try to pull each ticker from cache: memory → Supabase → SEC EDGAR
     cached_results: dict[str, dict] = {}  # ticker -> data
     uncached: list[str] = []
     for t in tickers:
-        # Scan result cache for any entry matching this ticker (latest first)
+        tk = t.upper()
+        # 1. Memory cache
         hit = None
         for key, entry in _result_cache.items():
-            if key.startswith(t.upper() + "|") and (time.time() - entry["ts"]) < _RESULT_CACHE_TTL:
+            if key.startswith(tk + "|") and (time.time() - entry["ts"]) < _RESULT_CACHE_TTL:
                 hit = entry
                 break
         if hit:
-            cached_results[t.upper()] = hit["data"]
-        else:
-            uncached.append(t)
+            cached_results[tk] = hit["data"]
+            continue
+        # 2. Supabase cache
+        sb_data = supabase_cache.get_cached(tk, "financials", f"{form_type}|latest")
+        if sb_data and isinstance(sb_data, dict) and sb_data.get("metrics"):
+            cached_results[tk] = sb_data
+            continue
+        # 3. Need fresh extraction
+        uncached.append(t)
 
     try:
         fresh = extract_financials_batch(
@@ -1736,6 +1773,16 @@ async def get_filing_text(
     Otherwise falls back to the latest 10-K/20-F filing.
     """
     try:
+        from sec_mcp import supabase_cache
+
+        # ── Check Supabase cache for section text ──
+        cache_key = f"{form_type or '10-K'}|{accession or 'latest'}"
+        section_key = section or "full"
+        sb_cached = supabase_cache.get_cached(ticker.upper(), f"section_{section_key}", cache_key)
+        if sb_cached and isinstance(sb_cached, dict) and sb_cached.get("text"):
+            log.info("Supabase cache hit for %s/%s", ticker, section_key)
+            return sb_cached
+
         if accession:
             # Use the specific filing the user has selected
             text = get_filing_content(
@@ -1743,7 +1790,7 @@ async def get_filing_text(
                 section=section, max_length=120000 if section else 80000,
             )
             display_limit = 50000 if section else 30000
-            return {
+            result = {
                 "tool": "filing_text", "ticker": ticker,
                 "section": section or "full filing",
                 "filing_date": "",
@@ -1752,8 +1799,12 @@ async def get_filing_text(
                 "text_length": len(text) if text else 0,
                 "text": (text or "")[:display_limit],
             }
+            # Cache in Supabase
+            if result.get("text"):
+                supabase_cache.set_cached(ticker.upper(), f"section_{section_key}", result, cache_key)
+            return result
+
         # No accession — fall back to standard handler with form type fallback
-        # Try the requested form type first, then alternatives for FPIs
         primary_form = form_type or "10-K"
         result = _handle_filing_text(ticker, section, form_type=primary_form)
 
@@ -1761,16 +1812,22 @@ async def get_filing_text(
         if result.get("error") or not result.get("text"):
             from sec_mcp.sec_client import get_form_alternatives
             alternatives = get_form_alternatives(primary_form)
-            for alt_form in alternatives[1:]:  # skip first (already tried)
+            for alt_form in alternatives[1:]:
                 alt_result = _handle_filing_text(ticker, section, form_type=alt_form)
                 if alt_result.get("text"):
-                    return alt_result
-            # Also try the cross-type (annual ↔ quarterly)
-            cross_forms = ["20-F", "10-K", "40-F"] if primary_form in ("10-Q", "6-K") else ["10-Q", "6-K"]
-            for cf in cross_forms:
-                alt_result = _handle_filing_text(ticker, section, form_type=cf)
-                if alt_result.get("text"):
-                    return alt_result
+                    result = alt_result
+                    break
+            else:
+                cross_forms = ["20-F", "10-K", "40-F"] if primary_form in ("10-Q", "6-K") else ["10-Q", "6-K"]
+                for cf in cross_forms:
+                    alt_result = _handle_filing_text(ticker, section, form_type=cf)
+                    if alt_result.get("text"):
+                        result = alt_result
+                        break
+
+        # Cache successful result in Supabase
+        if result.get("text"):
+            supabase_cache.set_cached(ticker.upper(), f"section_{section_key}", result, cache_key)
 
         return result
     except Exception as exc:
