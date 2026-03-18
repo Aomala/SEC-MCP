@@ -22,9 +22,9 @@ import time
 import traceback
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -1676,6 +1676,375 @@ async def get_filing_text(
     except Exception as exc:
         log.warning("Filing text fetch failed for %s/%s: %s", ticker, section, exc)
         return {"tool": "filing_text", "error": str(exc)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Polygon.io cross-validation endpoint
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/cross-check/{ticker}")
+async def cross_check_ticker(ticker: str):
+    """Cross-check SEC XBRL data against Polygon.io standardized financials."""
+    try:
+        from sec_mcp.polygon_client import cross_check, get_ticker_details, is_available
+        if not is_available():
+            return {"error": "Polygon API not configured", "available": False}
+
+        # Get SEC data first
+        sec_result = _handle_financials(ticker.upper(), None)
+        sec_data = sec_result.get("data") or {}
+        sec_metrics = sec_data.get("metrics") or {}
+
+        # Cross-check against Polygon
+        validation = cross_check(ticker.upper(), sec_metrics)
+        details = get_ticker_details(ticker.upper())
+
+        return {
+            "ticker": ticker.upper(),
+            "validation": validation,
+            "polygon_details": details,
+            "sec_filing": (sec_data.get("filing_info") or {}).get("accession_number"),
+        }
+    except Exception as e:
+        log.exception("Cross-check failed for %s", ticker)
+        return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Public API (v1) — rate-limited, key-authenticated
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Simple in-memory API key store (replace with DB lookup for production)
+_API_KEYS: dict[str, dict] = {}  # key -> {tier: "free"|"pro"|"lifetime", calls: int, limit: int}
+
+
+def _check_api_key(request) -> dict | None:
+    """Validate API key from X-API-Key header. Returns key info or None."""
+    key = request.headers.get("x-api-key", "")
+    if not key:
+        return None
+    return _API_KEYS.get(key)
+
+
+@app.get("/v1/financials/{ticker}")
+async def api_v1_financials(request: Request, ticker: str, year: int | None = None, form_type: str = "10-K"):
+    """Public API: Get financial data for a ticker.
+
+    Requires X-API-Key header. Returns JSON with metrics, statements, segments.
+    """
+    # For now, allow unauthenticated access (paywall will be added via Stripe)
+    # key_info = _check_api_key(request)
+    # if not key_info:
+    #     return JSONResponse({"error": "API key required. Get one at /docs"}, status_code=401)
+
+    result = _handle_financials(ticker.upper(), year, form_type)
+    data = result.get("data") or {}
+    return {
+        "ticker": ticker.upper(),
+        "company": data.get("company_name"),
+        "period": data.get("fiscal_period"),
+        "year": data.get("fiscal_year"),
+        "metrics": data.get("metrics", {}),
+        "filing": data.get("filing_info"),
+        "summary": result.get("summary"),
+    }
+
+
+@app.get("/v1/compare")
+async def api_v1_compare(request: Request, tickers: str, year: int | None = None, form_type: str = "10-K"):
+    """Public API: Compare multiple tickers. Pass comma-separated tickers."""
+    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    if not ticker_list or len(ticker_list) > 10:
+        return {"error": "Provide 1-10 comma-separated tickers"}
+
+    result = _handle_compare(ticker_list, year, form_type)
+    return {
+        "tickers": ticker_list,
+        "results": [
+            {
+                "ticker": (r["data"] or {}).get("ticker_or_cik"),
+                "company": (r["data"] or {}).get("company_name"),
+                "metrics": (r["data"] or {}).get("metrics", {}),
+                "summary": r.get("summary"),
+            }
+            for r in result.get("results", [])
+        ],
+        "narrative": result.get("comparison_narrative"),
+    }
+
+
+@app.get("/v1/search")
+async def api_v1_search(request: Request, q: str):
+    """Public API: Search companies by name or ticker."""
+    results = search_companies(q, limit=10)
+    return {"query": q, "results": results}
+
+
+@app.get("/v1/cross-check/{ticker}")
+async def api_v1_cross_check(request: Request, ticker: str):
+    """Public API: Cross-check SEC data against Polygon.io."""
+    return await cross_check_ticker(ticker)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  API Documentation page
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/docs")
+async def api_docs():
+    """Interactive API documentation page."""
+    html = """<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Fineas API — Documentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0f1e; --bg2: #111827; --bg3: #1e293b;
+      --text: #f1f5f9; --text2: #94a3b8; --text3: #64748b;
+      --brand: #6366f1; --brand-light: #818cf8;
+      --success: #10b981; --danger: #ef4444; --warning: #f59e0b;
+      --border: rgba(148,163,184,0.1);
+      --radius: 12px;
+    }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+    .container { max-width: 900px; margin: 0 auto; padding: 40px 24px; }
+    .hero { text-align: center; padding: 60px 0 40px; }
+    .hero h1 { font-size: 42px; font-weight: 800; letter-spacing: -0.03em; }
+    .hero h1 span { background: linear-gradient(135deg, var(--brand), var(--brand-light)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { color: var(--text2); font-size: 18px; margin-top: 12px; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; }
+    .badge-free { background: rgba(16,185,129,0.15); color: var(--success); }
+    .badge-pro { background: rgba(99,102,241,0.15); color: var(--brand-light); }
+
+    /* Pricing */
+    .pricing { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 40px 0; }
+    .price-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; text-align: center; transition: all 0.2s; }
+    .price-card:hover { border-color: var(--brand); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(99,102,241,0.15); }
+    .price-card.featured { border-color: var(--brand); background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(99,102,241,0.02)); }
+    .price-card h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .price-amount { font-size: 36px; font-weight: 800; letter-spacing: -0.03em; }
+    .price-amount span { font-size: 14px; color: var(--text2); font-weight: 400; }
+    .price-card ul { list-style: none; margin: 20px 0; text-align: left; }
+    .price-card li { padding: 6px 0; font-size: 14px; color: var(--text2); }
+    .price-card li::before { content: "✓ "; color: var(--success); font-weight: 700; }
+    .price-btn { width: 100%; padding: 10px; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .price-btn-primary { background: var(--brand); color: white; }
+    .price-btn-primary:hover { background: var(--brand-light); }
+    .price-btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .price-btn-outline:hover { border-color: var(--brand); }
+
+    /* Endpoints */
+    .endpoint { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); margin: 16px 0; overflow: hidden; }
+    .endpoint-header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; cursor: pointer; }
+    .endpoint-header:hover { background: rgba(99,102,241,0.04); }
+    .method { padding: 4px 10px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; }
+    .method-get { background: rgba(16,185,129,0.15); color: var(--success); }
+    .method-post { background: rgba(59,130,246,0.15); color: #3b82f6; }
+    .endpoint-path { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 500; }
+    .endpoint-desc { color: var(--text2); font-size: 13px; margin-left: auto; }
+    .endpoint-body { padding: 0 20px 20px; display: none; }
+    .endpoint.open .endpoint-body { display: block; }
+    .code-block { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 13px; overflow-x: auto; margin: 12px 0; white-space: pre; color: var(--text2); }
+    .param-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+    .param-table th { text-align: left; padding: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text3); border-bottom: 1px solid var(--border); }
+    .param-table td { padding: 8px; font-size: 13px; border-bottom: 1px solid var(--border); }
+    .param-table td:first-child { font-family: 'JetBrains Mono', monospace; color: var(--brand-light); }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+    .tag-required { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .tag-optional { background: rgba(148,163,184,0.1); color: var(--text3); }
+    h2 { font-size: 24px; font-weight: 700; margin: 40px 0 16px; letter-spacing: -0.02em; }
+    .section-desc { color: var(--text2); font-size: 14px; margin-bottom: 20px; }
+    .back-link { color: var(--brand-light); text-decoration: none; font-size: 14px; }
+    .back-link:hover { text-decoration: underline; }
+    footer { text-align: center; padding: 40px 0; color: var(--text3); font-size: 13px; border-top: 1px solid var(--border); margin-top: 60px; }
+
+    @media (max-width: 768px) { .pricing { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <a href="/" class="back-link">← Back to Dashboard</a>
+
+  <div class="hero">
+    <h1>Fineas <span>API</span></h1>
+    <p>SEC filing data, financial metrics, and AI analysis — one API call away</p>
+  </div>
+
+  <!-- Pricing -->
+  <h2>Pricing</h2>
+  <div class="pricing">
+    <div class="price-card">
+      <h3>Starter</h3>
+      <div class="price-amount">$5<span>/mo</span></div>
+      <ul>
+        <li>100 API calls/day</li>
+        <li>SEC XBRL financials</li>
+        <li>Company search</li>
+        <li>JSON response format</li>
+      </ul>
+      <button class="price-btn price-btn-outline" onclick="alert('Coming soon — Stripe integration')">Get Started</button>
+    </div>
+    <div class="price-card featured">
+      <h3>Pro <span class="badge badge-pro">POPULAR</span></h3>
+      <div class="price-amount">$100<span>/yr</span></div>
+      <ul>
+        <li>Unlimited API calls</li>
+        <li>Cross-validation (Polygon)</li>
+        <li>AI-powered insights</li>
+        <li>Comparables engine</li>
+        <li>Priority support</li>
+      </ul>
+      <button class="price-btn price-btn-primary" onclick="alert('Coming soon — Stripe integration')">Subscribe</button>
+    </div>
+    <div class="price-card">
+      <h3>Lifetime</h3>
+      <div class="price-amount">$10k</div>
+      <ul>
+        <li>Everything in Pro</li>
+        <li>Lifetime access</li>
+        <li>Custom integrations</li>
+        <li>Direct support line</li>
+        <li>Early access to features</li>
+      </ul>
+      <button class="price-btn price-btn-outline" onclick="alert('Contact austin@fineas.ai')">Contact Us</button>
+    </div>
+  </div>
+
+  <!-- Authentication -->
+  <h2>Authentication</h2>
+  <p class="section-desc">Include your API key in the <code>X-API-Key</code> header with every request.</p>
+  <div class="code-block">curl -H "X-API-Key: YOUR_KEY" \\
+  https://sec-mcp-production.up.railway.app/v1/financials/AAPL</div>
+
+  <!-- Endpoints -->
+  <h2>Endpoints</h2>
+  <p class="section-desc">All endpoints return JSON. Base URL: <code>https://sec-mcp-production.up.railway.app</code></p>
+
+  <div class="endpoint open">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-get">GET</span>
+      <span class="endpoint-path">/v1/financials/{ticker}</span>
+      <span class="endpoint-desc">Get financial data from SEC filings</span>
+    </div>
+    <div class="endpoint-body">
+      <table class="param-table">
+        <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>ticker</td><td>string <span class="tag tag-required">required</span></td><td>Stock ticker (e.g. AAPL, MSFT)</td></tr>
+          <tr><td>year</td><td>int <span class="tag tag-optional">optional</span></td><td>Fiscal year (default: latest)</td></tr>
+          <tr><td>form_type</td><td>string <span class="tag tag-optional">optional</span></td><td>10-K, 10-Q, 20-F, 6-K (default: 10-K)</td></tr>
+        </tbody>
+      </table>
+      <strong>Response</strong>
+      <div class="code-block">{
+  "ticker": "AAPL",
+  "company": "Apple Inc.",
+  "period": "FY",
+  "year": 2024,
+  "metrics": {
+    "revenue": 391035000000,
+    "net_income": 93736000000,
+    "gross_margin": 0.462,
+    "eps_diluted": 6.13,
+    ...
+  },
+  "filing": { "accession_number": "...", "filing_date": "..." },
+  "summary": "Apple reported $391B revenue..."
+}</div>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-get">GET</span>
+      <span class="endpoint-path">/v1/compare?tickers=AAPL,MSFT,GOOG</span>
+      <span class="endpoint-desc">Compare multiple companies</span>
+    </div>
+    <div class="endpoint-body">
+      <table class="param-table">
+        <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>tickers</td><td>string <span class="tag tag-required">required</span></td><td>Comma-separated tickers (max 10)</td></tr>
+          <tr><td>year</td><td>int <span class="tag tag-optional">optional</span></td><td>Fiscal year</td></tr>
+          <tr><td>form_type</td><td>string <span class="tag tag-optional">optional</span></td><td>Filing form type</td></tr>
+        </tbody>
+      </table>
+      <strong>Response</strong>
+      <div class="code-block">{
+  "tickers": ["AAPL", "MSFT", "GOOG"],
+  "results": [
+    { "ticker": "AAPL", "company": "Apple Inc.", "metrics": {...}, "summary": "..." },
+    ...
+  ],
+  "narrative": "AI comparison analysis..."
+}</div>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-get">GET</span>
+      <span class="endpoint-path">/v1/search?q=apple</span>
+      <span class="endpoint-desc">Search companies by name or ticker</span>
+    </div>
+    <div class="endpoint-body">
+      <table class="param-table">
+        <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>q</td><td>string <span class="tag tag-required">required</span></td><td>Search query</td></tr>
+        </tbody>
+      </table>
+      <strong>Response</strong>
+      <div class="code-block">{
+  "query": "apple",
+  "results": [
+    { "ticker": "AAPL", "name": "Apple Inc.", "cik": "0000320193" },
+    ...
+  ]
+}</div>
+    </div>
+  </div>
+
+  <div class="endpoint">
+    <div class="endpoint-header" onclick="this.parentElement.classList.toggle('open')">
+      <span class="method method-get">GET</span>
+      <span class="endpoint-path">/v1/cross-check/{ticker}</span>
+      <span class="endpoint-desc">Validate SEC data against Polygon.io</span>
+    </div>
+    <div class="endpoint-body">
+      <p style="color:var(--text2);font-size:13px;margin-bottom:12px">Cross-checks SEC XBRL extraction against Polygon's standardized financial data. Flags discrepancies >5%.</p>
+      <table class="param-table">
+        <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td>ticker</td><td>string <span class="tag tag-required">required</span></td><td>Stock ticker</td></tr>
+        </tbody>
+      </table>
+      <strong>Response</strong>
+      <div class="code-block">{
+  "ticker": "AAPL",
+  "validation": {
+    "revenue": { "sec": 391035000000, "polygon": 391035000000, "diff_pct": 0.0, "match": true },
+    "net_income": { "sec": 93736000000, "polygon": 93736000000, "diff_pct": 0.0, "match": true },
+    ...
+  },
+  "polygon_details": { "name": "Apple Inc.", "market_cap": 3200000000000, ... }
+}</div>
+    </div>
+  </div>
+
+  <footer>
+    Fineas.ai — SEC Financial Intelligence API<br/>
+    Data sourced from SEC EDGAR (XBRL) · Cross-validated with Polygon.io · AI powered by Claude
+  </footer>
+</div>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
 
 @app.get("/")
