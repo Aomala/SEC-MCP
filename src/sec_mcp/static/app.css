@@ -171,6 +171,15 @@ a:hover { color: var(--brand); }
   flex-shrink: 0;
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  transition: width 0.25s ease, min-width 0.25s ease, opacity 0.2s ease;
+}
+
+.sidebar.collapsed {
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  border-right: none;
 }
 
 .sidebar-brand {

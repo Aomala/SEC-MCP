@@ -826,6 +826,11 @@ async function sendCb() {
 /**
  * Toggle chat panel visibility.
  */
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  if (sidebar) sidebar.classList.toggle('collapsed');
+}
+
 function toggleChat() {
   const panel = document.getElementById('chat-panel');
   if (!panel) return;
@@ -1116,9 +1121,16 @@ function renderKPIs(m, r, pm, crossCheck) {
     // Source badge: SEC always, verified if Polygon cross-check matched this metric
     const metricKey = kpi.key || kpi.label.toLowerCase().replace(/\s+/g, '_');
     const verified = cc && cc[metricKey] && cc[metricKey].match;
-    h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i, verified);
+    // Build period label for the change tooltip (e.g., "FY2025 vs FY2024")
+    const fi = d?.filing_info || {};
+    const curYear = d?.fiscal_year || fi.fiscal_year || '';
+    const priorYear = d?.prior_fiscal_year || (curYear ? curYear - 1 : '');
+    const periodType = d?.period_type === 'quarterly' ? 'Q' : 'FY';
+    const pLabel = curYear ? (periodType + curYear + ' vs ' + periodType + priorYear) : '';
+
+    h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i, verified, pLabel);
   });
-  
+
   grid.innerHTML = h;
   lucide.createIcons();
 }
@@ -1142,15 +1154,17 @@ const KPI_TOOLTIPS = {
 /**
  * Build a single KPI card HTML.
  */
-function buildKpiCard(label, value, change, icon, color, index, verified) {
+function buildKpiCard(label, value, change, icon, color, index, verified, periodLabel) {
   let changeHtml = '';
   if (change != null) {
     const trendIcon = change >= 0 ? 'arrow-up-right' : 'arrow-down-right';
     const trendClass = change >= 0 ? 'positive' : 'negative';
+    // Show time range on hover
+    const changeTip = periodLabel ? ('Year-over-year change: ' + periodLabel) : 'Change vs prior period';
     changeHtml =
       '<span class="kpi-change ' +
       trendClass +
-      '">' +
+      '" title="' + esc(changeTip) + '">' +
       '<i data-lucide="' +
       trendIcon +
       '"></i>' +
@@ -2765,10 +2779,10 @@ async function loadSectionContent(section) {
 function formatSectionText(text) {
   if (!text) return '<p class="text-muted">No content available.</p>';
 
-  // Split into paragraphs (double newlines or single newlines with blank-ish gaps)
   const lines = text.split(/\n/);
   let html = '';
   let inList = false;
+  const seenHeadings = new Set(); // deduplicate repeated headings
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i].trim();
@@ -2777,30 +2791,53 @@ function formatSectionText(text) {
       continue;
     }
 
-    // Detect Item headers (e.g., "Item 1.", "ITEM 1A.", "Part I")
-    if (/^(ITEM|Item)\s+\d+[A-Za-z]?\.?\s*/i.test(line) || /^(PART|Part)\s+[IVX]+/i.test(line)) {
+    // Detect Item headers: "Item 1A. Risk Factors" or "ITEM 7 — MD&A"
+    // Must have content after the number to be a real heading, not just "Item 1A" alone repeated
+    const itemMatch = line.match(/^(ITEM|Item)\s+(\d+[A-Za-z]?)[\.\s\u2014\u2013\-]+(.+)/i);
+    if (itemMatch && itemMatch[3].trim().length > 3) {
       if (inList) { html += '</ul>'; inList = false; }
-      const id = 'sec-' + line.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().slice(0, 40);
-      html += '<h2 id="' + id + '" class="sec-heading">' + esc(line) + '</h2>';
+      const headingText = line;
+      const key = headingText.toLowerCase().replace(/\s+/g, ' ').slice(0, 60);
+      if (!seenHeadings.has(key)) {
+        seenHeadings.add(key);
+        const id = 'sec-item-' + itemMatch[2].toLowerCase();
+        html += '<h2 id="' + id + '" class="sec-heading">' + esc(headingText) + '</h2>';
+      }
       continue;
     }
 
-    // Detect ALL-CAPS sub-headers (at least 4 caps words, line < 120 chars)
-    if (line.length < 120 && /^[A-Z][A-Z\s,&\-\/]{10,}$/.test(line)) {
-      if (inList) { html += '</ul>'; inList = false; }
-      const id = 'sec-' + line.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().slice(0, 40);
-      html += '<h3 id="' + id + '" class="sec-subheading">' + esc(line.charAt(0) + line.slice(1).toLowerCase()) + '</h3>';
+    // Detect Part headers: "PART I" or "Part II"
+    if (/^(PART|Part)\s+[IVX]+\b/i.test(line) && line.length < 40) {
+      // Skip standalone "PART I" / "PART II" — they're structural noise in the TOC
       continue;
     }
 
-    // Detect bullet-like lines (starts with •, -, *, or numbered list)
-    if (/^[\u2022\u2023\u25E6\-\*]\s/.test(line) || /^\(\d+\)\s/.test(line) || /^\d+\.\s/.test(line)) {
+    // Detect ALL-CAPS sub-headers (meaningful ones: >15 chars, not just "ITEM 1A")
+    if (line.length > 15 && line.length < 100 && /^[A-Z][A-Z\s,&\-\/\(\)]{12,}$/.test(line)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      const key = line.toLowerCase().replace(/\s+/g, ' ').slice(0, 60);
+      if (!seenHeadings.has(key)) {
+        seenHeadings.add(key);
+        const id = 'sec-' + line.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().slice(0, 40);
+        // Title case the heading
+        const titleCase = line.split(/\s+/).map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+        html += '<h3 id="' + id + '" class="sec-subheading">' + esc(titleCase) + '</h3>';
+      }
+      continue;
+    }
+
+    // Bullet-like lines
+    if (/^[\u2022\u2023\u25E6\-\*]\s/.test(line) || /^\(\d+\)\s/.test(line)) {
       if (!inList) { html += '<ul class="sec-list">'; inList = true; }
-      html += '<li>' + esc(line.replace(/^[\u2022\u2023\u25E6\-\*]\s*/, '').replace(/^\(\d+\)\s*/, '').replace(/^\d+\.\s*/, '')) + '</li>';
+      html += '<li>' + esc(line.replace(/^[\u2022\u2023\u25E6\-\*]\s*/, '').replace(/^\(\d+\)\s*/, '')) + '</li>';
       continue;
     }
 
     if (inList) { html += '</ul>'; inList = false; }
+
+    // Skip very short lines that are just noise (page numbers, blank labels)
+    if (line.length < 5) continue;
+
     html += '<p class="sec-paragraph">' + esc(line) + '</p>';
   }
   if (inList) html += '</ul>';

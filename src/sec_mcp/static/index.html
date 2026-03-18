@@ -14,7 +14,7 @@
   <!-- Leaflet for geographic map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=29"/>
+  <link rel="stylesheet" href="/static/app.css?v=30"/>
 </head>
 <body>
 <div class="app">
@@ -70,6 +70,7 @@
   <main class="main">
     <header class="header">
       <div class="header-top">
+        <button class="icon-btn" onclick="toggleSidebar()" title="Toggle sidebar" style="flex-shrink:0"><i data-lucide="panel-left"></i></button>
         <div class="search-bar">
           <i data-lucide="search"></i>
           <input id="search-input" placeholder="Search companies, tickers, or ask a question..." autocomplete="off" oninput="debSearch(this.value)"/>
@@ -549,6 +550,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=29"></script>
+<script src="/static/app.js?v=30"></script>
 </body>
 </html>

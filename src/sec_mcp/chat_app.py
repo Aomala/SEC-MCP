@@ -1552,6 +1552,7 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
             "  ```\n"
             "- Reference specific numbers (format: **$1.23B**, **$456M**, **12.3%**).\n"
             "- Start with a direct answer on the first line — no preamble.\n"
+            "- NEVER use emojis. This is a professional financial tool for institutional investors.\n"
             "- Cite the filing source (e.g., 'per the 10-K filed 2024-11-01').\n"
             "- Compare to prior periods when data is available — calculate % changes.\n"
             "- If data is missing, say exactly what's missing and suggest how to get it.\n\n"
@@ -1680,9 +1681,11 @@ async def exec_summaries(req: ExecSummaryRequest) -> dict:
 
         # Single Claude call that returns all 4 summaries at once
         system = (
-            "You are a senior financial analyst. Generate executive summaries using "
-            "specific numbers ($B, $M, %). Use **bold** for emphasis and bullet points. "
-            "Be concise — each section should be 2-3 short paragraphs."
+            "You are a senior financial analyst at an institutional investment firm. "
+            "Generate executive summaries using specific numbers ($B, $M, %). "
+            "Use **bold** for emphasis and bullet points. Be concise — each section should be 2-3 short paragraphs. "
+            "NEVER use emojis. This is a professional institutional report. "
+            "Use markdown tables for metric comparisons."
         )
         prompt = (
             f"DATA:\n{data_block}\n\n"
