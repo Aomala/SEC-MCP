@@ -2293,13 +2293,14 @@ a:hover { color: var(--brand); }
     margin-left: auto;
   }
 
-  /* Tabs: scrollable, smaller */
+  /* Tabs: scrollable, smaller, wrap controls below */
   .header-tabs {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
     padding: 0 8px;
     gap: 0;
+    flex-wrap: wrap;
   }
   .header-tabs::-webkit-scrollbar { display: none; }
   .view-tab {
@@ -2309,7 +2310,22 @@ a:hover { color: var(--brand); }
   }
   .view-tab i { display: none; }
   .header-controls {
-    display: none; /* Period/form selectors hidden on mobile — use defaults */
+    flex-basis: 100%;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 0;
+    border-top: 1px solid var(--border-light);
+  }
+  .header-controls .sel {
+    font-size: 12px;
+    padding: 6px 8px;
+  }
+  .header-controls .toggle-group {
+    gap: 0;
+  }
+  .header-controls .toggle-btn {
+    font-size: 11px;
+    padding: 5px 10px;
   }
 
   /* Content: less padding */
