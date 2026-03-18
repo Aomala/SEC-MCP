@@ -2446,24 +2446,28 @@ async function fetchComps() {
     if (!r.ok) throw new Error('API error: ' + r.status);
     const j = await r.json();
 
-    const comps = j.comparisons || j.results || [];
-    if (!comps.length) {
+    const rawResults = j.results || j.comparisons || [];
+    if (!rawResults.length) {
       tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No comparison data returned</td></tr>';
       return;
     }
 
     let h = '';
-    for (const c of comps) {
-      const m = c.metrics || c;
-      const ra = c.ratios || {};
+    for (const r of rawResults) {
+      // Backend wraps each result in {data: {...}, summary: "..."}
+      const d = r.data || r;
+      const m = d.metrics || {};
+      const ra = d.ratios || {};
+      const tk = d.ticker_or_cik || d.ticker || '';
+      const name = d.company_name || '';
       h += '<tr>' +
-        '<td class="peer-name">' + esc(c.ticker || '') + '</td>' +
-        '<td class="stmt-value">' + fmtN(m.revenue) + '</td>' +
-        '<td class="stmt-value">' + fmtN(m.net_income) + '</td>' +
-        '<td class="stmt-value">' + (ra.gross_margin != null ? (ra.gross_margin * 100).toFixed(1) + '%' : m.gross_margin != null ? (m.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
-        '<td class="stmt-value">' + (ra.net_margin != null ? (ra.net_margin * 100).toFixed(1) + '%' : m.net_margin != null ? (m.net_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
-        '<td class="stmt-value">' + fmtN(m.total_assets) + '</td>' +
-        '<td class="stmt-value">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>' +
+        '<td><strong>' + esc(tk) + '</strong>' + (name ? '<br><span class="text-muted" style="font-size:11px">' + esc(name) + '</span>' : '') + '</td>' +
+        '<td class="right">' + fmtN(m.revenue) + '</td>' +
+        '<td class="right">' + fmtN(m.net_income) + '</td>' +
+        '<td class="right">' + (m.gross_margin != null ? (m.gross_margin * 100).toFixed(1) + '%' : ra.gross_margin != null ? (ra.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="right">' + (m.net_margin != null ? (m.net_margin * 100).toFixed(1) + '%' : ra.net_margin != null ? (ra.net_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="right">' + fmtN(m.total_assets) + '</td>' +
+        '<td class="right">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>' +
         '</tr>';
     }
     tbody.innerHTML = h;
