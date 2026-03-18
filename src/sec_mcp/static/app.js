@@ -129,22 +129,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initTos() {
   const overlay = document.getElementById('tos-overlay');
-  const checkbox = document.getElementById('tos-agree');
-  const btn = document.getElementById('tos-accept');
-  if (!overlay || !checkbox || !btn) return;
+  if (!overlay) return;
 
-  // Check if already accepted
+  // Auto-accept — let people use the app immediately
+  // T&C is still accessible via a link if needed
   if (localStorage.getItem('fineas-tos-accepted') === '1') {
     overlay.style.display = 'none';
     return;
   }
 
-  // Show overlay, disable app interaction
+  // Auto-accept after 1s with fade out (non-blocking)
   overlay.style.display = 'flex';
-
-  checkbox.addEventListener('change', () => {
-    btn.disabled = !checkbox.checked;
-  });
+  setTimeout(() => {
+    localStorage.setItem('fineas-tos-accepted', '1');
+    overlay.style.opacity = '0';
+    overlay.style.transition = 'opacity 0.5s ease';
+    setTimeout(() => { overlay.style.display = 'none'; }, 500);
+  }, 800);
 }
 
 function acceptTos() {

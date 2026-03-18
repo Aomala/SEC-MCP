@@ -25,7 +25,8 @@ RUN pip install --no-cache-dir \
     "httpx>=0.25" \
     "anthropic>=0.40" \
     "yfinance>=0.2.30" \
-    "python-dotenv>=1.0"
+    "python-dotenv>=1.0" \
+    "supabase>=2.0"
 
 # Copy source code
 COPY src/ src/
