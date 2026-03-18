@@ -116,6 +116,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Terms of Service gate
   initTos();
 
+  // Load research folders from localStorage
+  loadResearchFolders();
+
   // Log initialization complete
   console.log('[Fineas.ai] Application initialized');
 });
@@ -194,7 +197,7 @@ function loadFmpFootnote() {
   const el = document.getElementById('data-footnote');
   if (!el) return;
 
-  fetch(API_BASE + '/api/financials-history/' + encodeURIComponent(_tk) + '?period=annual&limit=3')
+  fetch(API_BASE + '/api/financials-history/' + encodeURIComponent(_tk) + '?period=annual&limit=5')
     .then(r => r.json())
     .then(j => {
       if (j.error || !j.income || !j.income.length) {
@@ -203,6 +206,8 @@ function loadFmpFootnote() {
       }
       _fmpHistory = j;
       renderFootnote(j);
+      // Re-render revenue chart with multi-year FMP data
+      if (_curData) renderRevenueChart(_curData);
     })
     .catch(() => { el.style.display = 'none'; });
 }
@@ -389,6 +394,7 @@ function pickAsset(tk) {
   _chatHistory = [];
   _curAcc = null;
   _curData = null;
+  _fmpHistory = null;
   
   // Trigger main query
   send(tk);
@@ -465,12 +471,6 @@ function initNavigation() {
   const refreshBtn = document.getElementById('btn-refresh');
   if (refreshBtn) {
     refreshBtn.addEventListener('click', refreshData);
-  }
-  
-  // Chat toggle button
-  const chatToggle = document.getElementById('chat-toggle');
-  if (chatToggle) {
-    chatToggle.addEventListener('click', toggleChat);
   }
   
   // Theme toggle
@@ -620,7 +620,10 @@ function handleResult(j) {
     
     // Update company pill in header
     updateCompanyPill(d);
-    
+
+    // Save to research folders
+    saveResearch(_tk, d.company_name);
+
     // Switch to dashboard view
     switchView('dashboard');
     
@@ -662,25 +665,13 @@ function handleResult(j) {
 function initChat() {
   const inp = document.getElementById('chat-inp');
   if (!inp) return;
-  
+
   inp.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendCb();
     }
   });
-  
-  // Focus on chat panel open
-  const chatToggle = document.getElementById('chat-toggle');
-  if (chatToggle) {
-    chatToggle.addEventListener('click', () => {
-      setTimeout(() => {
-        if (inp && document.getElementById('chat-panel')?.classList.contains('open')) {
-          inp.focus();
-        }
-      }, 100);
-    });
-  }
 }
 
 /**
@@ -782,6 +773,27 @@ function toggleChat() {
 }
 
 /**
+ * Start a new chat conversation. Clears history and messages.
+ */
+function newChat() {
+  _chatHistory = [];
+  const container = document.getElementById('chat-messages');
+  if (container) {
+    container.innerHTML = '';
+    // Re-add the welcome message
+    const welcome = document.createElement('div');
+    welcome.className = 'chat-welcome';
+    welcome.id = 'chat-welcome';
+    welcome.innerHTML = '<p><strong>Ask anything</strong> about the loaded data</p><p class="small">Executive summaries, comparisons, insights</p>';
+    container.appendChild(welcome);
+  }
+  // Reinitialize lucide icons for the new welcome content
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+  // Focus chat input
+  document.getElementById('chat-inp')?.focus();
+}
+
+/**
  * Add a message to the chat panel.
  */
 function addChatMessage(role, text) {
@@ -796,9 +808,12 @@ function addChatMessage(role, text) {
   const div = document.createElement('div');
   div.className = 'msg msg-' + role;
   div.innerHTML = '<div class="msg-bubble">' + md(text) + '</div>';
-  
+
+  // Add data-table class to any rendered tables for proper styling
+  div.querySelectorAll('table').forEach(t => t.classList.add('data-table'));
+
   container.appendChild(div);
-  
+
   // Auto-scroll to bottom
   container.scrollTop = container.scrollHeight;
 }
@@ -899,6 +914,14 @@ function renderKPIs(m, r, pm) {
   const grid = document.getElementById('kpi-grid');
   if (!grid) return;
   
+  // Derived metrics
+  const operatingIncome = m.operating_income || null;
+  const ebitda = m.ebitda || (operatingIncome && m.depreciation ? operatingIncome + m.depreciation : (m.net_income && m.income_tax && m.interest_expense && m.depreciation ? m.net_income + m.income_tax + m.interest_expense + m.depreciation : null));
+  const workingCapital = (m.current_assets != null && m.current_liabilities != null) ? m.current_assets - m.current_liabilities : null;
+  const netDebt = m.net_debt != null ? m.net_debt : ((m.long_term_debt != null || m.total_debt != null) && m.cash != null ? (m.total_debt || m.long_term_debt || 0) - m.cash : null);
+  const roic = (m.net_income != null && m.total_equity != null && m.long_term_debt != null && (m.total_equity + m.long_term_debt) !== 0) ? (m.net_income / (m.total_equity + m.long_term_debt)) * 100 : null;
+  const interestCoverage = (operatingIncome != null && m.interest_expense != null && m.interest_expense !== 0) ? operatingIncome / Math.abs(m.interest_expense) : null;
+
   // Define KPIs: label, value, prior value, icon, color
   const kpis = [
     {
@@ -916,6 +939,19 @@ function renderKPIs(m, r, pm) {
       color: 'emerald',
     },
     {
+      label: 'Operating Income',
+      value: operatingIncome,
+      prior: pm?.operating_income,
+      icon: 'bar-chart-3',
+      color: 'blue',
+    },
+    {
+      label: 'EBITDA',
+      value: ebitda,
+      icon: 'layers',
+      color: 'violet',
+    },
+    {
       label: 'Free Cash Flow',
       value: m.free_cash_flow,
       prior: pm?.free_cash_flow,
@@ -930,6 +966,14 @@ function renderKPIs(m, r, pm) {
       color: 'violet',
     },
     {
+      label: 'EPS',
+      value: m.eps_diluted,
+      prior: pm?.eps_diluted,
+      fmt: 'eps',
+      icon: 'users',
+      color: 'rose',
+    },
+    {
       label: 'Total Assets',
       value: m.total_assets,
       prior: pm?.total_assets,
@@ -937,12 +981,37 @@ function renderKPIs(m, r, pm) {
       color: 'amber',
     },
     {
-      label: 'EPS',
-      value: m.eps_diluted,
-      prior: pm?.eps_diluted,
-      fmt: 'eps',
-      icon: 'users',
+      label: 'Working Capital',
+      value: workingCapital,
+      icon: 'wallet',
+      color: 'emerald',
+    },
+    {
+      label: 'Net Debt',
+      value: netDebt,
+      icon: 'credit-card',
       color: 'rose',
+    },
+    {
+      label: 'ROIC',
+      value: roic,
+      fmt: 'pct',
+      icon: 'target',
+      color: 'brand',
+    },
+    {
+      label: 'D/E Ratio',
+      value: r.debt_to_equity,
+      fmt: 'ratio',
+      icon: 'scale',
+      color: 'amber',
+    },
+    {
+      label: 'Interest Coverage',
+      value: interestCoverage,
+      fmt: 'ratio',
+      icon: 'shield',
+      color: 'emerald',
     },
   ];
   
@@ -956,7 +1025,9 @@ function renderKPIs(m, r, pm) {
         ? kpi.value.toFixed(1) + '%'
         : kpi.fmt === 'eps'
           ? '$' + kpi.value.toFixed(2)
-          : fmtN(kpi.value);
+          : kpi.fmt === 'ratio'
+            ? kpi.value.toFixed(2) + 'x'
+            : fmtN(kpi.value);
     
     h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i);
   });
@@ -1111,61 +1182,56 @@ function renderCompanyOverview(d) {
     else { perfLabel = 'declining'; perfColor = 'var(--danger)'; }
   }
 
-  // Build HTML
+  // Derived overview metrics
+  const workingCapital = (m.current_assets != null && m.current_liabilities != null) ? m.current_assets - m.current_liabilities : null;
+  const netDebt = m.net_debt != null ? m.net_debt : ((m.long_term_debt != null || m.total_debt != null) && m.cash != null ? (m.total_debt || m.long_term_debt || 0) - m.cash : null);
+  const interestCoverage = (m.operating_income != null && m.interest_expense != null && m.interest_expense !== 0) ? m.operating_income / Math.abs(m.interest_expense) : null;
+
+  // Build HTML — Bloomberg-style structured grid
   let h = '';
 
-  // Business description
+  // Business description (compact)
   h += '<div class="overview-section">';
-  h += '<div class="overview-label">BUSINESS</div>';
-  h += '<p class="overview-text">' + esc(name) + ' operates in <strong>' + esc(sicDesc) + '</strong>';
-  h += ' (SIC ' + esc(sic) + '). ';
+  h += '<div class="overview-label">BUSINESS <span style="color:' + perfColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + perfLabel + '</span></div>';
+  h += '<p class="overview-text">' + esc(name) + ' — <strong>' + esc(sicDesc) + '</strong>';
+  h += ' (SIC ' + esc(sic) + ')';
   if (m.revenue) {
-    h += 'The company generated <strong>' + fmtN(m.revenue) + '</strong> in revenue';
-    if (fi.filing_date && fi.filing_date.length >= 4) h += ' for the period ending ' + fi.filing_date.substring(0, 4);
-    h += '.';
+    h += ' — ' + fmtN(m.revenue) + ' revenue';
+    if (fi.filing_date && fi.filing_date.length >= 4) h += ' (' + fi.filing_date.substring(0, 4) + ')';
   }
   h += '</p></div>';
 
-  // Size & Scale
-  h += '<div class="overview-section">';
-  h += '<div class="overview-label">SIZE & SCALE</div>';
-  h += '<div class="overview-metrics">';
-  if (m.revenue) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.revenue) + '</span><span class="ov-key">Revenue</span></div>';
-  if (m.total_assets) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.total_assets) + '</span><span class="ov-key">Total Assets</span></div>';
-  if (shares) {
-    const sharesStr = shares >= 1e9 ? (shares / 1e9).toFixed(1) + 'B' : shares >= 1e6 ? (shares / 1e6).toFixed(0) + 'M' : shares.toLocaleString();
-    h += '<div class="ov-metric"><span class="ov-val">' + sharesStr + '</span><span class="ov-key">Shares Out</span></div>';
+  // Structured metrics grid — Bloomberg Terminal style
+  // Helper to build a metric cell
+  function mCell(label, value) {
+    if (value == null || value === '—') return '';
+    const cls = typeof value === 'string' && value.startsWith('-') ? ' negative' : (typeof value === 'string' && value.startsWith('+') ? ' positive' : '');
+    return '<div class="metric-item"><span class="metric-label">' + label + '</span><span class="metric-value' + cls + '">' + value + '</span></div>';
   }
-  if (m.total_equity) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.total_equity) + '</span><span class="ov-key">Equity</span></div>';
-  h += '</div></div>';
 
-  // Performance
-  h += '<div class="overview-section">';
-  h += '<div class="overview-label">PERFORMANCE <span style="color:' + perfColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + perfLabel + '</span></div>';
-  h += '<div class="overview-metrics">';
-  if (revGrowth != null) {
-    const cls = revGrowth >= 0 ? 'positive' : 'negative';
-    h += '<div class="ov-metric"><span class="ov-val ' + cls + '">' + (revGrowth >= 0 ? '+' : '') + revGrowth.toFixed(1) + '%</span><span class="ov-key">Rev Growth</span></div>';
-  }
-  if (niGrowth != null) {
-    const cls = niGrowth >= 0 ? 'positive' : 'negative';
-    h += '<div class="ov-metric"><span class="ov-val ' + cls + '">' + (niGrowth >= 0 ? '+' : '') + niGrowth.toFixed(1) + '%</span><span class="ov-key">NI Growth</span></div>';
-  }
-  if (r.gross_margin != null) h += '<div class="ov-metric"><span class="ov-val">' + (r.gross_margin * 100).toFixed(1) + '%</span><span class="ov-key">Gross Margin</span></div>';
-  if (r.net_margin != null) h += '<div class="ov-metric"><span class="ov-val">' + (r.net_margin * 100).toFixed(1) + '%</span><span class="ov-key">Net Margin</span></div>';
-  if (r.roe != null) h += '<div class="ov-metric"><span class="ov-val">' + (r.roe * 100).toFixed(1) + '%</span><span class="ov-key">ROE</span></div>';
-  if (eps != null) h += '<div class="ov-metric"><span class="ov-val">$' + eps.toFixed(2) + '</span><span class="ov-key">EPS (Diluted)</span></div>';
-  h += '</div></div>';
+  h += '<div class="metrics-grid">';
 
-  // Financial health
-  h += '<div class="overview-section">';
-  h += '<div class="overview-label">FINANCIAL HEALTH</div>';
-  h += '<div class="overview-metrics">';
-  if (r.current_ratio != null) h += '<div class="ov-metric"><span class="ov-val">' + r.current_ratio.toFixed(2) + 'x</span><span class="ov-key">Current Ratio</span></div>';
-  if (r.debt_to_equity != null) h += '<div class="ov-metric"><span class="ov-val">' + r.debt_to_equity.toFixed(2) + 'x</span><span class="ov-key">D/E Ratio</span></div>';
-  if (m.free_cash_flow) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.free_cash_flow) + '</span><span class="ov-key">Free Cash Flow</span></div>';
-  if (m.net_debt != null) h += '<div class="ov-metric"><span class="ov-val">' + fmtN(m.net_debt) + '</span><span class="ov-key">Net Debt</span></div>';
-  h += '</div></div>';
+  // Row 1: Growth & Margins
+  h += mCell('Rev Growth', revGrowth != null ? (revGrowth >= 0 ? '+' : '') + revGrowth.toFixed(1) + '%' : null);
+  h += mCell('NI Growth', niGrowth != null ? (niGrowth >= 0 ? '+' : '') + niGrowth.toFixed(1) + '%' : null);
+  h += mCell('Gross Margin', r.gross_margin != null ? (r.gross_margin * 100).toFixed(1) + '%' : null);
+
+  // Row 2: Profitability
+  h += mCell('Net Margin', r.net_margin != null ? (r.net_margin * 100).toFixed(1) + '%' : null);
+  h += mCell('ROE', r.roe != null ? (r.roe * 100).toFixed(1) + '%' : null);
+  h += mCell('EPS (Diluted)', eps != null ? '$' + eps.toFixed(2) : null);
+
+  // Row 3: Financial Health
+  h += mCell('Current Ratio', r.current_ratio != null ? r.current_ratio.toFixed(2) + 'x' : null);
+  h += mCell('D/E Ratio', r.debt_to_equity != null ? r.debt_to_equity.toFixed(2) + 'x' : null);
+  h += mCell('Free Cash Flow', m.free_cash_flow ? fmtN(m.free_cash_flow) : null);
+
+  // Row 4: Leverage & Capital
+  h += mCell('Net Debt', netDebt != null ? fmtN(netDebt) : null);
+  h += mCell('Interest Coverage', interestCoverage != null ? interestCoverage.toFixed(1) + 'x' : null);
+  h += mCell('Working Capital', workingCapital != null ? fmtN(workingCapital) : null);
+
+  h += '</div>';
 
   el.innerHTML = h;
 }
@@ -1230,27 +1296,43 @@ function renderRevenueChart(d) {
   const fy = d.fiscal_year || 'Current';
   const isQuarterly = d.period_type === 'quarterly';
 
-  // Prior year data (leftmost)
-  if (pm.revenue != null || pm.net_income != null) {
-    labels.push(isQuarterly ? 'Prior Yr' : (typeof fy === 'number' ? fy - 1 : 'Prior'));
-    revenue.push(pm.revenue ? pm.revenue / 1e9 : 0);
-    netIncome.push(pm.net_income ? pm.net_income / 1e9 : 0);
-    fcf.push(pm.free_cash_flow ? pm.free_cash_flow / 1e9 : 0);
-  }
+  // Use FMP multi-year history if available (3-5 years of data)
+  if (_fmpHistory && _fmpHistory.income && _fmpHistory.income.length >= 2) {
+    const incomeData = [..._fmpHistory.income].reverse(); // oldest first
+    const cfData = _fmpHistory.cashflow ? [..._fmpHistory.cashflow].reverse() : [];
 
-  // QoQ data (middle, quarterly only)
-  if (isQuarterly && (qm.revenue != null || qm.net_income != null)) {
-    labels.push('Prior Qtr');
-    revenue.push(qm.revenue ? qm.revenue / 1e9 : 0);
-    netIncome.push(qm.net_income ? qm.net_income / 1e9 : 0);
-    fcf.push(qm.free_cash_flow ? qm.free_cash_flow / 1e9 : 0);
-  }
+    for (let i = 0; i < incomeData.length; i++) {
+      const row = incomeData[i];
+      const cfRow = cfData[i] || {};
+      const yr = row.date ? row.date.substring(0, 4) : row.calendarYear || ('Y' + (i + 1));
+      labels.push(yr);
+      revenue.push(row.revenue ? row.revenue / 1e9 : 0);
+      netIncome.push(row.netIncome != null ? row.netIncome / 1e9 : 0);
+      fcf.push(cfRow.freeCashFlow != null ? cfRow.freeCashFlow / 1e9 : 0);
+    }
+  } else {
+    // Fallback: Prior vs Current (original behavior)
+    if (pm.revenue != null || pm.net_income != null) {
+      labels.push(isQuarterly ? 'Prior Yr' : (typeof fy === 'number' ? fy - 1 : 'Prior'));
+      revenue.push(pm.revenue ? pm.revenue / 1e9 : 0);
+      netIncome.push(pm.net_income ? pm.net_income / 1e9 : 0);
+      fcf.push(pm.free_cash_flow ? pm.free_cash_flow / 1e9 : 0);
+    }
 
-  // Current period (rightmost)
-  labels.push(d.quarter_label || fy);
-  revenue.push(m.revenue ? m.revenue / 1e9 : 0);
-  netIncome.push(m.net_income ? m.net_income / 1e9 : 0);
-  fcf.push(m.free_cash_flow ? m.free_cash_flow / 1e9 : 0);
+    // QoQ data (middle, quarterly only)
+    if (isQuarterly && (qm.revenue != null || qm.net_income != null)) {
+      labels.push('Prior Qtr');
+      revenue.push(qm.revenue ? qm.revenue / 1e9 : 0);
+      netIncome.push(qm.net_income ? qm.net_income / 1e9 : 0);
+      fcf.push(qm.free_cash_flow ? qm.free_cash_flow / 1e9 : 0);
+    }
+
+    // Current period (rightmost)
+    labels.push(d.quarter_label || fy);
+    revenue.push(m.revenue ? m.revenue / 1e9 : 0);
+    netIncome.push(m.net_income ? m.net_income / 1e9 : 0);
+    fcf.push(m.free_cash_flow ? m.free_cash_flow / 1e9 : 0);
+  }
 
   const defaults = getChartDefaults();
 
@@ -3112,6 +3194,80 @@ function exportData() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ========================================
+// RESEARCH FOLDERS (localStorage persistence)
+// ========================================
+
+/**
+ * Save a research folder entry when a company is loaded.
+ */
+function saveResearch(ticker, companyName) {
+  if (!ticker) return;
+  const key = 'fineas-research';
+  let items = [];
+  try { items = JSON.parse(localStorage.getItem(key)) || []; } catch(e) { items = []; }
+
+  // Remove existing entry for this ticker (dedup)
+  items = items.filter(i => i.ticker !== ticker.toUpperCase());
+
+  // Prepend new entry
+  items.unshift({
+    ticker: ticker.toUpperCase(),
+    name: companyName || ticker.toUpperCase(),
+    date: new Date().toISOString().slice(0, 10),
+  });
+
+  // Keep max 20
+  if (items.length > 20) items = items.slice(0, 20);
+
+  localStorage.setItem(key, JSON.stringify(items));
+  loadResearchFolders();
+}
+
+/**
+ * Load and render research folder items in sidebar.
+ */
+function loadResearchFolders() {
+  const container = document.getElementById('research-folders');
+  if (!container) return;
+
+  let items = [];
+  try { items = JSON.parse(localStorage.getItem('fineas-research')) || []; } catch(e) { items = []; }
+
+  if (!items.length) {
+    container.innerHTML = '<div style="padding:4px 12px;font-size:11px;color:var(--text-muted)">No research yet</div>';
+    return;
+  }
+
+  container.innerHTML = items.map(item => `
+    <div class="research-item" onclick="q('${esc(item.ticker)}')" title="${esc(item.name)}">
+      <svg class="research-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      </svg>
+      <div class="research-info">
+        <div class="research-ticker">${esc(item.ticker)}</div>
+        <div class="research-name">${esc(item.name)}</div>
+      </div>
+      <span class="research-date">${esc(item.date)}</span>
+      <button class="research-delete" onclick="event.stopPropagation(); deleteResearch('${esc(item.ticker)}')" title="Remove">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  `).join('');
+}
+
+/**
+ * Remove a research folder entry.
+ */
+function deleteResearch(ticker) {
+  const key = 'fineas-research';
+  let items = [];
+  try { items = JSON.parse(localStorage.getItem(key)) || []; } catch(e) { items = []; }
+  items = items.filter(i => i.ticker !== ticker.toUpperCase());
+  localStorage.setItem(key, JSON.stringify(items));
+  loadResearchFolders();
 }
 
 /**

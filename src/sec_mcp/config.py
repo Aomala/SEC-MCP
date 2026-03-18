@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Financial Modeling Prep API
     fmp_api_key: str = ""
 
+    # Perplexity API for real-time search
+    perplexity_api_key: str = ""
+
     # Polygon.io API for market data cross-validation
     polygon_api_key: str = ""
 
@@ -63,7 +66,7 @@ class Settings(BaseSettings):
 
     # Strip whitespace from string fields — the .env file often has
     # trailing spaces that break connection strings
-    @field_validator("mongodb_uri", "anthropic_api_key", "edgar_identity", "alpha_vantage_api_key", "fmp_api_key", "polygon_api_key", "supabase_url", "supabase_key", mode="before")
+    @field_validator("mongodb_uri", "anthropic_api_key", "edgar_identity", "alpha_vantage_api_key", "fmp_api_key", "polygon_api_key", "perplexity_api_key", "supabase_url", "supabase_key", mode="before")
     @classmethod
     def strip_whitespace(cls, v: str) -> str:
         if isinstance(v, str):

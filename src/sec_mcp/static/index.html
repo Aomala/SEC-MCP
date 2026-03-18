@@ -14,7 +14,7 @@
   <!-- Leaflet for geographic map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=20"/>
+  <link rel="stylesheet" href="/static/app.css?v=22"/>
 </head>
 <body>
 <div class="app">
@@ -54,6 +54,10 @@
     <div class="sidebar-section">
       <div class="section-title">WATCHLIST</div>
       <div id="watchlist" class="watchlist"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="section-title">RESEARCH</div>
+      <div id="research-folders" class="research-folders"></div>
     </div>
     <div class="sidebar-footer">
       <button class="nav-item" onclick="toggleTheme()">
@@ -171,7 +175,7 @@
                 <p class="card-subtitle" id="revenue-subtitle">SEC XBRL data</p>
               </div>
             </div>
-            <canvas id="revenue-chart" height="140"></canvas>
+            <canvas id="revenue-chart" height="280"></canvas>
           </div>
           <div class="chart-card" id="company-overview-card">
             <div class="card-header">
@@ -193,7 +197,7 @@
               <h3>Revenue Segments</h3>
               <p class="card-subtitle" id="segments-subtitle">Breakdown</p>
             </div>
-            <canvas id="segment-chart" height="160"></canvas>
+            <canvas id="segment-chart" height="280"></canvas>
             <div id="segment-legend" class="segment-legend"></div>
           </div>
           <div class="chart-card">
@@ -201,7 +205,7 @@
               <h3>Margin Profile</h3>
               <p class="card-subtitle">Profitability margins</p>
             </div>
-            <canvas id="margin-chart" height="130"></canvas>
+            <canvas id="margin-chart" height="280"></canvas>
           </div>
         </div>
 
@@ -428,8 +432,8 @@
     </div>
   </main>
 
-  <!-- RIGHT CHAT PANEL (always visible) -->
-  <aside class="chat-panel open" id="chat-panel">
+  <!-- RIGHT CHAT PANEL (hidden by default, toggled via chat icon) -->
+  <aside class="chat-panel" id="chat-panel">
     <div class="chat-header">
       <div class="chat-brand">
         <div class="chat-icon"><i data-lucide="zap"></i></div>
@@ -438,7 +442,10 @@
           <span class="chat-subtitle">Powered by Claude</span>
         </div>
       </div>
-      <button class="icon-btn" onclick="toggleChat()"><i data-lucide="x"></i></button>
+      <div style="display:flex;gap:4px">
+        <button class="icon-btn" onclick="newChat()" title="New Chat"><i data-lucide="plus"></i></button>
+        <button class="icon-btn" onclick="toggleChat()"><i data-lucide="x"></i></button>
+      </div>
     </div>
     <div class="chat-messages" id="chat-messages">
       <div class="chat-welcome" id="chat-welcome">
@@ -452,6 +459,7 @@
       <button class="chip" onclick="cbQ('How is revenue trending?')">Revenue Trend</button>
       <button class="chip" onclick="cbQ('Compare to peers')">Compare Peers</button>
       <button class="chip highlight" onclick="cbQ('What changed since last year?')">YoY Changes</button>
+      <button class="chip highlight" onclick="cbQ('Search latest news and analyst opinions')">&#128269; Live Search</button>
     </div>
     <form class="chat-input" onsubmit="sendCb(); return false;">
       <input id="chat-inp" placeholder="Ask about financials..." autocomplete="off"/>
@@ -521,6 +529,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=20"></script>
+<script src="/static/app.js?v=22"></script>
 </body>
 </html>

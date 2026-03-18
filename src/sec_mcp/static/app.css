@@ -295,6 +295,82 @@ a:hover { color: var(--brand); }
   gap: 2px;
 }
 
+.research-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.research-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.research-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.research-item .research-icon {
+  color: var(--brand);
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.research-item .research-info {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.research-item .research-ticker {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.research-item .research-name {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.research-item .research-date {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.research-item .research-delete {
+  opacity: 0;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: opacity var(--t-fast), color var(--t-fast);
+  flex-shrink: 0;
+}
+
+.research-item:hover .research-delete {
+  opacity: 1;
+}
+
+.research-item .research-delete:hover {
+  color: var(--danger);
+}
+
 .sidebar-footer {
   margin-top: auto;
   padding: 8px;
@@ -741,7 +817,7 @@ a:hover { color: var(--brand); }
 /* KPI Cards */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(5, 1fr);
   gap: 14px;
   margin-bottom: 24px;
 }
@@ -878,7 +954,7 @@ a:hover { color: var(--brand); }
 }
 
 .charts-row:has(.wide) {
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 3fr 2fr;
 }
 
 .chart-card {
@@ -904,12 +980,14 @@ a:hover { color: var(--brand); }
 /* Constrain chart canvases */
 .chart-card canvas {
   width: 100% !important;
-  max-height: 220px;
+  min-height: 280px;
+  max-height: 360px;
   display: block;
 }
 
 .chart-card.wide canvas {
-  max-height: 200px;
+  min-height: 280px;
+  max-height: 360px;
 }
 
 .card-header {
@@ -1163,7 +1241,7 @@ a:hover { color: var(--brand); }
   font-size: 13px;
   line-height: 1.6;
   overflow-y: auto;
-  max-height: 320px;
+  max-height: 420px;
 }
 
 .overview-section {
@@ -1227,6 +1305,43 @@ a:hover { color: var(--brand); }
   letter-spacing: 0.3px;
 }
 
+/* Bloomberg-style metrics grid for company overview */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border-light);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: var(--bg-primary);
+}
+
+.metric-item .metric-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.metric-item .metric-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.metric-item .metric-value.positive { color: var(--success); }
+.metric-item .metric-value.negative { color: var(--danger); }
+
 /* Statement preview */
 #statement-preview {
   margin-top: 12px;
@@ -1237,23 +1352,30 @@ a:hover { color: var(--brand); }
    ═══════════════════════════════════════════════════════════════ */
 
 .chat-panel {
-  width: 0;
-  min-width: 0;
-  background: linear-gradient(180deg, var(--bg-secondary) 0%, rgba(10, 15, 30, 0.95) 100%);
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 90vw;
+  background: linear-gradient(180deg, var(--bg-secondary) 0%, rgba(10, 15, 30, 0.98) 100%);
   border-left: 1px solid var(--glass-border);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width var(--t-slow), min-width var(--t-slow), flex var(--t-slow);
+  transform: translateX(100%);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  z-index: 100;
 }
 
 .chat-panel.open {
-  flex: 0 0 30%;
-  width: 30%;
-  min-width: 320px;
-  max-width: 480px;
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .chat-header {
@@ -1882,7 +2004,8 @@ a:hover { color: var(--brand); }
 
 @media (max-width: 1200px) {
   .sidebar { width: 200px; min-width: 200px; }
-  .chat-panel.open { flex: 0 0 28%; width: 28%; min-width: 280px; }
+  .chat-panel { width: 340px; }
+  .chat-panel.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
 }
 
 @media (max-width: 1024px) {
@@ -1891,16 +2014,19 @@ a:hover { color: var(--brand); }
   .sidebar-brand { padding: 16px 12px; justify-content: center; }
   .nav-item span { display: none; }
   .nav-item { justify-content: center; padding: 10px; }
-  .chat-panel.open { flex: 0 0 300px; width: 300px; min-width: 300px; }
+  .chat-panel { width: 320px; }
+  .chat-panel.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
   .company-pill { display: none; }
 }
 
 @media (max-width: 768px) {
   .sidebar { display: none; }
-  .chat-panel.open { width: 100%; min-width: 100%; position: absolute; right: 0; top: 0; bottom: 0; z-index: 50; }
+  .chat-panel { width: 100%; max-width: 100%; }
+  .chat-panel.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
   .header-tabs { overflow-x: auto; }
   .charts-row { grid-template-columns: 1fr; }
-  .kpi-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .kpi-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ═══════════════════════════════════════════════════════════════

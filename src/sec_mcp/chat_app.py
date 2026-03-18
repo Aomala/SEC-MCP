@@ -1378,6 +1378,23 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
                         if vals:
                             context_parts.append(f"  {label}: {vals}")
 
+        # Enrich with Perplexity real-time search for news/current data queries
+        _realtime_keywords = ("news", "recent", "latest", "today", "analyst", "price target",
+                              "upgrade", "downgrade", "earnings", "guidance", "forecast",
+                              "compare to", "vs market", "industry average", "verify", "validate")
+        if any(kw in req.message.lower() for kw in _realtime_keywords):
+            try:
+                from sec_mcp.perplexity_client import search, is_available as pplx_avail
+                if pplx_avail():
+                    pplx = search(req.message, ticker=req.ticker or None)
+                    if pplx and pplx.get("content"):
+                        context_parts.append("\nREAL-TIME WEB SEARCH RESULTS (via Perplexity):")
+                        context_parts.append(pplx["content"][:4000])
+                        if pplx.get("citations"):
+                            context_parts.append("\nSources: " + ", ".join(pplx["citations"][:5]))
+            except Exception as exc:
+                log.debug("Perplexity enrichment failed: %s", exc)
+
         # Fallback: fetch data if no context provided
         if not context_parts and req.ticker:
             try:
@@ -1676,6 +1693,80 @@ async def get_filing_text(
     except Exception as exc:
         log.warning("Filing text fetch failed for %s/%s: %s", ticker, section, exc)
         return {"tool": "filing_text", "error": str(exc)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Perplexity real-time search endpoint
+# ═══════════════════════════════════════════════════════════════════════════
+
+class SearchRequest(BaseModel):
+    query: str
+    ticker: str = ""
+
+
+@app.post("/api/search-realtime")
+async def search_realtime(req: SearchRequest):
+    """Real-time web search via Perplexity for financial data validation."""
+    try:
+        from sec_mcp.perplexity_client import search, is_available
+        if not is_available():
+            return {"error": "Perplexity API not configured", "available": False}
+
+        result = search(req.query, ticker=req.ticker or None)
+        if not result:
+            return {"error": "Search failed"}
+
+        return {
+            "content": result["content"],
+            "citations": result.get("citations", []),
+            "ticker": req.ticker,
+            "query": req.query,
+        }
+    except Exception as e:
+        log.exception("Real-time search failed")
+        return {"error": str(e)}
+
+
+@app.get("/api/news/{ticker}")
+async def get_news(ticker: str):
+    """Get latest financial news for a ticker via Perplexity."""
+    try:
+        from sec_mcp.perplexity_client import search_financial_news, is_available
+        if not is_available():
+            return {"error": "Perplexity API not configured"}
+
+        result = search_financial_news(ticker.upper())
+        if not result:
+            return {"error": "No news found"}
+
+        return {
+            "ticker": ticker.upper(),
+            "content": result["content"],
+            "citations": result.get("citations", []),
+        }
+    except Exception as e:
+        log.exception("News fetch failed for %s", ticker)
+        return {"error": str(e)}
+
+
+@app.post("/api/validate-metric")
+async def validate_metric_endpoint(request: Request):
+    """Validate a specific financial metric against public sources."""
+    try:
+        body = await request.json()
+        ticker = body.get("ticker", "")
+        metric = body.get("metric", "")
+        value = body.get("value", 0)
+
+        from sec_mcp.perplexity_client import validate_metric, is_available
+        if not is_available():
+            return {"error": "Perplexity API not configured"}
+
+        result = validate_metric(ticker.upper(), metric, float(value))
+        return result or {"error": "Validation failed"}
+    except Exception as e:
+        log.exception("Metric validation failed")
+        return {"error": str(e)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
