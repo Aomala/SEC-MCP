@@ -220,8 +220,19 @@ function renderFootnote(hist) {
 
   const m = _curData?.metrics || {};
   const fmp = hist.income[0] || {};
+  const poly = _curData?._crossCheck || {};
 
-  // Compare SEC-MCP XBRL vs FMP for latest period
+  // Polygon metric key mapping
+  const polyMap = {
+    'Revenue': 'revenue',
+    'Net Income': 'net_income',
+    'Gross Profit': null,
+    'Operating Income': null,
+    'EPS (Diluted)': 'eps',
+    'Total Assets': 'total_assets',
+  };
+
+  // Compare SEC-MCP XBRL vs FMP vs Polygon for latest period
   const rows = [];
   const pairs = [
     ['Revenue', m.revenue, fmp.revenue],
@@ -229,21 +240,40 @@ function renderFootnote(hist) {
     ['Gross Profit', m.gross_profit, fmp.grossProfit],
     ['Operating Income', m.operating_income, fmp.operatingIncome],
     ['EPS (Diluted)', m.eps_diluted, fmp.epsDiluted],
+    ['Total Assets', m.total_assets, fmp.totalAssets],
   ];
 
   for (const [label, xbrl, fmpVal] of pairs) {
     if (xbrl == null && fmpVal == null) continue;
     const xbrlStr = xbrl != null ? fmtN(xbrl) : '—';
     const fmpStr = fmpVal != null ? fmtN(fmpVal) : '—';
-    let match = '';
+
+    // Polygon value
+    const polyKey = polyMap[label];
+    const polyEntry = polyKey ? poly[polyKey] : null;
+    const polyVal = polyEntry?.polygon;
+    const polyStr = polyVal != null ? fmtN(polyVal) : '—';
+
+    // Status: best match across sources
+    let status = '';
     if (xbrl != null && fmpVal != null && xbrl !== 0) {
       const diff = Math.abs((xbrl - fmpVal) / xbrl * 100);
-      if (diff < 0.5) match = '<span class="fn-match">Match</span>';
-      else if (diff < 5) match = '<span class="fn-close">' + diff.toFixed(1) + '% diff</span>';
-      else match = '<span class="fn-mismatch">' + diff.toFixed(1) + '% diff</span>';
+      if (diff < 0.5) status = '<span class="fn-match">Match</span>';
+      else if (diff < 5) status = '<span class="fn-close">' + diff.toFixed(1) + '% diff</span>';
+      else status = '<span class="fn-mismatch">' + diff.toFixed(1) + '% diff</span>';
     }
+    // Polygon verification badge
+    let polyStatus = '';
+    if (polyEntry && polyEntry.match === true) {
+      polyStatus = ' <span class="source-badge source-verified" style="font-size:9px">✓</span>';
+    } else if (polyEntry && polyEntry.match === false) {
+      polyStatus = ' <span class="source-badge source-web" style="font-size:9px">' + polyEntry.diff_pct + '%</span>';
+    }
+
     rows.push('<tr><td>' + esc(label) + '</td><td class="right mono">' + xbrlStr +
-      '</td><td class="right mono">' + fmpStr + '</td><td class="right">' + match + '</td></tr>');
+      '</td><td class="right mono">' + fmpStr +
+      '</td><td class="right mono">' + polyStr + polyStatus +
+      '</td><td class="right">' + status + '</td></tr>');
   }
 
   if (!rows.length) { el.style.display = 'none'; return; }
@@ -252,12 +282,12 @@ function renderFootnote(hist) {
   el.style.display = 'block';
   el.innerHTML =
     '<div class="card-header"><div><h3>Data Source Comparison</h3>' +
-    '<p class="card-subtitle">SEC XBRL (primary) vs Financial Modeling Prep' + fmpDate + '</p></div></div>' +
+    '<p class="card-subtitle">SEC XBRL (primary) vs FMP' + fmpDate + ' vs Polygon.io</p></div></div>' +
     '<table class="data-table"><thead><tr><th>Metric</th><th class="right">SEC XBRL</th>' +
-    '<th class="right">FMP</th><th class="right">Status</th></tr></thead>' +
+    '<th class="right">FMP</th><th class="right">Polygon</th><th class="right">Status</th></tr></thead>' +
     '<tbody>' + rows.join('') + '</tbody></table>' +
     '<p class="fn-note">Revenue & profitability charts use SEC XBRL data extracted directly from 10-K/10-Q filings. ' +
-    'FMP data shown for cross-reference only.</p>';
+    'FMP and Polygon data shown for cross-reference only.</p>';
 }
 
 // ========================================
@@ -840,8 +870,14 @@ function addChatMessage(role, text) {
   div.className = 'msg msg-' + role;
   div.innerHTML = '<div class="msg-bubble">' + md(text) + '</div>';
 
-  // Add data-table class to any rendered tables for proper styling
-  div.querySelectorAll('table').forEach(t => t.classList.add('data-table'));
+  // Wrap tables in scrollable container and add styling class
+  div.querySelectorAll('table').forEach(t => {
+    t.classList.add('data-table');
+    const wrap = document.createElement('div');
+    wrap.className = 'table-wrap';
+    t.parentNode.insertBefore(wrap, t);
+    wrap.appendChild(t);
+  });
 
   container.appendChild(div);
 

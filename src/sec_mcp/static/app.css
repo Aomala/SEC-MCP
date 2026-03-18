@@ -1538,6 +1538,8 @@ a:hover { color: var(--brand); }
   font-size: 13px;
   line-height: 1.55;
   word-wrap: break-word;
+  overflow-x: auto;
+  max-width: 100%;
   transition: box-shadow 0.2s ease;
 }
 
@@ -1603,29 +1605,40 @@ a:hover { color: var(--brand); }
   margin-bottom: 3px;
 }
 
+.msg-bubble .table-wrap {
+  overflow-x: auto;
+  margin: 8px -4px;
+  padding: 0 4px;
+}
 .msg-bubble table {
   width: 100%;
   border-collapse: collapse;
   margin: 8px 0;
-  font-size: 12px;
+  font-size: 11px;
   font-family: var(--font-mono);
+  table-layout: auto;
 }
 .msg-bubble thead th {
   text-align: left;
-  padding: 6px 10px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--border);
   color: var(--text-secondary);
   font-weight: 600;
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
   white-space: nowrap;
 }
 .msg-bubble tbody td {
-  padding: 5px 10px;
+  padding: 4px 8px;
   border-bottom: 1px solid var(--border-light);
   color: var(--text-primary);
+  white-space: normal;
+  word-break: break-word;
+}
+.msg-bubble tbody td:not(:first-child) {
   white-space: nowrap;
+  text-align: right;
 }
 .msg-bubble tbody tr:last-child td {
   border-bottom: none;
