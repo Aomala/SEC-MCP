@@ -14,7 +14,7 @@
   <!-- Leaflet for geographic map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=24"/>
+  <link rel="stylesheet" href="/static/app.css?v=25"/>
 </head>
 <body>
 <div class="app">
@@ -457,7 +457,7 @@
       <button class="chip" onclick="cbQ('Give me an executive summary')">Executive Summary</button>
       <button class="chip" onclick="cbQ('What are the key risks?')">Key Risks</button>
       <button class="chip" onclick="cbQ('How is revenue trending?')">Revenue Trend</button>
-      <button class="chip" onclick="cbQ('Compare to peers')">Compare Peers</button>
+      <button class="chip" onclick="if(_tk){send('compare '+_tk)}else{cbQ('Compare to peers')}">Compare Peers</button>
       <button class="chip highlight" onclick="cbQ('What changed since last year?')">YoY Changes</button>
       <button class="chip highlight" onclick="cbQ('Search latest news and analyst opinions')">&#128269; Live Search</button>
     </div>
@@ -529,6 +529,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=24"></script>
+<script src="/static/app.js?v=25"></script>
 </body>
 </html>

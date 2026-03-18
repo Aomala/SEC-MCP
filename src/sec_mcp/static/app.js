@@ -650,7 +650,8 @@ function handleResult(j) {
     // Add chat message summarizing the load
     addChatMessage('assistant', buildLoadedSummary(d));
   } else if (j.tool === 'compare') {
-    // Handle peer/sector comparison
+    // Switch to Comparables tab and render comparison table
+    switchView('comps');
     renderComparison(j);
   } else if (j.tool === 'filing_text') {
     // Handle raw filing text
@@ -709,12 +710,33 @@ async function sendCb() {
   addChatLoading();
   
   try {
+    // If no data is loaded, try to extract a ticker from the message and load it first
+    if (!_curData && !_tk) {
+      // Check if message mentions a known ticker pattern (1-5 uppercase letters)
+      const tkMatch = msg.match(/\b([A-Z]{1,5})\b/);
+      if (tkMatch) {
+        removeChatLoading();
+        addChatMessage('assistant', 'Loading **' + tkMatch[1] + '** data first — one moment...');
+        addChatLoading();
+        // Trigger a load via the main search, then re-send the question
+        await new Promise((resolve) => {
+          const origHandler = handleResult;
+          send(tkMatch[1]);
+          // Wait for data to load (poll _curData)
+          const check = setInterval(() => {
+            if (_curData) { clearInterval(check); resolve(); }
+          }, 500);
+          setTimeout(() => { clearInterval(check); resolve(); }, 15000); // 15s timeout
+        });
+      }
+    }
+
     // Build context from current data
     const ctx = Object.assign({}, _curData || {});
     if (_bgSections && Object.keys(_bgSections).length) {
       ctx._filing_sections = _bgSections;
     }
-    
+
     // Send to /api/chatbot
     const body = {
       message: msg,
@@ -2133,33 +2155,51 @@ async function loadFiling(acc, ft) {
  * Render comparison results.
  */
 function renderComparison(j) {
-  const content = document.getElementById('content');
-  if (!content) return;
-  
-  const comps = j.data?.comparisons || [];
-  if (!comps.length) {
-    content.innerHTML = '<p>No comparison data available.</p>';
+  const tbody = document.getElementById('comps-tbody');
+  const sub = document.getElementById('comps-sub');
+  if (!tbody) return;
+
+  const results = j.results || [];
+  if (!results.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No comparison data available</td></tr>';
     return;
   }
-  
-  let h = '<div class="comparison-grid">';
-  for (const c of comps) {
-    h +=
-      '<div class="comp-card">' +
-      '<div class="comp-ticker">' +
-      esc(c.ticker) +
-      '</div>' +
-      '<div class="comp-metric">Revenue: ' +
-      fmtN(c.revenue) +
-      '</div>' +
-      '<div class="comp-metric">Margin: ' +
-      (c.net_margin != null ? (c.net_margin * 100).toFixed(1) + '%' : '—') +
-      '</div>' +
-      '</div>';
+
+  if (sub) sub.textContent = results.length + ' companies compared';
+
+  // Populate chips
+  const chips = document.getElementById('comps-chips');
+  if (chips) {
+    chips.innerHTML = results.map(r => {
+      const tk = (r.data || {}).ticker_or_cik || '?';
+      return '<span class="chip">' + esc(tk) + '</span>';
+    }).join('');
   }
-  h += '</div>';
-  
-  content.innerHTML = h;
+
+  // Build table rows
+  let h = '';
+  for (const r of results) {
+    const d = r.data || {};
+    const m = d.metrics || {};
+    const name = d.company_name || d.ticker_or_cik || '?';
+    const tk = d.ticker_or_cik || '?';
+
+    h += '<tr>';
+    h += '<td><strong>' + esc(tk) + '</strong><br><span class="text-muted" style="font-size:11px">' + esc(name) + '</span></td>';
+    h += '<td class="right">' + fmtN(m.revenue) + '</td>';
+    h += '<td class="right">' + fmtN(m.net_income) + '</td>';
+    h += '<td class="right">' + (m.gross_margin != null ? (m.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>';
+    h += '<td class="right">' + (m.net_margin != null ? (m.net_margin * 100).toFixed(1) + '%' : '—') + '</td>';
+    h += '<td class="right">' + fmtN(m.total_assets) + '</td>';
+    h += '<td class="right">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>';
+    h += '</tr>';
+  }
+  tbody.innerHTML = h;
+
+  // Add narrative to chat if available
+  if (j.comparison_narrative) {
+    addChatMessage('assistant', j.comparison_narrative);
+  }
 }
 
 /**
