@@ -14,7 +14,7 @@
   <!-- Leaflet for geographic map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=26"/>
+  <link rel="stylesheet" href="/static/app.css?v=27"/>
 </head>
 <body>
 <div class="app">
@@ -416,16 +416,30 @@
 
       <!-- ═══ INSIGHTS VIEW ═══ -->
       <div class="view-panel" id="panel-insights" style="display:none">
-        <div class="chart-card">
+        <div class="chart-card" style="border-left:3px solid var(--brand)">
           <div class="card-header">
-            <div>
-              <h3>AI Insights</h3>
-              <p class="card-subtitle">AI-generated analysis powered by Claude</p>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:32px;height:32px;border-radius:8px;background:var(--brand-bg);display:flex;align-items:center;justify-content:center">
+                <i data-lucide="sparkles" style="width:16px;height:16px;color:var(--brand-light)"></i>
+              </div>
+              <div>
+                <h3 style="margin:0">AI Research Report</h3>
+                <p class="card-subtitle" style="margin:0">Powered by Claude · SEC EDGAR data</p>
+              </div>
             </div>
-            <button class="send-btn" style="padding:6px 12px;font-size:12px" onclick="generateInsights()">Generate</button>
+            <div style="display:flex;gap:8px;align-items:center">
+              <span class="source-badge source-sec">SEC Data</span>
+              <button class="send-btn" style="padding:8px 16px;font-size:13px;font-weight:600" onclick="generateInsights()">
+                <i data-lucide="zap" style="width:14px;height:14px;margin-right:4px"></i> Generate
+              </button>
+            </div>
           </div>
-          <div id="insights-content" style="font-size:13px;color:var(--text-secondary);line-height:1.7">
-            <p class="text-muted">Load a company and click Generate for AI-powered insights.</p>
+          <div id="insights-content">
+            <div style="text-align:center;padding:48px 20px;color:var(--text-tertiary)">
+              <i data-lucide="file-search" style="width:40px;height:40px;margin-bottom:12px;opacity:0.4"></i>
+              <p style="font-size:14px;margin:0">Load a company and click <strong>Generate</strong> for a full AI research report</p>
+              <p style="font-size:12px;margin-top:6px;opacity:0.7">Covers: financial performance, margins, growth, risks, and outlook</p>
+            </div>
           </div>
         </div>
       </div>
@@ -529,6 +543,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=26"></script>
+<script src="/static/app.js?v=27"></script>
 </body>
 </html>

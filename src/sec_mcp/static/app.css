@@ -2632,3 +2632,117 @@ a:hover { color: var(--brand); }
 [title] { cursor: help; }
 .kpi-card[title] { cursor: pointer; }
 .source-badge[title] { cursor: help; }
+
+/* ═══════════════════════════════════════════════════════════════
+   AI INSIGHTS STYLING
+   ═══════════════════════════════════════════════════════════════ */
+
+.insights-body {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+
+.insights-body h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 8px;
+  color: var(--text-primary);
+}
+
+.insights-body h2 {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 28px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.insights-body h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand-light);
+  margin: 20px 0 8px;
+}
+
+.insights-body p {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+}
+
+.insights-body strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.insights-body ul, .insights-body ol {
+  margin: 8px 0 16px;
+  padding-left: 20px;
+}
+
+.insights-body li {
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+.insights-body li strong {
+  color: var(--text-primary);
+}
+
+.insights-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+
+.insights-body thead th {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.insights-body thead th:not(:first-child) {
+  text-align: right;
+}
+
+.insights-body tbody td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.insights-body tbody td:not(:first-child) {
+  text-align: right;
+  font-family: var(--font-mono);
+}
+
+.insights-body tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.insights-body blockquote {
+  border-left: 3px solid var(--brand);
+  padding: 8px 16px;
+  margin: 12px 0;
+  background: var(--brand-bg);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.insights-body code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 2px 6px;
+  background: rgba(0,0,0,0.25);
+  border-radius: 3px;
+}

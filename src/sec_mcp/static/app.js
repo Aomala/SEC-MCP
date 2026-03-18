@@ -3209,7 +3209,16 @@ async function generateInsights() {
     if (!r.ok) throw new Error('API error: ' + r.status);
     const j = await r.json();
 
-    el.innerHTML = '<div style="line-height:1.8">' + md(j.answer || 'No insights generated.') + '</div>';
+    const rendered = md(j.answer || 'No insights generated.');
+    el.innerHTML = '<div class="insights-body">' + rendered + '</div>';
+    // Style tables inside insights
+    el.querySelectorAll('table').forEach(t => {
+      t.classList.add('data-table');
+      const wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      t.parentNode.insertBefore(wrap, t);
+      wrap.appendChild(t);
+    });
   } catch (e) {
     el.innerHTML = '<p class="text-muted">Error: ' + esc(e.message) + '</p>';
     console.error('[Insights Error]', e);
