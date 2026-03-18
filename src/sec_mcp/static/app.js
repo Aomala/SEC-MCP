@@ -1122,10 +1122,11 @@ function renderKPIs(m, r, pm, crossCheck) {
     const metricKey = kpi.key || kpi.label.toLowerCase().replace(/\s+/g, '_');
     const verified = cc && cc[metricKey] && cc[metricKey].match;
     // Build period label for the change tooltip (e.g., "FY2025 vs FY2024")
-    const fi = d?.filing_info || {};
-    const curYear = d?.fiscal_year || fi.fiscal_year || '';
-    const priorYear = d?.prior_fiscal_year || (curYear ? curYear - 1 : '');
-    const periodType = d?.period_type === 'quarterly' ? 'Q' : 'FY';
+    const _d = _curData || {};
+    const fi = _d.filing_info || {};
+    const curYear = _d.fiscal_year || fi.fiscal_year || '';
+    const priorYear = _d.prior_fiscal_year || (curYear ? curYear - 1 : '');
+    const periodType = _d.period_type === 'quarterly' ? 'Q' : 'FY';
     const pLabel = curYear ? (periodType + curYear + ' vs ' + periodType + priorYear) : '';
 
     h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i, verified, pLabel);
