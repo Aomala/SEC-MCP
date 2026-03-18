@@ -610,7 +610,11 @@ function handleResult(j) {
   // Financials or explain tools: render dashboard
   if (j.tool === 'financials' || j.tool === 'explain') {
     const d = j.data || {};
-    
+
+    // Attach provenance metadata from API response onto the data object
+    if (j.sources) d._sources = j.sources;
+    if (j.cross_check) d._crossCheck = j.cross_check;
+
     // Update ticker
     if (tk) _tk = tk.toUpperCase();
     
@@ -879,8 +883,8 @@ function renderDashboard(d) {
   const r = d.ratios || {};
   const pm = d.prior_metrics || {};
   
-  // 1. Render KPI cards
-  renderKPIs(m, r, pm);
+  // 1. Render KPI cards (pass cross_check for source badges)
+  renderKPIs(m, r, pm, d._crossCheck || {});
 
   // 2. Render company overview
   renderCompanyOverview(d);
@@ -905,6 +909,9 @@ function renderDashboard(d) {
   // 4. Render provenance/validation bar
   renderProvenance(d);
 
+  // 4b. Render web context panel (Perplexity market context)
+  renderWebContext(d);
+
   // 5. Render confidence scores + validation details
   renderConfidence(d);
 
@@ -915,9 +922,10 @@ function renderDashboard(d) {
 /**
  * Render KPI cards in a grid.
  */
-function renderKPIs(m, r, pm) {
+function renderKPIs(m, r, pm, crossCheck) {
   const grid = document.getElementById('kpi-grid');
   if (!grid) return;
+  const cc = crossCheck || {};
   
   // Derived metrics
   const operatingIncome = m.operating_income || null;
@@ -931,6 +939,7 @@ function renderKPIs(m, r, pm) {
   const kpis = [
     {
       label: 'Revenue',
+      key: 'revenue',
       value: m.revenue,
       prior: pm?.revenue,
       icon: 'dollar-sign',
@@ -938,6 +947,7 @@ function renderKPIs(m, r, pm) {
     },
     {
       label: 'Net Income',
+      key: 'net_income',
       value: m.net_income,
       prior: pm?.net_income,
       icon: 'trending-up',
@@ -980,6 +990,7 @@ function renderKPIs(m, r, pm) {
     },
     {
       label: 'Total Assets',
+      key: 'total_assets',
       value: m.total_assets,
       prior: pm?.total_assets,
       icon: 'building-2',
@@ -1023,7 +1034,7 @@ function renderKPIs(m, r, pm) {
   let h = '';
   kpis.forEach((kpi, i) => {
     if (kpi.value == null) return;
-    
+
     const change = calcChange(kpi.value, kpi.prior);
     const fmtVal =
       kpi.fmt === 'pct'
@@ -1033,8 +1044,11 @@ function renderKPIs(m, r, pm) {
           : kpi.fmt === 'ratio'
             ? kpi.value.toFixed(2) + 'x'
             : fmtN(kpi.value);
-    
-    h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i);
+
+    // Source badge: SEC always, verified if Polygon cross-check matched this metric
+    const metricKey = kpi.key || kpi.label.toLowerCase().replace(/\s+/g, '_');
+    const verified = cc && cc[metricKey] && cc[metricKey].match;
+    h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i, verified);
   });
   
   grid.innerHTML = h;
@@ -1044,7 +1058,7 @@ function renderKPIs(m, r, pm) {
 /**
  * Build a single KPI card HTML.
  */
-function buildKpiCard(label, value, change, icon, color, index) {
+function buildKpiCard(label, value, change, icon, color, index, verified) {
   let changeHtml = '';
   if (change != null) {
     const trendIcon = change >= 0 ? 'arrow-up-right' : 'arrow-down-right';
@@ -1060,7 +1074,15 @@ function buildKpiCard(label, value, change, icon, color, index) {
       change.toFixed(1) +
       '%</span>';
   }
-  
+
+  // Source badges: SEC always present; Verified or Unverified based on cross-check
+  let badges = '<span class="source-badge source-sec"><i data-lucide="shield-check"></i>SEC</span>';
+  if (verified === true) {
+    badges += '<span class="source-badge source-verified"><i data-lucide="check-circle"></i>Verified</span>';
+  } else if (verified === false) {
+    badges += '<span class="source-badge source-unverified"><i data-lucide="alert-circle"></i>Unverified</span>';
+  }
+
   return (
     '<div class="kpi-card animate-in" style="animation-delay:' +
     index * 0.05 +
@@ -1079,6 +1101,7 @@ function buildKpiCard(label, value, change, icon, color, index) {
     '<div class="kpi-label">' +
     label +
     '</div>' +
+    '<div class="kpi-source-badges">' + badges + '</div>' +
     '</div>'
   );
 }
@@ -1777,6 +1800,19 @@ function renderProvenance(d) {
     ? '<span class="prov-badge warning"><i data-lucide="clock"></i>' + esc(d.quarter_label || 'YTD') + '</span>'
     : '';
 
+  // Polygon cross-validation badge
+  const src = d._sources || {};
+  const polyBadge = src.polygon_validated
+    ? '<span class="prov-badge success"><i data-lucide="check-circle"></i>Polygon Verified</span>'
+    : src.sec_edgar
+      ? '<span class="prov-badge neutral"><i data-lucide="minus-circle"></i>Polygon: N/A</span>'
+      : '';
+
+  // Web context indicator
+  const webBadge = src.web_context
+    ? '<span class="prov-badge warning"><i data-lucide="globe"></i>Web Context Available</span>'
+    : '';
+
   el.innerHTML =
     '<div class="prov-badges">' +
     validationStatus +
@@ -1792,8 +1828,55 @@ function renderProvenance(d) {
     '</span>' +
     ytdBadge +
     cacheBadge +
+    polyBadge +
+    webBadge +
     '</div>';
   
+  lucide.createIcons();
+}
+
+/**
+ * Render web context panel (Perplexity market news) below provenance.
+ * Clearly labeled as non-SEC data.
+ */
+function renderWebContext(d) {
+  // Remove existing web context card if present
+  const existing = document.getElementById('web-context-card');
+  if (existing) existing.remove();
+
+  const src = d._sources || {};
+  if (!src.web_context) return;
+
+  const prov = document.getElementById('provenance');
+  if (!prov) return;
+
+  const card = document.createElement('div');
+  card.id = 'web-context-card';
+  card.className = 'web-context-card';
+
+  let citationsHtml = '';
+  if (src.web_citations && src.web_citations.length) {
+    citationsHtml = '<div class="web-citations"><strong>Sources:</strong> ';
+    citationsHtml += src.web_citations.map(function(url, i) {
+      const domain = url.replace(/^https?:\/\//, '').split('/')[0];
+      return '<a href="' + esc(url) + '" target="_blank" rel="noopener">[' + (i+1) + '] ' + esc(domain) + '</a>';
+    }).join(' &middot; ');
+    citationsHtml += '</div>';
+  }
+
+  const content = miniMarkdown(src.web_context);
+  card.innerHTML =
+    '<div class="web-context-header">' +
+    '<i data-lucide="globe"></i>' +
+    '<span class="source-badge source-web"><i data-lucide="alert-triangle"></i>WEB SOURCE</span>' +
+    '<span class="web-context-disclaimer">Not from SEC filings</span>' +
+    '</div>' +
+    '<h4 class="web-context-title">Market Context</h4>' +
+    '<div class="web-context-body">' + content + '</div>' +
+    citationsHtml;
+
+  // Insert after provenance
+  prov.insertAdjacentElement('afterend', card);
   lucide.createIcons();
 }
 

@@ -425,19 +425,79 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
             summary = generate_local_summary(data)
     else:
         summary = "No data available."
-    return {"tool": "financials", "data": data, "summary": summary}
+
+    # ── Data provenance: cross-validate SEC data with external sources ──
+    sources = {"sec_edgar": True, "polygon_validated": False, "web_context": None, "web_citations": []}
+    cross_check_results = {}
+
+    # Polygon.io cross-check (non-blocking)
+    if data and data.get("metrics"):
+        try:
+            from sec_mcp.polygon_client import cross_check, is_available as poly_avail
+            if poly_avail():
+                validation = cross_check(ticker.upper(), data["metrics"])
+                if validation:
+                    sources["polygon_validated"] = True
+                    cross_check_results = validation
+        except Exception as exc:
+            log.debug("Polygon cross-check failed for %s: %s", ticker, exc)
+
+    # Perplexity web context (non-blocking)
+    try:
+        from sec_mcp.perplexity_client import search_financial_news, is_available as pplx_avail
+        if pplx_avail():
+            news = search_financial_news(ticker.upper())
+            if news and news.get("content"):
+                sources["web_context"] = news["content"][:3000]
+                sources["web_citations"] = news.get("citations", [])[:8]
+    except Exception as exc:
+        log.debug("Perplexity news fetch failed for %s: %s", ticker, exc)
+
+    result = {"tool": "financials", "data": data, "summary": summary}
+    result["sources"] = sources
+    result["cross_check"] = cross_check_results
+    return result
 
 
 def _handle_compare(tickers: list[str], year: int | None, form_type: str = "10-K") -> dict:
-    """Handle a comparison request for multiple companies."""
+    """Handle a comparison request for multiple companies.
+
+    Performance: check _rcache and disk_cache for each ticker before falling
+    back to the full extract_financials_batch().  Cached hits are spliced in
+    so only uncached tickers hit SEC EDGAR.
+    """
+    # Try to pull each ticker from cache first (keyed by most recent accession)
+    cached_results: dict[str, dict] = {}  # ticker -> data
+    uncached: list[str] = []
+    for t in tickers:
+        # Scan result cache for any entry matching this ticker (latest first)
+        hit = None
+        for key, entry in _result_cache.items():
+            if key.startswith(t.upper() + "|") and (time.time() - entry["ts"]) < _RESULT_CACHE_TTL:
+                hit = entry
+                break
+        if hit:
+            cached_results[t.upper()] = hit["data"]
+        else:
+            uncached.append(t)
+
     try:
-        results = extract_financials_batch(
-            tickers, year=year, form_type=form_type,
+        fresh = extract_financials_batch(
+            uncached, year=year, form_type=form_type,
             include_statements=True, include_segments=True,
-        )
+        ) if uncached else []
     except Exception as e:
         log.exception("Compare batch failed")
         return {"tool": "compare", "error": str(e), "results": []}
+
+    # Merge cached + fresh in original ticker order
+    fresh_iter = iter(fresh)
+    results = []
+    for t in tickers:
+        if t.upper() in cached_results:
+            results.append(cached_results[t.upper()])
+        else:
+            results.append(next(fresh_iter, None))
 
     summaries = []
     for d in results:
@@ -1440,6 +1500,11 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
             "- Cite the filing source (e.g., 'per the 10-K filed 2024-11-01').\n"
             "- Compare to prior periods when data is available — calculate % changes.\n"
             "- If data is missing, say exactly what's missing and suggest how to get it.\n\n"
+            "SOURCE ATTRIBUTION — always tag where data comes from:\n"
+            "- Prefix SEC-sourced numbers with [SEC EDGAR] inline.\n"
+            "- Prefix web-sourced context with [Web Search] inline.\n"
+            "- Prefix cross-validated data (SEC matched by Polygon) with [Verified ✓] inline.\n"
+            "- Keep these tags inline with the data, not as separate sections.\n\n"
             "FOR DEEP ANALYSIS:\n"
             "- Use ## headers to organize sections.\n"
             "- Provide actionable insights: 'This suggests...', 'Key risk:...'.\n"
