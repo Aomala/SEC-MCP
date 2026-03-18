@@ -31,3 +31,4 @@ htmlcov/
 # Vercel build output
 public/
 .vercel
+.github/

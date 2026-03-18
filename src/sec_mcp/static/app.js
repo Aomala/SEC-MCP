@@ -118,6 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load research folders from localStorage
   loadResearchFolders();
+  initResearchQueryClicks();
 
   // Log initialization complete
   console.log('[Fineas.ai] Application initialized');
@@ -507,14 +508,14 @@ function switchView(view) {
   if (view === 'dashboard') {
     // Show dashboard if data is loaded, otherwise show welcome
     if (_curData) {
-      if (dashboard) dashboard.style.display = 'block';
+      if (dashboard) { dashboard.style.display = 'block'; dashboard.classList.remove('fade-in'); void dashboard.offsetWidth; dashboard.classList.add('fade-in'); }
     } else {
-      if (welcome) welcome.style.display = 'flex';
+      if (welcome) { welcome.style.display = 'flex'; welcome.classList.remove('fade-in'); void welcome.offsetWidth; welcome.classList.add('fade-in'); }
     }
   } else {
     // Show the matching panel
     const panel = document.getElementById('panel-' + view);
-    if (panel) panel.style.display = 'block';
+    if (panel) { panel.style.display = 'block'; panel.classList.remove('fade-in'); void panel.offsetWidth; panel.classList.add('fade-in'); }
 
     // Trigger data loading for each view
     if (view === 'statements' && _curData) renderFullStatement('income');
@@ -693,10 +694,13 @@ async function sendCb() {
   if (!msg) return;
   
   inp.value = '';
-  
+
   // Add user message to UI
   addChatMessage('user', msg);
-  
+
+  // Track query in research folders
+  if (_tk) addResearchQuery(_tk, msg);
+
   // Show typing indicator
   addChatLoading();
   
@@ -3210,21 +3214,112 @@ function saveResearch(ticker, companyName) {
   let items = [];
   try { items = JSON.parse(localStorage.getItem(key)) || []; } catch(e) { items = []; }
 
-  // Remove existing entry for this ticker (dedup)
-  items = items.filter(i => i.ticker !== ticker.toUpperCase());
+  const tk = ticker.toUpperCase();
+  const existing = items.find(i => i.ticker === tk);
 
-  // Prepend new entry
-  items.unshift({
-    ticker: ticker.toUpperCase(),
-    name: companyName || ticker.toUpperCase(),
-    date: new Date().toISOString().slice(0, 10),
-  });
+  if (existing) {
+    // Update name and bump to top
+    existing.name = companyName || tk;
+    existing.updated = new Date().toISOString();
+    items = items.filter(i => i.ticker !== tk);
+    items.unshift(existing);
+  } else {
+    // New entry
+    items.unshift({
+      ticker: tk,
+      name: companyName || tk,
+      date: new Date().toISOString().slice(0, 10),
+      updated: new Date().toISOString(),
+      queries: [],
+    });
+  }
 
   // Keep max 20
   if (items.length > 20) items = items.slice(0, 20);
 
   localStorage.setItem(key, JSON.stringify(items));
   loadResearchFolders();
+}
+
+/**
+ * Add a research query to a company's research entry.
+ */
+function addResearchQuery(ticker, question) {
+  if (!ticker || !question) return;
+  const key = 'fineas-research';
+  let items = [];
+  try { items = JSON.parse(localStorage.getItem(key)) || []; } catch(e) { items = []; }
+
+  const tk = ticker.toUpperCase();
+  const entry = items.find(i => i.ticker === tk);
+  if (!entry) return; // Company not in research yet
+
+  // Initialize queries array if missing (legacy entries)
+  if (!entry.queries) entry.queries = [];
+
+  // Avoid duplicate consecutive questions
+  const last = entry.queries[entry.queries.length - 1];
+  if (last && last.question === question) return;
+
+  entry.queries.push({
+    question: question,
+    timestamp: new Date().toISOString(),
+  });
+
+  // Keep max 50 queries per company
+  if (entry.queries.length > 50) entry.queries = entry.queries.slice(-50);
+
+  entry.updated = new Date().toISOString();
+
+  // Move to top (most recently updated)
+  items = items.filter(i => i.ticker !== tk);
+  items.unshift(entry);
+
+  localStorage.setItem(key, JSON.stringify(items));
+  loadResearchFolders();
+}
+
+/**
+ * Format a date string nicely (e.g. "Mar 18").
+ */
+function fmtResearchDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return months[d.getMonth()] + ' ' + d.getDate();
+  } catch(e) { return dateStr; }
+}
+
+/**
+ * Toggle expand/collapse of a research item's queries.
+ */
+function toggleResearchExpand(ticker, event) {
+  event.stopPropagation();
+  const item = document.querySelector('.research-item[data-ticker="' + ticker + '"]');
+  const queries = document.querySelector('.research-queries[data-ticker="' + ticker + '"]');
+  if (!item || !queries) return;
+  item.classList.toggle('expanded');
+  queries.classList.toggle('expanded');
+}
+
+/**
+ * Re-ask a research query from history (via data-question attribute).
+ */
+function initResearchQueryClicks() {
+  document.getElementById('research-folders')?.addEventListener('click', (e) => {
+    const queryEl = e.target.closest('.research-query');
+    if (!queryEl) return;
+    e.stopPropagation();
+    const question = queryEl.getAttribute('data-question');
+    if (!question) return;
+    const inp = document.getElementById('chat-inp');
+    if (inp) inp.value = question;
+    // Open chat if not open
+    const panel = document.getElementById('chat-panel');
+    if (panel && !panel.classList.contains('open')) toggleChat();
+    sendCb();
+  });
 }
 
 /**
@@ -3242,21 +3337,52 @@ function loadResearchFolders() {
     return;
   }
 
-  container.innerHTML = items.map(item => `
-    <div class="research-item" onclick="q('${esc(item.ticker)}')" title="${esc(item.name)}">
+  // Sort by most recently updated
+  items.sort((a, b) => {
+    const da = a.updated || a.date || '';
+    const db = b.updated || b.date || '';
+    return db.localeCompare(da);
+  });
+
+  container.innerHTML = items.map(item => {
+    const queries = item.queries || [];
+    const qCount = queries.length;
+    const dateLabel = fmtResearchDate(item.date);
+    const qLabel = qCount ? qCount + (qCount === 1 ? ' question' : ' questions') : '';
+
+    let html = `
+    <div class="research-item" data-ticker="${esc(item.ticker)}" onclick="q('${esc(item.ticker)}')" title="${esc(item.name)}">
       <svg class="research-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
       </svg>
       <div class="research-info">
-        <div class="research-ticker">${esc(item.ticker)}</div>
+        <div class="research-ticker">${esc(item.ticker)} <span style="font-weight:400;color:var(--text-muted);font-family:var(--font-ui);font-size:9px">${esc(dateLabel)}</span></div>
         <div class="research-name">${esc(item.name)}</div>
-      </div>
-      <span class="research-date">${esc(item.date)}</span>
+      </div>`;
+
+    if (qCount > 0) {
+      html += `<span class="query-count" onclick="toggleResearchExpand('${esc(item.ticker)}', event)">${esc(qLabel)}</span>`;
+    }
+
+    html += `
       <button class="research-delete" onclick="event.stopPropagation(); deleteResearch('${esc(item.ticker)}')" title="Remove">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
-    </div>
-  `).join('');
+    </div>`;
+
+    // Expandable query list
+    if (qCount > 0) {
+      html += `<div class="research-queries" data-ticker="${esc(item.ticker)}">`;
+      // Show most recent queries first, max 10
+      const recentQueries = queries.slice(-10).reverse();
+      recentQueries.forEach(q => {
+        html += `<div class="research-query" data-question="${esc(q.question)}" title="${esc(q.question)}">${esc(q.question)}</div>`;
+      });
+      html += `</div>`;
+    }
+
+    return html;
+  }).join('');
 }
 
 /**

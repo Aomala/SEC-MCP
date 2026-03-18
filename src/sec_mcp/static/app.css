@@ -371,6 +371,58 @@ a:hover { color: var(--brand); }
   color: var(--danger);
 }
 
+.research-item .query-count {
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--brand-light);
+  background: var(--brand-bg);
+  padding: 1px 5px;
+  border-radius: 8px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.research-queries {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 0 4px 22px;
+}
+
+.research-queries.expanded {
+  display: flex;
+  animation: fadeIn 0.2s ease forwards;
+}
+
+.research-query {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+
+.research-query:hover {
+  background: var(--brand-bg);
+  color: var(--text-primary);
+}
+
+.research-expand-icon {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.research-item.expanded .research-expand-icon {
+  transform: rotate(90deg);
+}
+
 .sidebar-footer {
   margin-top: auto;
   padding: 8px;
@@ -387,6 +439,7 @@ a:hover { color: var(--brand); }
   flex-direction: column;
   overflow: hidden;
   min-width: 0;
+  transition: all 0.3s ease;
 }
 
 /* ─── Header ─── */
@@ -1352,30 +1405,28 @@ a:hover { color: var(--brand); }
    ═══════════════════════════════════════════════════════════════ */
 
 .chat-panel {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 380px;
-  max-width: 90vw;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
   background: linear-gradient(180deg, var(--bg-secondary) 0%, rgba(10, 15, 30, 0.98) 100%);
-  border-left: 1px solid var(--glass-border);
+  border-left: 1px solid transparent;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  transform: translateX(100%);
-  opacity: 0;
-  pointer-events: none;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.25s ease;
+  flex-shrink: 0;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.2s ease,
+              border-color 0.3s ease;
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  z-index: 100;
 }
 
 .chat-panel.open {
-  transform: translateX(0);
+  width: 380px;
+  min-width: 380px;
   opacity: 1;
-  pointer-events: auto;
+  border-left-color: var(--glass-border);
 }
 
 .chat-header {
@@ -1955,8 +2006,17 @@ a:hover { color: var(--brand); }
    ═══════════════════════════════════════════════════════════════ */
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.fade-in {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+/* Chat messages fade in (complements .msg fadeInUp) */
+.chat-message {
+  animation: fadeIn 0.2s ease forwards;
 }
 
 @keyframes fadeInUp {
@@ -2004,8 +2064,7 @@ a:hover { color: var(--brand); }
 
 @media (max-width: 1200px) {
   .sidebar { width: 200px; min-width: 200px; }
-  .chat-panel { width: 340px; }
-  .chat-panel.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
+  .chat-panel.open { width: 340px; min-width: 340px; }
 }
 
 @media (max-width: 1024px) {
@@ -2014,15 +2073,13 @@ a:hover { color: var(--brand); }
   .sidebar-brand { padding: 16px 12px; justify-content: center; }
   .nav-item span { display: none; }
   .nav-item { justify-content: center; padding: 10px; }
-  .chat-panel { width: 320px; }
-  .chat-panel.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
+  .chat-panel.open { width: 320px; min-width: 320px; }
   .company-pill { display: none; }
 }
 
 @media (max-width: 768px) {
   .sidebar { display: none; }
-  .chat-panel { width: 100%; max-width: 100%; }
-  .chat-panel.open { transform: translateX(0); opacity: 1; pointer-events: auto; }
+  .chat-panel.open { width: 100%; min-width: 100%; }
   .header-tabs { overflow-x: auto; }
   .charts-row { grid-template-columns: 1fr; }
   .kpi-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
