@@ -61,7 +61,7 @@ def _rcache_put(ticker: str, accession: str, data: dict, summary: str) -> None:
         "data": data, "summary": summary, "ts": time.time()
     }
 
-app = FastAPI(title="SEC Terminal")
+app = FastAPI(title="SEC Terminal", docs_url="/swagger", redoc_url="/redoc")
 
 # CORS for cross-origin access (needed for Railway deployment)
 app.add_middleware(
@@ -2265,6 +2265,57 @@ async def api_docs():
   },
   "polygon_details": { "name": "Apple Inc.", "market_cap": 3200000000000, ... }
 }</div>
+    </div>
+  </div>
+
+  <!-- Try It -->
+  <h2>Try It Live</h2>
+  <p class="section-desc">Test the API directly from your browser. No API key required during beta.</p>
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px">
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <select id="try-endpoint" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;flex-shrink:0">
+        <option value="financials">GET /v1/financials/{ticker}</option>
+        <option value="compare">GET /v1/compare?tickers=</option>
+        <option value="search">GET /v1/search?q=</option>
+        <option value="cross-check">GET /v1/cross-check/{ticker}</option>
+      </select>
+      <input id="try-input" placeholder="AAPL" value="AAPL" style="flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;font-family:'JetBrains Mono',monospace"/>
+      <button onclick="tryApi()" style="background:var(--brand);color:white;border:none;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer">Send</button>
+    </div>
+    <pre id="try-result" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;overflow-x:auto;max-height:400px;overflow-y:auto;color:var(--text2);white-space:pre-wrap">Click Send to test the API...</pre>
+  </div>
+  <script>
+  async function tryApi() {
+    const ep = document.getElementById('try-endpoint').value;
+    const val = document.getElementById('try-input').value.trim();
+    const out = document.getElementById('try-result');
+    if (!val) { out.textContent = 'Enter a value'; return; }
+    out.textContent = 'Loading...';
+    let url;
+    if (ep === 'financials') url = '/v1/financials/' + encodeURIComponent(val);
+    else if (ep === 'compare') url = '/v1/compare?tickers=' + encodeURIComponent(val);
+    else if (ep === 'search') url = '/v1/search?q=' + encodeURIComponent(val);
+    else if (ep === 'cross-check') url = '/v1/cross-check/' + encodeURIComponent(val);
+    try {
+      const r = await fetch(url);
+      const j = await r.json();
+      out.textContent = JSON.stringify(j, null, 2);
+    } catch(e) { out.textContent = 'Error: ' + e.message; }
+  }
+  </script>
+
+  <!-- Rate Limits -->
+  <h2>Rate Limits</h2>
+  <div class="endpoint">
+    <div class="endpoint-body" style="display:block">
+      <table class="param-table">
+        <thead><tr><th>Tier</th><th>Rate Limit</th><th>Data Sources</th></tr></thead>
+        <tbody>
+          <tr><td>Starter ($5/mo)</td><td>100 calls/day</td><td>SEC EDGAR XBRL</td></tr>
+          <tr><td>Pro ($100/yr)</td><td>Unlimited</td><td>SEC + Polygon + AI Insights</td></tr>
+          <tr><td>Lifetime ($10k)</td><td>Unlimited</td><td>Everything + Custom integrations</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
