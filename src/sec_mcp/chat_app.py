@@ -1752,8 +1752,26 @@ async def get_filing_text(
                 "text_length": len(text) if text else 0,
                 "text": (text or "")[:display_limit],
             }
-        # No accession — fall back to standard handler (latest filing)
-        result = _handle_filing_text(ticker, section, form_type=form_type or "10-K")
+        # No accession — fall back to standard handler with form type fallback
+        # Try the requested form type first, then alternatives for FPIs
+        primary_form = form_type or "10-K"
+        result = _handle_filing_text(ticker, section, form_type=primary_form)
+
+        # If the primary form failed (no text), try FPI alternatives
+        if result.get("error") or not result.get("text"):
+            from sec_mcp.sec_client import get_form_alternatives
+            alternatives = get_form_alternatives(primary_form)
+            for alt_form in alternatives[1:]:  # skip first (already tried)
+                alt_result = _handle_filing_text(ticker, section, form_type=alt_form)
+                if alt_result.get("text"):
+                    return alt_result
+            # Also try the cross-type (annual ↔ quarterly)
+            cross_forms = ["20-F", "10-K", "40-F"] if primary_form in ("10-Q", "6-K") else ["10-Q", "6-K"]
+            for cf in cross_forms:
+                alt_result = _handle_filing_text(ticker, section, form_type=cf)
+                if alt_result.get("text"):
+                    return alt_result
+
         return result
     except Exception as exc:
         log.warning("Filing text fetch failed for %s/%s: %s", ticker, section, exc)

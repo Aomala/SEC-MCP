@@ -2616,7 +2616,7 @@ async function viewFilingInExplorer(accession, formType) {
   if (qaMessages) qaMessages.innerHTML = '';
 
   try {
-    const r = await fetch(API_BASE + '/api/filing-text/' + encodeURIComponent(_tk) + '/full?accession=' + encodeURIComponent(accession) + '&form_type=' + encodeURIComponent(formType));
+    const r = await fetch(API_BASE + '/api/filing-text/' + encodeURIComponent(_tk) + '/full?accession=' + encodeURIComponent(accession) + '&form_type=' + encodeURIComponent(formType || (_isFpi ? '20-F' : '10-K')));
     if (!r.ok) throw new Error('API error: ' + r.status);
     const j = await r.json();
 
@@ -2665,8 +2665,12 @@ async function loadSectionContent(section) {
 
   try {
     const accession = _curAcc || '';
-    let url = '/api/filing-text/' + encodeURIComponent(_tk) + '/' + encodeURIComponent(section);
-    if (accession) url += '?accession=' + encodeURIComponent(accession);
+    const formType = document.getElementById('sel-form')?.value || (_isFpi ? '20-F' : '10-K');
+    const params = new URLSearchParams();
+    if (accession) params.set('accession', accession);
+    params.set('form_type', formType);
+    let url = API_BASE + '/api/filing-text/' + encodeURIComponent(_tk) + '/' + encodeURIComponent(section);
+    url += '?' + params.toString();
 
     const r = await fetch(url);
     if (!r.ok) throw new Error('API error: ' + r.status);
