@@ -1042,6 +1042,14 @@ async def fetch_status(ticker: str):
     return job or {"status": "none"}
 
 
+def _build_edgar_url(cik: str, accession: str) -> str:
+    """Build SEC EDGAR filing viewer URL from CIK and accession number."""
+    if not cik or not accession:
+        return ""
+    acc_clean = accession.replace("-", "")
+    return f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_clean}/{accession}-index.htm"
+
+
 @app.get("/api/filings/{ticker}")
 async def list_available_filings(ticker: str, limit: int = 24):
     """List available filings for the filing selector toolbar.
@@ -1053,13 +1061,23 @@ async def list_available_filings(ticker: str, limit: int = 24):
     # Try US annual, then FPI annual; same for quarterly
     filings_k = client.get_filings_smart(ticker, form_type="10-K", limit=12)
     filings_q = client.get_filings_smart(ticker, form_type="10-Q", limit=16)
+    # Get CIK for SEC EDGAR URLs
+    cik = ""
+    try:
+        results = search_companies(ticker, limit=1)
+        if results:
+            cik = str(results[0].cik)
+    except Exception:
+        pass
+
     combined = sorted(
         [{"accession": f.accession_number, "form_type": f.form_type,
-          "filing_date": f.filing_date, "description": f.description}
+          "filing_date": f.filing_date, "description": f.description,
+          "edgar_url": _build_edgar_url(cik, f.accession_number) if cik else ""}
          for f in filings_k + filings_q],
         key=lambda x: x.get("filing_date", ""), reverse=True,
     )
-    return {"ticker": ticker.upper(), "filings": combined[:limit]}
+    return {"ticker": ticker.upper(), "cik": cik, "filings": combined[:limit]}
 
 
 @app.post("/api/load-filing")

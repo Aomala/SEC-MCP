@@ -2610,14 +2610,19 @@ async function loadFilingsTable() {
 
     let h = '';
     for (const f of filings) {
+      const edgarUrl = f.edgar_url || '';
       h += '<tr>' +
         '<td><span class="ticker-badge" style="font-size:11px">' + esc(f.form_type) + '</span></td>' +
         '<td>' + esc(f.filing_date || '') + '</td>' +
         '<td style="color:var(--text-secondary)">' + esc(f.description || '') + '</td>' +
-        '<td class="right"><button class="text-btn" onclick="viewFilingInExplorer(\'' + esc(f.accession) + '\',\'' + esc(f.form_type) + '\')">View</button></td>' +
+        '<td class="right" style="display:flex;gap:6px;justify-content:flex-end">' +
+          '<button class="text-btn" onclick="viewFilingInExplorer(\'' + esc(f.accession) + '\',\'' + esc(f.form_type) + '\')" title="View extracted text"><i data-lucide="file-text" style="width:13px;height:13px"></i> View</button>' +
+          (edgarUrl ? '<a class="text-btn" href="' + esc(edgarUrl) + '" target="_blank" rel="noopener" title="Open original filing on SEC EDGAR" style="text-decoration:none"><i data-lucide="external-link" style="width:13px;height:13px"></i> SEC</a>' : '') +
+        '</td>' +
         '</tr>';
     }
     tbody.innerHTML = h;
+    lucide.createIcons();
   } catch (e) {
     tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Error: ' + esc(e.message) + '</td></tr>';
   }
@@ -2651,11 +2656,26 @@ async function viewFilingInExplorer(accession, formType) {
     if (!r.ok) throw new Error('API error: ' + r.status);
     const j = await r.json();
 
-    if (sub) sub.textContent = (j.form_type || formType) + ' · Filed ' + (j.filing_date || '') + ' · ' + ((j.text_length || 0) / 1000).toFixed(0) + 'K chars';
+    // Build SEC EDGAR URL for the original document
+    const cik = _curData?.cik || '';
+    const edgarUrl = cik ? 'https://www.sec.gov/Archives/edgar/data/' + cik + '/' + accession.replace(/-/g, '') + '/' + accession + '-index.htm' : '';
+    const edgarLink = edgarUrl ? ' · <a href="' + edgarUrl + '" target="_blank" rel="noopener" style="color:var(--brand-light);text-decoration:none">View on SEC EDGAR ↗</a>' : '';
+
+    if (sub) sub.innerHTML = esc((j.form_type || formType)) + ' · Filed ' + esc(j.filing_date || '') + ' · ' + ((j.text_length || 0) / 1000).toFixed(0) + 'K chars' + edgarLink;
     const text = j.text || 'No content available.';
     _explorerSectionText = text;
     _explorerSectionName = formType + ' filing';
-    if (body) body.textContent = text;
+    if (body) {
+      body.innerHTML = formatSectionText(text);
+      buildSectionTOC(body);
+    }
+
+    // Show summarize button
+    const sumBtn = document.getElementById('explorer-summarize-btn');
+    const fullBtn = document.getElementById('explorer-full-btn');
+    if (sumBtn) sumBtn.style.display = 'inline-flex';
+    if (fullBtn) fullBtn.style.display = 'none';
+    lucide.createIcons();
   } catch (e) {
     if (body) body.innerHTML = '<p class="text-muted">Error: ' + esc(e.message) + '</p>';
   }
