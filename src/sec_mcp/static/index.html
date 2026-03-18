@@ -14,7 +14,7 @@
   <!-- Leaflet for geographic map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=28"/>
+  <link rel="stylesheet" href="/static/app.css?v=29"/>
 </head>
 <body>
 <div class="app">
@@ -393,11 +393,17 @@
                 <h3 id="explorer-section-title">Section</h3>
                 <p class="card-subtitle" id="explorer-section-sub"></p>
               </div>
-              <div style="display:flex;gap:8px">
+              <div style="display:flex;gap:8px;align-items:center">
+                <button class="text-btn" id="explorer-summarize-btn" onclick="summarizeSection()" style="display:none"><i data-lucide="sparkles"></i> Summarize</button>
+                <button class="text-btn" id="explorer-full-btn" onclick="showFullSection()" style="display:none"><i data-lucide="file-text"></i> Full Text</button>
                 <button class="text-btn" onclick="copyExplorerText()"><i data-lucide="copy"></i> Copy</button>
               </div>
             </div>
-            <div id="explorer-section-body" class="explorer-body"></div>
+            <!-- Section TOC + Body side by side -->
+            <div class="explorer-layout">
+              <nav class="explorer-toc" id="explorer-toc"></nav>
+              <div id="explorer-section-body" class="explorer-body"></div>
+            </div>
             <!-- Inline AI Q&A for the section -->
             <div class="explorer-qa">
               <div class="explorer-qa-header">
@@ -543,6 +549,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=28"></script>
+<script src="/static/app.js?v=29"></script>
 </body>
 </html>

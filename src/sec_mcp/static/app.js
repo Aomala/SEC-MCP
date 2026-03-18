@@ -2719,10 +2719,188 @@ async function loadSectionContent(section) {
     _explorerSectionText = text;
     _explorerSectionName = info.title;
 
-    if (body) body.textContent = text;
+    // Format raw SEC text into readable HTML with headers
+    const formatted = formatSectionText(text);
+    if (body) body.innerHTML = formatted;
+
+    // Build TOC from headers
+    buildSectionTOC(body);
+
+    // Show summarize button
+    const sumBtn = document.getElementById('explorer-summarize-btn');
+    const fullBtn = document.getElementById('explorer-full-btn');
+    if (sumBtn) sumBtn.style.display = 'inline-flex';
+    if (fullBtn) fullBtn.style.display = 'none';
+
+    lucide.createIcons();
   } catch (e) {
     if (body) body.innerHTML = '<p class="text-muted">Error loading section: ' + esc(e.message) + '</p>';
   }
+}
+
+/**
+ * Format raw SEC filing text into readable HTML.
+ * Detects paragraph breaks, Item headers, sub-headers, bullet lists.
+ */
+function formatSectionText(text) {
+  if (!text) return '<p class="text-muted">No content available.</p>';
+
+  // Split into paragraphs (double newlines or single newlines with blank-ish gaps)
+  const lines = text.split(/\n/);
+  let html = '';
+  let inList = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
+    if (!line) {
+      if (inList) { html += '</ul>'; inList = false; }
+      continue;
+    }
+
+    // Detect Item headers (e.g., "Item 1.", "ITEM 1A.", "Part I")
+    if (/^(ITEM|Item)\s+\d+[A-Za-z]?\.?\s*/i.test(line) || /^(PART|Part)\s+[IVX]+/i.test(line)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      const id = 'sec-' + line.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().slice(0, 40);
+      html += '<h2 id="' + id + '" class="sec-heading">' + esc(line) + '</h2>';
+      continue;
+    }
+
+    // Detect ALL-CAPS sub-headers (at least 4 caps words, line < 120 chars)
+    if (line.length < 120 && /^[A-Z][A-Z\s,&\-\/]{10,}$/.test(line)) {
+      if (inList) { html += '</ul>'; inList = false; }
+      const id = 'sec-' + line.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase().slice(0, 40);
+      html += '<h3 id="' + id + '" class="sec-subheading">' + esc(line.charAt(0) + line.slice(1).toLowerCase()) + '</h3>';
+      continue;
+    }
+
+    // Detect bullet-like lines (starts with •, -, *, or numbered list)
+    if (/^[\u2022\u2023\u25E6\-\*]\s/.test(line) || /^\(\d+\)\s/.test(line) || /^\d+\.\s/.test(line)) {
+      if (!inList) { html += '<ul class="sec-list">'; inList = true; }
+      html += '<li>' + esc(line.replace(/^[\u2022\u2023\u25E6\-\*]\s*/, '').replace(/^\(\d+\)\s*/, '').replace(/^\d+\.\s*/, '')) + '</li>';
+      continue;
+    }
+
+    if (inList) { html += '</ul>'; inList = false; }
+    html += '<p class="sec-paragraph">' + esc(line) + '</p>';
+  }
+  if (inList) html += '</ul>';
+
+  return html || '<p class="text-muted">No content available.</p>';
+}
+
+/**
+ * Build a Table of Contents from h2/h3 elements in the section body.
+ */
+function buildSectionTOC(container) {
+  const toc = document.getElementById('explorer-toc');
+  if (!toc || !container) { if (toc) toc.innerHTML = ''; return; }
+
+  const headings = container.querySelectorAll('h2, h3');
+  if (headings.length < 2) {
+    toc.style.display = 'none';
+    return;
+  }
+
+  toc.style.display = 'block';
+  let html = '<div class="toc-title">CONTENTS</div>';
+  headings.forEach((h, i) => {
+    const level = h.tagName === 'H2' ? 'toc-h2' : 'toc-h3';
+    const id = h.id || ('sec-heading-' + i);
+    if (!h.id) h.id = id;
+    const label = h.textContent.slice(0, 50) + (h.textContent.length > 50 ? '...' : '');
+    html += '<a class="toc-item ' + level + '" href="#' + id + '" onclick="scrollToSection(\'' + id + '\'); return false;">' + esc(label) + '</a>';
+  });
+  toc.innerHTML = html;
+}
+
+/**
+ * Smooth scroll to a section heading in the explorer.
+ */
+function scrollToSection(id) {
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/**
+ * Summarize the current section via AI.
+ */
+async function summarizeSection() {
+  if (!_explorerSectionText || !_tk) return;
+
+  const body = document.getElementById('explorer-section-body');
+  const sumBtn = document.getElementById('explorer-summarize-btn');
+  const fullBtn = document.getElementById('explorer-full-btn');
+  if (!body) return;
+
+  // Store current HTML for restore
+  body._fullHtml = body.innerHTML;
+
+  body.innerHTML = '<div style="display:flex;align-items:center;gap:12px;padding:24px 0"><div class="spinner"></div><span class="text-muted">Summarizing with AI...</span></div>';
+
+  try {
+    const r = await fetch(API_BASE + '/api/chatbot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: 'Summarize this ' + _explorerSectionName + ' section into a concise executive brief. Use:\n' +
+          '- A 2-3 sentence overview at the top\n' +
+          '- Bullet points for key themes and highlights\n' +
+          '- Bold the most important facts and numbers\n' +
+          '- Use markdown tables for any data comparisons\n' +
+          '- Keep it under 500 words\n' +
+          '- Group by theme (e.g., Growth Drivers, Risk Factors, Strategic Priorities)',
+        ticker: _tk,
+        context: { _filing_sections: { [_explorerSectionName]: _explorerSectionText.slice(0, 12000) } },
+        history: [],
+      }),
+    });
+
+    if (!r.ok) throw new Error('API error: ' + r.status);
+    const j = await r.json();
+
+    body.innerHTML = '<div class="explorer-summary">' +
+      '<div class="summary-badge"><i data-lucide="sparkles"></i> AI Summary</div>' +
+      '<div class="insights-body">' + md(j.answer || 'Summary unavailable.') + '</div>' +
+      '</div>';
+
+    // Style tables
+    body.querySelectorAll('table').forEach(t => {
+      t.classList.add('data-table');
+      const wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      t.parentNode.insertBefore(wrap, t);
+      wrap.appendChild(t);
+    });
+
+    if (sumBtn) sumBtn.style.display = 'none';
+    if (fullBtn) fullBtn.style.display = 'inline-flex';
+
+    // Hide TOC for summary view
+    const toc = document.getElementById('explorer-toc');
+    if (toc) toc.style.display = 'none';
+
+    lucide.createIcons();
+  } catch (e) {
+    body.innerHTML = '<p class="text-muted">Summarization failed: ' + esc(e.message) + '</p>';
+  }
+}
+
+/**
+ * Restore full section text after viewing summary.
+ */
+function showFullSection() {
+  const body = document.getElementById('explorer-section-body');
+  const sumBtn = document.getElementById('explorer-summarize-btn');
+  const fullBtn = document.getElementById('explorer-full-btn');
+  if (!body) return;
+
+  if (body._fullHtml) {
+    body.innerHTML = body._fullHtml;
+    buildSectionTOC(body);
+  }
+  if (sumBtn) sumBtn.style.display = 'inline-flex';
+  if (fullBtn) fullBtn.style.display = 'none';
+  lucide.createIcons();
 }
 
 /**

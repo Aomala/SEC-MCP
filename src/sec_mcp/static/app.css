@@ -1861,11 +1861,61 @@ a:hover { color: var(--brand); }
   font-weight: 600;
 }
 
+/* Explorer layout: TOC sidebar + body */
+.explorer-layout {
+  display: flex;
+  gap: 0;
+  max-height: 600px;
+  overflow: hidden;
+}
+
+.explorer-toc {
+  width: 200px;
+  min-width: 200px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding: 12px 0;
+  display: none; /* shown when headings exist */
+}
+
+.toc-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--text-tertiary);
+  padding: 4px 14px 8px;
+}
+
+.toc-item {
+  display: block;
+  padding: 5px 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+}
+
+.toc-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-left-color: var(--brand);
+}
+
+.toc-h3 {
+  padding-left: 24px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
 .explorer-body {
+  flex: 1;
   font-size: 13px;
   line-height: 1.8;
   color: var(--text-secondary);
-  max-height: 500px;
+  max-height: 600px;
   overflow-y: auto;
   padding: 4px 0;
   white-space: pre-wrap;
@@ -1878,6 +1928,76 @@ a:hover { color: var(--brand); }
   color: var(--text-primary);
   margin: 16px 0 8px;
   font-weight: 600;
+}
+
+/* SEC section formatting */
+.sec-heading {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 24px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: -0.01em;
+}
+
+.sec-heading:first-child {
+  margin-top: 0;
+}
+
+.sec-subheading {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--brand-light);
+  margin: 20px 0 8px;
+}
+
+.sec-paragraph {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.75;
+}
+
+.sec-list {
+  margin: 8px 0 16px;
+  padding-left: 20px;
+}
+
+.sec-list li {
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* AI Summary badge */
+.explorer-summary {
+  padding: 4px 0;
+}
+
+.summary-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  background: var(--brand-bg);
+  color: var(--brand-light);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  margin-bottom: 16px;
+}
+
+.summary-badge i {
+  width: 13px;
+  height: 13px;
+}
+
+/* Mobile: hide TOC, full width body */
+@media (max-width: 768px) {
+  .explorer-toc { display: none !important; }
+  .explorer-layout { flex-direction: column; }
 }
 
 /* Explorer inline AI Q&A */
