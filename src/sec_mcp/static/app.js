@@ -254,26 +254,36 @@ function renderFootnote(hist) {
     const polyVal = polyEntry?.polygon;
     const polyStr = polyVal != null ? fmtN(polyVal) : '—';
 
-    // Status: best match across sources
+    // Status: best match across all available sources
     let status = '';
-    if (xbrl != null && fmpVal != null && xbrl !== 0) {
-      const diff = Math.abs((xbrl - fmpVal) / xbrl * 100);
-      if (diff < 0.5) status = '<span class="fn-match">Match</span>';
-      else if (diff < 5) status = '<span class="fn-close">' + diff.toFixed(1) + '% diff</span>';
-      else status = '<span class="fn-mismatch">' + diff.toFixed(1) + '% diff</span>';
+    let statusTitle = '';
+    const diffs = [];
+    if (xbrl != null && xbrl !== 0) {
+      if (fmpVal != null) diffs.push({ src: 'FMP', diff: Math.abs((xbrl - fmpVal) / xbrl * 100) });
+      if (polyVal != null) diffs.push({ src: 'Polygon', diff: Math.abs((xbrl - polyVal) / xbrl * 100) });
     }
-    // Polygon verification badge
-    let polyStatus = '';
-    if (polyEntry && polyEntry.match === true) {
-      polyStatus = ' <span class="source-badge source-verified" style="font-size:9px">✓</span>';
-    } else if (polyEntry && polyEntry.match === false) {
-      polyStatus = ' <span class="source-badge source-web" style="font-size:9px">' + polyEntry.diff_pct + '%</span>';
+    if (diffs.length) {
+      const maxDiff = Math.max(...diffs.map(d => d.diff));
+      const details = diffs.map(d => d.src + ': ' + d.diff.toFixed(1) + '% diff').join(', ');
+      if (maxDiff < 5) {
+        status = '<span class="fn-match" style="color:var(--success)">✓</span>';
+        statusTitle = 'All sources agree within 5%. ' + details;
+      } else if (maxDiff < 20) {
+        status = '<span class="fn-close" style="color:var(--warning)">⚠</span>';
+        statusTitle = 'Sources differ >5%. ' + details;
+      } else {
+        status = '<span class="fn-mismatch" style="color:var(--danger)">✗</span>';
+        statusTitle = 'Sources differ >20%. ' + details;
+      }
+    } else if (xbrl != null) {
+      status = '<span class="fn-mismatch" style="color:var(--danger)">✗</span>';
+      statusTitle = 'No cross-validation data available for this metric.';
     }
 
     rows.push('<tr><td>' + esc(label) + '</td><td class="right mono">' + xbrlStr +
+      '</td><td class="right mono">' + polyStr +
       '</td><td class="right mono">' + fmpStr +
-      '</td><td class="right mono">' + polyStr + polyStatus +
-      '</td><td class="right">' + status + '</td></tr>');
+      '</td><td class="right" title="' + esc(statusTitle) + '">' + status + '</td></tr>');
   }
 
   if (!rows.length) { el.style.display = 'none'; return; }
@@ -284,7 +294,7 @@ function renderFootnote(hist) {
     '<div class="card-header"><div><h3>Data Source Comparison</h3>' +
     '<p class="card-subtitle">SEC XBRL (primary) vs FMP' + fmpDate + ' vs Polygon.io</p></div></div>' +
     '<table class="data-table"><thead><tr><th>Metric</th><th class="right">SEC XBRL</th>' +
-    '<th class="right">FMP</th><th class="right">Polygon</th><th class="right">Status</th></tr></thead>' +
+    '<th class="right">Polygon</th><th class="right">FMP</th><th class="right">Status</th></tr></thead>' +
     '<tbody>' + rows.join('') + '</tbody></table>' +
     '<p class="fn-note">Revenue & profitability charts use SEC XBRL data extracted directly from 10-K/10-Q filings. ' +
     'FMP and Polygon data shown for cross-reference only.</p>';
@@ -1113,6 +1123,22 @@ function renderKPIs(m, r, pm, crossCheck) {
   lucide.createIcons();
 }
 
+const KPI_TOOLTIPS = {
+  'Revenue': 'Total sales from all business segments. Source: SEC EDGAR XBRL filing.',
+  'Net Income': 'Profit after all expenses, taxes, and interest. Source: SEC EDGAR.',
+  'Free Cash Flow': 'Cash from operations minus capital expenditures. Measures cash generation ability.',
+  'Gross Margin': 'Revenue minus cost of goods sold, as a percentage of revenue.',
+  'Total Assets': 'Sum of all assets on the balance sheet.',
+  'EPS': 'Earnings per share (diluted). Net income divided by diluted share count.',
+  'Operating Income': 'Profit from core business operations before interest and taxes.',
+  'EBITDA': 'Earnings before interest, taxes, depreciation & amortization. Proxy for operating cash flow.',
+  'Working Capital': 'Current assets minus current liabilities. Measures short-term liquidity.',
+  'Net Debt': 'Total debt minus cash and equivalents. Negative means net cash position.',
+  'ROIC': 'Return on invested capital. Net income / (equity + long-term debt). Measures capital efficiency.',
+  'D/E Ratio': 'Debt-to-equity ratio. Total debt / total equity. Measures financial leverage.',
+  'Interest Coverage': 'Operating income / interest expense. Higher = more ability to service debt.',
+};
+
 /**
  * Build a single KPI card HTML.
  */
@@ -1134,15 +1160,20 @@ function buildKpiCard(label, value, change, icon, color, index, verified) {
   }
 
   // Source badges: SEC always present; Verified or Unverified based on cross-check
-  let badges = '<span class="source-badge source-sec"><i data-lucide="shield-check"></i>SEC</span>';
+  let badges = '<span class="source-badge source-sec" title="Data extracted from SEC EDGAR XBRL filing"><i data-lucide="shield-check"></i>SEC</span>';
   if (verified === true) {
-    badges += '<span class="source-badge source-verified"><i data-lucide="check-circle"></i>Verified</span>';
+    badges += '<span class="source-badge source-verified" title="Cross-validated against Polygon.io — values match within 5%"><i data-lucide="check-circle"></i>Verified</span>';
   } else if (verified === false) {
-    badges += '<span class="source-badge source-unverified"><i data-lucide="alert-circle"></i>Unverified</span>';
+    badges += '<span class="source-badge source-unverified" title="No cross-validation data available for this metric"><i data-lucide="alert-circle"></i>Unverified</span>';
   }
 
+  // Build tooltip for the KPI card
+  let cardTip = KPI_TOOLTIPS[label] || label;
+  if (verified === true) cardTip += ' [Polygon verified]';
+  else if (verified === false) cardTip += ' [Unverified]';
+
   return (
-    '<div class="kpi-card animate-in" style="animation-delay:' +
+    '<div class="kpi-card animate-in" title="' + esc(cardTip) + '" style="animation-delay:' +
     index * 0.05 +
     's">' +
     '<div class="kpi-top">' +

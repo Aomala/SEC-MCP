@@ -2624,3 +2624,11 @@ a:hover { color: var(--brand); }
   margin-left: 4px;
   font-weight: 500;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOOLTIP / TITLE ATTRIBUTE STYLING
+   ═══════════════════════════════════════════════════════════════ */
+
+[title] { cursor: help; }
+.kpi-card[title] { cursor: pointer; }
+.source-badge[title] { cursor: help; }
