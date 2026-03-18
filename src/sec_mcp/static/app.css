@@ -2119,12 +2119,212 @@ a:hover { color: var(--brand); }
 }
 
 @media (max-width: 768px) {
+  /* Hide sidebar on mobile */
   .sidebar { display: none; }
-  .chat-panel.open { width: 100%; min-width: 100%; }
-  .header-tabs { overflow-x: auto; }
-  .charts-row { grid-template-columns: 1fr; }
-  .kpi-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
-  .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+
+  /* Chat panel: full-screen overlay on mobile */
+  .chat-panel {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 1000;
+    width: 0 !important;
+    min-width: 0 !important;
+  }
+  .chat-panel.open {
+    width: 100% !important;
+    min-width: 100% !important;
+  }
+  .chat-header {
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+  .chat-input {
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+
+  /* Header: stack search + actions vertically */
+  .header-top {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 8px;
+  }
+  .search-bar {
+    max-width: 100%;
+    order: 1;
+    flex-basis: 100%;
+  }
+  .search-bar kbd { display: none; }
+  .company-pill {
+    order: 2;
+    flex-basis: 100%;
+    justify-content: center;
+    font-size: 12px;
+  }
+  .header-actions {
+    order: 3;
+    margin-left: auto;
+  }
+
+  /* Tabs: scrollable, smaller */
+  .header-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding: 0 8px;
+    gap: 0;
+  }
+  .header-tabs::-webkit-scrollbar { display: none; }
+  .view-tab {
+    font-size: 12px;
+    padding: 8px 10px;
+    white-space: nowrap;
+  }
+  .view-tab i { display: none; }
+  .header-controls {
+    display: none; /* Period/form selectors hidden on mobile — use defaults */
+  }
+
+  /* Content: less padding */
+  .content {
+    padding: 12px;
+  }
+
+  /* KPI grid: 2 columns on mobile */
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px;
+  }
+  .kpi-card {
+    padding: 12px;
+  }
+  .kpi-value {
+    font-size: 20px !important;
+  }
+  .kpi-source-badges { display: none; } /* Too cramped — hide badges on mobile */
+
+  /* Charts: single column, proper sizing */
+  .charts-row {
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+  .chart-card {
+    padding: 14px;
+  }
+  .chart-card canvas {
+    min-height: 200px !important;
+    max-height: 260px !important;
+  }
+
+  /* Company overview metrics grid: 2 columns */
+  .metrics-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Data tables: smaller text, scrollable */
+  .data-table {
+    font-size: 11px;
+  }
+  .data-table th, .data-table td {
+    padding: 6px 8px;
+  }
+
+  /* Comps/Explorer tabs: scrollable */
+  .explorer-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+  }
+  .explorer-tabs::-webkit-scrollbar { display: none; }
+  .explorer-tab {
+    white-space: nowrap;
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+
+  /* Date range bar: stack */
+  .date-range-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Welcome: smaller */
+  .welcome h2 { font-size: 20px; }
+  .welcome-pills { flex-wrap: wrap; justify-content: center; }
+
+  /* Chat chips: smaller, scrollable */
+  .chat-chips {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex-wrap: nowrap;
+    padding: 8px 12px;
+  }
+  .chat-chips::-webkit-scrollbar { display: none; }
+  .chip {
+    white-space: nowrap;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  /* Insights body: smaller text */
+  .insights-body {
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .insights-body h1 { font-size: 18px; }
+  .insights-body h2 { font-size: 15px; }
+
+  /* Confidence grid: scroll */
+  .confidence-grid {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Provenance badges: wrap */
+  .provenance {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  /* Web context card */
+  .web-context-card {
+    font-size: 12px;
+  }
+
+  /* Modal: full width on mobile */
+  .modal-box {
+    width: 95vw;
+    max-height: 85vh;
+  }
+}
+
+/* Small phones */
+@media (max-width: 480px) {
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+  .kpi-value {
+    font-size: 18px !important;
+  }
+  .header-top {
+    padding: 8px;
+  }
+  .search-bar input {
+    font-size: 14px; /* Prevent iOS zoom on focus */
+  }
+  .content {
+    padding: 8px;
+  }
+  .chart-card canvas {
+    min-height: 180px !important;
+    max-height: 220px !important;
+  }
+  .metrics-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .welcome-icon i { width: 40px; height: 40px; }
+  .welcome h2 { font-size: 18px; }
+  .welcome p { font-size: 13px; }
 }
 
 /* ═══════════════════════════════════════════════════════════════
