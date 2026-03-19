@@ -870,6 +870,42 @@ a:hover { color: var(--brand); }
 
 .welcome-note svg, .welcome-note i { width: 14px; height: 14px; color: var(--brand); }
 
+.welcome-chat {
+  display: flex;
+  gap: 8px;
+  max-width: 520px;
+  margin: 24px auto 16px;
+  width: 100%;
+}
+
+.welcome-chat input {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.welcome-chat input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.welcome-chat input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-bg);
+}
+
+.welcome-chat .send-btn {
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
 /* ═══════════════════════════════════════════════════════════════
    DASHBOARD
    ═══════════════════════════════════════════════════════════════ */
