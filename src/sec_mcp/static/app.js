@@ -2563,11 +2563,11 @@ async function fetchComps() {
   const sub = document.getElementById('comps-sub');
   if (!tbody) return;
 
-  // Show skeleton rows with spinners
+  // Show skeleton rows with spinners (10 columns)
   tbody.innerHTML = _compsTickers.map(tk =>
     '<tr id="comp-row-' + esc(tk) + '"><td><strong>' + esc(tk) + '</strong><br><span class="text-muted" style="font-size:11px">Loading...</span></td>' +
     '<td class="right"><div class="spinner" style="width:16px;height:16px;border-width:2px;margin:0 auto"></div></td>' +
-    '<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>'
+    '<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>'
   ).join('');
 
   let loaded = 0;
@@ -2583,23 +2583,36 @@ async function fetchComps() {
 
       const m = j.metrics || {};
       const name = j.company || '';
+
+      // Compute margins from raw metrics
+      const grossMargin = (m.gross_profit && m.revenue) ? (m.gross_profit / m.revenue * 100) : null;
+      const opMargin = (m.operating_income && m.revenue) ? (m.operating_income / m.revenue * 100) : null;
+      const netMargin = (m.net_income && m.revenue) ? (m.net_income / m.revenue * 100) : null;
+      const de = (m.long_term_debt != null && m.stockholders_equity) ? (m.long_term_debt / m.stockholders_equity) : null;
+
+      function pct(v) { return v != null ? v.toFixed(1) + '%' : '—'; }
+      function rat(v) { return v != null ? v.toFixed(2) + 'x' : '—'; }
+
       const row = document.getElementById('comp-row-' + tk);
       if (row) {
         row.innerHTML =
           '<td><strong>' + esc(tk) + '</strong>' + (name ? '<br><span class="text-muted" style="font-size:11px">' + esc(name) + '</span>' : '') + '</td>' +
           '<td class="right">' + fmtN(m.revenue) + '</td>' +
           '<td class="right">' + fmtN(m.net_income) + '</td>' +
-          '<td class="right">' + (m.gross_margin != null ? (m.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
-          '<td class="right">' + (m.net_margin != null ? (m.net_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
-          '<td class="right">' + fmtN(m.total_assets) + '</td>' +
-          '<td class="right">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>';
+          '<td class="right">' + fmtN(m.ebitda) + '</td>' +
+          '<td class="right">' + pct(grossMargin) + '</td>' +
+          '<td class="right">' + pct(opMargin) + '</td>' +
+          '<td class="right">' + pct(netMargin) + '</td>' +
+          '<td class="right">' + fmtN(m.free_cash_flow) + '</td>' +
+          '<td class="right">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>' +
+          '<td class="right">' + rat(de) + '</td>';
         row.style.animation = 'fadeIn 0.3s ease';
       }
     } catch (e) {
       const row = document.getElementById('comp-row-' + tk);
       if (row) {
         row.innerHTML = '<td><strong>' + esc(tk) + '</strong><br><span class="text-muted" style="font-size:11px;color:var(--danger)">Failed</span></td>' +
-          '<td colspan="6" class="text-muted" style="font-size:11px">' + esc(e.message) + '</td>';
+          '<td colspan="9" class="text-muted" style="font-size:11px">' + esc(e.message) + '</td>';
       }
     } finally {
       loaded++;

@@ -14,7 +14,7 @@
   <!-- Leaflet for geographic map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=38"/>
+  <link rel="stylesheet" href="/static/app.css?v=39"/>
 </head>
 <body>
 <div class="app">
@@ -320,22 +320,27 @@
             </div>
           </div>
           <div id="comps-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+          <div style="overflow-x:auto">
           <table class="data-table" id="comps-table">
             <thead>
               <tr>
                 <th>Ticker</th>
                 <th class="right">Revenue</th>
                 <th class="right">Net Income</th>
+                <th class="right">EBITDA</th>
                 <th class="right">Gross Margin</th>
+                <th class="right">Op Margin</th>
                 <th class="right">Net Margin</th>
-                <th class="right">Total Assets</th>
+                <th class="right">FCF</th>
                 <th class="right">EPS</th>
+                <th class="right">D/E</th>
               </tr>
             </thead>
             <tbody id="comps-tbody">
-              <tr><td colspan="7" class="text-center text-muted">Add tickers above to compare</td></tr>
+              <tr><td colspan="10" class="text-center text-muted">Add tickers above to compare</td></tr>
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 
@@ -554,6 +559,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=38"></script>
+<script src="/static/app.js?v=39"></script>
 </body>
 </html>
