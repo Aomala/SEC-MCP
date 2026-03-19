@@ -613,7 +613,9 @@ async function send(msg) {
     const spinner = document.createElement('div');
     spinner.className = 'loading-spinner';
     spinner.id = 'main-spinner';
-    spinner.innerHTML = '<div class="spinner"></div><p>Loading financial data...</p>';
+    spinner.innerHTML = '<div class="spinner"></div>' +
+      '<p class="loading-text">Extracting SEC filing data</p>' +
+      '<p class="loading-sub">Parsing XBRL from EDGAR — this takes a few seconds</p>';
     content.appendChild(spinner);
   }
   
