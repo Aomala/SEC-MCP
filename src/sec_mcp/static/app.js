@@ -615,8 +615,17 @@ async function send(msg) {
     spinner.id = 'main-spinner';
     spinner.innerHTML = '<div class="spinner"></div>' +
       '<p class="loading-text">Extracting SEC filing data</p>' +
-      '<p class="loading-sub">Parsing XBRL from EDGAR — this takes a few seconds</p>';
+      '<p class="loading-sub">Parsing XBRL from EDGAR</p>' +
+      '<p class="loading-timer" id="load-timer" style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);margin-top:4px">0.0s</p>';
     content.appendChild(spinner);
+    // Live timer
+    const _timerStart = Date.now();
+    const _timerInterval = setInterval(() => {
+      const el = document.getElementById('load-timer');
+      if (el) el.textContent = ((Date.now() - _timerStart) / 1000).toFixed(1) + 's';
+      else clearInterval(_timerInterval);
+    }, 100);
+    spinner._timerInterval = _timerInterval;
   }
   
   try {
@@ -630,9 +639,12 @@ async function send(msg) {
     
     const j = await r.json();
     
-    // Remove loading spinner
+    // Remove loading spinner + stop timer
     const spinner = document.getElementById('main-spinner');
-    if (spinner) spinner.remove();
+    if (spinner) {
+      if (spinner._timerInterval) clearInterval(spinner._timerInterval);
+      spinner.remove();
+    }
     
     if (j.type === 'error') {
       showError(j.message || 'Unknown error');
@@ -689,6 +701,18 @@ function handleResult(j) {
     
     // Fetch available filings for period dropdown
     if (tk) fetchAvail(tk);
+
+    // Pre-load comps peers in background (so comps tab is instant)
+    if (tk) {
+      fetch(API_BASE + '/api/peers/' + encodeURIComponent(tk))
+        .then(r => r.json())
+        .then(j => {
+          if (j.peers) {
+            _compsTickers = [tk, ...j.peers.filter(p => p !== tk)];
+          }
+        })
+        .catch(() => {});
+    }
     
     // Cache the data for fast period switching
     if (d.filing_info) {
@@ -701,9 +725,17 @@ function handleResult(j) {
     // Add chat message summarizing the load
     addChatMessage('assistant', buildLoadedSummary(d));
   } else if (j.tool === 'compare') {
-    // Switch to Comparables tab and render comparison table
-    switchView('comps');
-    renderComparison(j);
+    // Switch to Comparables tab — populate chips from resolved tickers and fetch progressively
+    const compareTickers = j.resolved_tickers || [];
+    if (compareTickers.length) {
+      _compsTickers = compareTickers;
+      switchView('comps');
+      renderCompsChips();
+      fetchComps();
+    } else {
+      switchView('comps');
+      renderComparison(j);
+    }
   } else if (j.tool === 'filing_text') {
     // Handle raw filing text
     renderFilingText(j);
@@ -2523,51 +2555,60 @@ function renderCompsChips() {
 }
 
 /**
- * Fetch comps data from API.
+ * Fetch comps data — progressive loading, one ticker at a time.
+ * Each row appears as soon as its data is ready (no waiting for all).
  */
 async function fetchComps() {
   const tbody = document.getElementById('comps-tbody');
+  const sub = document.getElementById('comps-sub');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner" style="margin:8px auto"></div></td></tr>';
 
-  try {
-    const r = await fetch(API_BASE + '/api/comps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tickers: _compsTickers }),
-    });
-    if (!r.ok) throw new Error('API error: ' + r.status);
-    const j = await r.json();
+  // Show skeleton rows with spinners
+  tbody.innerHTML = _compsTickers.map(tk =>
+    '<tr id="comp-row-' + esc(tk) + '"><td><strong>' + esc(tk) + '</strong><br><span class="text-muted" style="font-size:11px">Loading...</span></td>' +
+    '<td class="right"><div class="spinner" style="width:16px;height:16px;border-width:2px;margin:0 auto"></div></td>' +
+    '<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>'
+  ).join('');
 
-    const rawResults = j.results || j.comparisons || [];
-    if (!rawResults.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No comparison data returned</td></tr>';
-      return;
+  let loaded = 0;
+  const total = _compsTickers.length;
+  if (sub) sub.textContent = 'Loading 0/' + total + ' companies...';
+
+  // Fetch each ticker individually via the fast v1 endpoint (uses Supabase cache)
+  const promises = _compsTickers.map(async (tk) => {
+    try {
+      const r = await fetch(API_BASE + '/v1/financials/' + encodeURIComponent(tk));
+      if (!r.ok) throw new Error('API ' + r.status);
+      const j = await r.json();
+
+      const m = j.metrics || {};
+      const name = j.company || '';
+      const row = document.getElementById('comp-row-' + tk);
+      if (row) {
+        row.innerHTML =
+          '<td><strong>' + esc(tk) + '</strong>' + (name ? '<br><span class="text-muted" style="font-size:11px">' + esc(name) + '</span>' : '') + '</td>' +
+          '<td class="right">' + fmtN(m.revenue) + '</td>' +
+          '<td class="right">' + fmtN(m.net_income) + '</td>' +
+          '<td class="right">' + (m.gross_margin != null ? (m.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+          '<td class="right">' + (m.net_margin != null ? (m.net_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+          '<td class="right">' + fmtN(m.total_assets) + '</td>' +
+          '<td class="right">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>';
+        row.style.animation = 'fadeIn 0.3s ease';
+      }
+    } catch (e) {
+      const row = document.getElementById('comp-row-' + tk);
+      if (row) {
+        row.innerHTML = '<td><strong>' + esc(tk) + '</strong><br><span class="text-muted" style="font-size:11px;color:var(--danger)">Failed</span></td>' +
+          '<td colspan="6" class="text-muted" style="font-size:11px">' + esc(e.message) + '</td>';
+      }
+    } finally {
+      loaded++;
+      if (sub) sub.textContent = 'Loaded ' + loaded + '/' + total + ' companies' + (loaded < total ? '...' : '');
     }
+  });
 
-    let h = '';
-    for (const r of rawResults) {
-      // Backend wraps each result in {data: {...}, summary: "..."}
-      const d = r.data || r;
-      const m = d.metrics || {};
-      const ra = d.ratios || {};
-      const tk = d.ticker_or_cik || d.ticker || '';
-      const name = d.company_name || '';
-      h += '<tr>' +
-        '<td><strong>' + esc(tk) + '</strong>' + (name ? '<br><span class="text-muted" style="font-size:11px">' + esc(name) + '</span>' : '') + '</td>' +
-        '<td class="right">' + fmtN(m.revenue) + '</td>' +
-        '<td class="right">' + fmtN(m.net_income) + '</td>' +
-        '<td class="right">' + (m.gross_margin != null ? (m.gross_margin * 100).toFixed(1) + '%' : ra.gross_margin != null ? (ra.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
-        '<td class="right">' + (m.net_margin != null ? (m.net_margin * 100).toFixed(1) + '%' : ra.net_margin != null ? (ra.net_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
-        '<td class="right">' + fmtN(m.total_assets) + '</td>' +
-        '<td class="right">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>' +
-        '</tr>';
-    }
-    tbody.innerHTML = h;
-  } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">Error: ' + esc(e.message) + '</td></tr>';
-    console.error('[Comps Error]', e);
-  }
+  await Promise.all(promises);
+  if (sub) sub.textContent = total + ' companies compared';
 }
 
 // ========================================
