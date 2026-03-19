@@ -591,16 +591,25 @@ async function send(msg) {
   msg = msg ? msg.trim() : (document.getElementById('search-input')?.value?.trim() || '');
   if (!msg) return;
   
-  // Hide welcome panel, show dashboard
+  // Hide welcome panel
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.style.display = 'none';
-  
-  const dashboard = document.getElementById('dashboard');
-  if (dashboard) dashboard.style.display = 'block';
-  
+
+  // Detect compare queries early to show the right view
+  const isCompare = /\b(compare|vs|versus)\b/i.test(msg);
+
+  if (isCompare) {
+    switchView('comps');
+    const tbody = document.getElementById('comps-tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner" style="margin:8px auto"></div><p class="text-muted" style="margin-top:8px">Comparing companies — this may take 30-60 seconds...</p></td></tr>';
+  } else {
+    const dashboard = document.getElementById('dashboard');
+    if (dashboard) dashboard.style.display = 'block';
+  }
+
   // Show loading spinner
   const content = document.getElementById('content');
-  if (content) {
+  if (content && !isCompare) {
     const spinner = document.createElement('div');
     spinner.className = 'loading-spinner';
     spinner.id = 'main-spinner';
