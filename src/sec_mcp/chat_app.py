@@ -2053,7 +2053,14 @@ async def api_v1_cross_check(request: Request, ticker: str):
 
 @app.get("/docs")
 async def api_docs():
-    """Interactive API documentation page."""
+    """Interactive API documentation page — served from static file."""
+    docs_path = Path(__file__).parent / "static" / "docs.html"
+    return HTMLResponse(docs_path.read_text())
+
+
+@app.get("/docs-legacy")
+async def _api_docs_legacy():
+    """Legacy inline docs — kept for reference."""
     html = """<!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>

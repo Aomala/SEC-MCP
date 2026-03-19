@@ -1,9 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "mkdir -p public/static && cp src/sec_mcp/static/* public/static/ && cp src/sec_mcp/static/index.html public/index.html",
+  "buildCommand": "mkdir -p public/static && cp src/sec_mcp/static/* public/static/ && cp src/sec_mcp/static/index.html public/index.html && cp src/sec_mcp/static/docs.html public/docs.html",
   "outputDirectory": "public",
   "installCommand": "echo 'skip install'",
+  "rewrites": [
+    { "source": "/docs", "destination": "/docs.html" }
+  ],
   "headers": [
     {
       "source": "/static/(.*)",
