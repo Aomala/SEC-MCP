@@ -1187,7 +1187,13 @@ async def get_peers(ticker: str):
 
 @app.get("/api/geo-revenue/{ticker}")
 async def get_geo_revenue(ticker: str, period: str = "annual"):
-    """Geographic revenue breakdown — FMP first, then XBRL, then filing text."""
+    """Geographic revenue breakdown — SEC XBRL first (truth), filing text second, FMP fallback.
+
+    Priority:
+      1. XBRL segment data from SEC companyfacts (authoritative)
+      2. Filing text parsing from 10-K/20-F (rich detail in tables)
+      3. FMP API (structured but less detailed, may differ from filings)
+    """
     tk = ticker.upper()
 
     # Check Supabase cache
@@ -1196,13 +1202,47 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
     if cached:
         return cached
 
-    # 1. Try FMP API (best: structured, multi-year)
+    # 1. PRIMARY: XBRL segment data from SEC EDGAR (authoritative source)
+    try:
+        data = _curData if (_curData and (_curData.get("ticker_or_cik") or "").upper() == tk) else None
+        if not data:
+            data = extract_financials(tk, include_segments=True)
+        if data:
+            geo = (data.get("segments") or {}).get("geographic_segments", [])
+            if len(geo) >= 2:
+                result = {"ticker": tk, "geographic_segments": geo, "source": "sec_xbrl"}
+                supabase_cache.set_cached(tk, "geo_segments", result, period)
+                return result
+    except Exception as exc:
+        log.warning("XBRL geo extraction failed for %s: %s", tk, exc)
+
+    # 2. SECONDARY: Parse geographic tables from actual filing text
+    try:
+        from sec_mcp.financials import _parse_geo_from_filing_text
+
+        filing_result = _handle_filing_text(tk, section="financial_statements", form_type="10-K")
+        text = filing_result.get("text", "")
+        total_rev = None
+        try:
+            d = extract_financials(tk)
+            total_rev = (d or {}).get("metrics", {}).get("revenue")
+        except Exception:
+            pass
+
+        geo = _parse_geo_from_filing_text(text, total_revenue=total_rev)
+        if geo and len(geo) >= 2:
+            result = {"ticker": tk, "geographic_segments": geo, "source": "sec_filing_text"}
+            supabase_cache.set_cached(tk, "geo_segments", result, period)
+            return result
+    except Exception as e:
+        log.warning("Filing text geo parsing failed for %s: %s", tk, e)
+
+    # 3. FALLBACK: FMP API (may not match SEC filings exactly)
     try:
         from sec_mcp.fmp_client import get_geo_segments, is_available as fmp_ok
         if fmp_ok():
             fmp_data = get_geo_segments(tk, period=period)
             if fmp_data and fmp_data[0].get("segments"):
-                # Return current + historical
                 current = fmp_data[0]["segments"]
                 geo_formatted = [
                     {"segment": s["name"], "value": s["value"]}
@@ -1212,52 +1252,19 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
                     "ticker": tk,
                     "geographic_segments": geo_formatted,
                     "history": fmp_data,
-                    "source": "fmp",
+                    "source": "fmp_fallback",
                 }
                 supabase_cache.set_cached(tk, "geo_segments", result, period)
                 return result
     except Exception as exc:
-        log.debug("FMP geo failed for %s: %s", tk, exc)
-
-    # 2. Try XBRL segment data
-    try:
-        data = extract_financials(tk, include_segments=True)
-        if data:
-            geo = (data.get("segments") or {}).get("geographic_segments", [])
-            if len(geo) >= 2:
-                result = {"ticker": tk, "geographic_segments": geo, "source": "xbrl"}
-                supabase_cache.set_cached(tk, "geo_segments", result, period)
-                return result
-    except Exception as exc:
-        log.warning("XBRL geo extraction failed for %s: %s", tk, exc)
-
-    # 3. Fall back to filing text parsing
-    try:
-        from sec_mcp.financials import _parse_geo_from_filing_text
-
-        filing_result = _handle_filing_text(tk, section="financial_statements", form_type="10-K")
-        text = filing_result.get("text", "")
-        total_rev = None
-        try:
-            data = extract_financials(tk)
-            total_rev = (data or {}).get("metrics", {}).get("revenue")
-        except Exception as exc:
-            log.debug("Revenue fetch for geo scale failed for %s: %s", tk, exc)
-
-        geo = _parse_geo_from_filing_text(text, total_revenue=total_rev)
-        if geo:
-            result = {"ticker": tk, "geographic_segments": geo, "source": "filing_text"}
-            supabase_cache.set_cached(tk, "geo_segments", result, period)
-            return result
-    except Exception as e:
-        log.warning("Geo revenue parsing failed for %s: %s", tk, e)
+        log.debug("FMP geo fallback failed for %s: %s", tk, exc)
 
     return {"ticker": tk, "geographic_segments": [], "source": "none"}
 
 
 @app.get("/api/segments/{ticker}")
 async def get_segments(ticker: str, period: str = "annual"):
-    """Revenue segments — FMP first, then XBRL, then filing text."""
+    """Revenue segments — SEC XBRL first (truth), filing text second, FMP fallback."""
     tk = ticker.upper()
 
     # Check Supabase cache
@@ -1266,35 +1273,15 @@ async def get_segments(ticker: str, period: str = "annual"):
     if cached:
         return cached
 
-    # 1. Try FMP API (best: structured product/business segments)
+    # 1. PRIMARY: XBRL segment data from SEC EDGAR
     try:
-        from sec_mcp.fmp_client import get_product_segments, is_available as fmp_ok
-        if fmp_ok():
-            fmp_data = get_product_segments(tk, period=period)
-            if fmp_data and fmp_data[0].get("segments"):
-                current = fmp_data[0]["segments"]
-                seg_formatted = [
-                    {"segment": s["name"], "value": s["value"]}
-                    for s in current
-                ]
-                result = {
-                    "ticker": tk,
-                    "segments": seg_formatted,
-                    "history": fmp_data,
-                    "source": "fmp",
-                }
-                supabase_cache.set_cached(tk, "product_segments", result, period)
-                return result
-    except Exception as exc:
-        log.debug("FMP segments failed for %s: %s", tk, exc)
-
-    # 2. Try XBRL segments
-    try:
-        data = extract_financials(tk, include_segments=True)
+        data = _curData if (_curData and (_curData.get("ticker_or_cik") or "").upper() == tk) else None
+        if not data:
+            data = extract_financials(tk, include_segments=True)
         if data:
             segs = (data.get("segments") or {}).get("revenue_segments", [])
             if len(segs) >= 2:
-                result = {"ticker": tk, "segments": segs, "source": "xbrl"}
+                result = {"ticker": tk, "segments": segs, "source": "sec_xbrl"}
                 supabase_cache.set_cached(tk, "product_segments", result, period)
                 return result
     except Exception as exc:
@@ -1316,11 +1303,33 @@ async def get_segments(ticker: str, period: str = "annual"):
             text = filing_result.get("text", "")
             segs = _parse_segments_from_filing_text(text, total_revenue=total_rev)
             if len(segs) >= 2:
-                result = {"ticker": tk, "segments": segs, "source": "filing_text"}
+                result = {"ticker": tk, "segments": segs, "source": "sec_filing_text"}
                 supabase_cache.set_cached(tk, "product_segments", result, period)
                 return result
     except Exception as e:
         log.warning("Segment parsing failed for %s: %s", tk, e)
+
+    # 3. FALLBACK: FMP API
+    try:
+        from sec_mcp.fmp_client import get_product_segments, is_available as fmp_ok
+        if fmp_ok():
+            fmp_data = get_product_segments(tk, period=period)
+            if fmp_data and fmp_data[0].get("segments"):
+                current = fmp_data[0]["segments"]
+                seg_formatted = [
+                    {"segment": s["name"], "value": s["value"]}
+                    for s in current
+                ]
+                result = {
+                    "ticker": tk,
+                    "segments": seg_formatted,
+                    "history": fmp_data,
+                    "source": "fmp_fallback",
+                }
+                supabase_cache.set_cached(tk, "product_segments", result, period)
+                return result
+    except Exception as exc:
+        log.debug("FMP segment fallback failed for %s: %s", tk, exc)
 
     return {"ticker": tk, "segments": [], "source": "none"}
 

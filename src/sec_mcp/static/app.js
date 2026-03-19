@@ -1671,7 +1671,7 @@ function renderSegmentChart(d) {
           ctx.style.display = 'block';
           renderSegmentChart(d);
           const sub = document.getElementById('segments-subtitle');
-          const srcLabels = { fmp: 'Financial Modeling Prep', filing_text: '10-K filing text', xbrl: 'SEC XBRL' };
+          const srcLabels = { sec_xbrl: 'SEC EDGAR XBRL', sec_filing_text: 'SEC filing text', fmp_fallback: 'FMP (fallback)', fmp: 'FMP', filing_text: 'SEC filing text', xbrl: 'SEC XBRL' };
           if (sub) sub.textContent = 'Source: ' + (srcLabels[j.source] || j.source);
         } else {
           if (card) card.style.display = 'none';
@@ -3316,12 +3316,15 @@ function renderGeoMap(d) {
 function _renderGeoMapWithData(container, legendEl, geoSub, geoSegs, source) {
   if (geoSub) {
     const labels = {
-      'fmp': 'Revenue by region (Financial Modeling Prep)',
-      'xbrl': 'Revenue by region (XBRL)',
-      'filing_text': 'Revenue by region (from 10-K text)',
+      'sec_xbrl': 'Revenue by region — SEC EDGAR XBRL',
+      'sec_filing_text': 'Revenue by region — parsed from SEC filing',
+      'fmp_fallback': 'Revenue by region — FMP (API fallback)',
+      'fmp': 'Revenue by region — FMP (API)',
+      'xbrl': 'Revenue by region — SEC EDGAR XBRL',
+      'filing_text': 'Revenue by region — parsed from SEC filing',
       'none': 'No geographic breakdown available',
     };
-    geoSub.textContent = labels[source] || labels.xbrl;
+    geoSub.textContent = labels[source] || 'Revenue by region';
   }
 
   if (!geoSegs.length) {
