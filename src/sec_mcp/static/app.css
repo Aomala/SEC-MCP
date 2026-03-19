@@ -472,6 +472,7 @@ a:hover { color: var(--brand); }
   flex: 1;
   max-width: 480px;
   position: relative;
+  z-index: 999;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -525,11 +526,13 @@ a:hover { color: var(--brand); }
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: var(--shadow-lg);
-  z-index: 100;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+  z-index: 9999;
   max-height: 360px;
   overflow-y: auto;
   display: none;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
 .sr-item {
