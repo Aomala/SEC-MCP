@@ -2,33 +2,62 @@
   <!--
     Fineas.ai — Logo Mark
 
-    Concept: Rounded square mark with a stylized "F" constructed from
-    chart bars. The vertical stroke is a solid bar; the two horizontal
-    strokes are formed by three ascending data columns that step upward
-    to the right, implying growth and financial analysis.
+    Concept: A golden ratio spiral meets financial analysis.
+    An abstract eye/lens shape formed by two curved strokes —
+    representing insight and vision into financial data.
+    Inside: a sharp ascending arrow cutting through layered
+    data planes, symbolizing cutting through noise to find signal.
 
-    Palette: indigo #6366f1 primary, navy #0a0f1e background, white accent.
-    No gradients. Pure geometry. Scales from 16px to 512px.
+    The outer shape subtly echoes the SEC seal's circular form
+    while feeling modern and tech-forward.
+
+    Palette: deep navy bg, indigo-to-violet gradient strokes,
+    white arrow for clarity.
   -->
 
-  <!-- Background -->
-  <rect width="512" height="512" rx="96" fill="#0a0f1e"/>
+  <defs>
+    <linearGradient id="g1" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <linearGradient id="g3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0a0f1e"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
 
-  <!-- Vertical stroke of F -->
-  <rect x="112" y="96" width="56" height="320" rx="10" fill="#6366f1"/>
+  <!-- Background: rounded square with subtle gradient -->
+  <rect width="512" height="512" rx="108" fill="url(#g3)"/>
 
-  <!-- Top horizontal stroke of F: three stepped blocks ascending right -->
-  <rect x="192" y="96" width="72" height="48" rx="8" fill="#6366f1"/>
-  <rect x="280" y="96" width="72" height="48" rx="8" fill="#818cf8"/>
-  <rect x="368" y="96" width="48" height="48" rx="8" fill="#a5b4fc"/>
+  <!-- Outer ring: the "lens" / insight eye shape -->
+  <circle cx="256" cy="256" r="190" fill="none" stroke="url(#g1)" stroke-width="4" opacity="0.25"/>
+  <circle cx="256" cy="256" r="160" fill="none" stroke="url(#g1)" stroke-width="2" opacity="0.12"/>
 
-  <!-- Middle horizontal stroke of F: two blocks, shorter reach -->
-  <rect x="192" y="232" width="72" height="44" rx="8" fill="#6366f1"/>
-  <rect x="280" y="232" width="56" height="44" rx="8" fill="#818cf8"/>
+  <!-- Three data layers: horizontal planes at different depths -->
+  <line x1="100" y1="320" x2="412" y2="320" stroke="#6366f1" stroke-width="2" opacity="0.2" stroke-dasharray="8 6"/>
+  <line x1="100" y1="256" x2="412" y2="256" stroke="#6366f1" stroke-width="2" opacity="0.15" stroke-dasharray="8 6"/>
+  <line x1="100" y1="192" x2="412" y2="192" stroke="#6366f1" stroke-width="2" opacity="0.1" stroke-dasharray="8 6"/>
 
-  <!-- Ascending trend line from bottom-left to top-right -->
-  <polyline
-    points="192,384 272,296 336,328 400,192"
+  <!-- The core mark: stylized "F" as a bold, modern monogram -->
+  <!-- Vertical bar -->
+  <rect x="148" y="128" width="44" height="256" rx="6" fill="url(#g1)"/>
+
+  <!-- Top bar of F — extends right with a sharp angle cut -->
+  <polygon points="192,128 380,128 380,168 218,168 192,168" fill="url(#g1)"/>
+  <!-- Angled cut on the top bar's right end -->
+  <polygon points="350,128 380,128 380,168 360,168" fill="#8b5cf6"/>
+
+  <!-- Middle bar of F — shorter, with a forward-leaning angle -->
+  <polygon points="192,240 320,240 330,276 192,276" fill="url(#g2)"/>
+
+  <!-- The breakthrough arrow: shoots up-right through the F -->
+  <path
+    d="M 220,370 L 320,250 L 360,280 L 400,150"
     fill="none"
     stroke="#ffffff"
     stroke-width="10"
@@ -36,9 +65,16 @@
     stroke-linejoin="round"
   />
 
-  <!-- Data points on trend line -->
-  <circle cx="192" cy="384" r="8" fill="#ffffff"/>
-  <circle cx="272" cy="296" r="8" fill="#ffffff"/>
-  <circle cx="336" cy="328" r="8" fill="#ffffff"/>
-  <circle cx="400" cy="192" r="8" fill="#ffffff"/>
+  <!-- Arrow head -->
+  <polygon points="400,150 388,186 370,168" fill="#ffffff"/>
+
+  <!-- Glow dot at the peak -->
+  <circle cx="400" cy="150" r="6" fill="#ffffff"/>
+  <circle cx="400" cy="150" r="14" fill="#ffffff" opacity="0.15"/>
+  <circle cx="400" cy="150" r="24" fill="#ffffff" opacity="0.06"/>
+
+  <!-- Small data dots on the trend line for texture -->
+  <circle cx="220" cy="370" r="5" fill="#6366f1"/>
+  <circle cx="320" cy="250" r="5" fill="#818cf8"/>
+  <circle cx="360" cy="280" r="5" fill="#a5b4fc"/>
 </svg>
