@@ -2199,14 +2199,19 @@ function onFormSel() {
 /**
  * Handle period dropdown change: load specific filing.
  */
+let _loadFilingTimeout = null;
 function onPeriodSel() {
   const sel = document.getElementById('sel-period');
   if (!sel || !sel.value) return;
-  
-  const parts = sel.value.split('|');
-  if (parts.length === 2) {
-    loadFiling(parts[0], parts[1]);
-  }
+
+  // Debounce rapid changes (300ms)
+  clearTimeout(_loadFilingTimeout);
+  _loadFilingTimeout = setTimeout(() => {
+    const parts = sel.value.split('|');
+    if (parts.length === 2) {
+      loadFiling(parts[0], parts[1]);
+    }
+  }, 300);
 }
 
 /**
@@ -2225,17 +2230,11 @@ async function loadFiling(acc, ft) {
     return;
   }
   
-  // Show loading
-  const spinner = document.getElementById('main-spinner') || document.createElement('div');
-  if (!spinner.id) {
-    spinner.id = 'main-spinner';
-    spinner.className = 'loading-spinner';
-    spinner.innerHTML = '<div class="spinner"></div><p>Loading filing...</p>';
-    const content = document.getElementById('content');
-    if (content) content.appendChild(spinner);
-  } else {
-    spinner.style.display = 'block';
-  }
+  // Show loading indicator in the dashboard (lighter than full spinner)
+  const kpiGrid = document.getElementById('kpi-grid');
+  if (kpiGrid) kpiGrid.style.opacity = '0.4';
+  const revenueChart = document.getElementById('revenue-chart');
+  if (revenueChart) revenueChart.style.opacity = '0.4';
   
   try {
     const r = await fetch(API_BASE + '/api/load-filing', {
@@ -2252,21 +2251,25 @@ async function loadFiling(acc, ft) {
     
     const j = await r.json();
     
-    if (spinner) spinner.style.display = 'none';
-    
+    // Restore opacity
+    if (kpiGrid) kpiGrid.style.opacity = '1';
+    if (revenueChart) revenueChart.style.opacity = '1';
+
     if (j.data) {
       // Cache the data
       _dataCache[_tk + '|' + acc] = {
         data: j.data,
         summary: j.summary || '',
       };
-      
+
       // Update state and render
       _curData = j.data;
+      _fmpHistory = null; // Reset so chart reloads for new period
       renderDashboard(j.data);
     }
   } catch (e) {
-    if (spinner) spinner.style.display = 'none';
+    if (kpiGrid) kpiGrid.style.opacity = '1';
+    if (revenueChart) revenueChart.style.opacity = '1';
     showError('Error loading filing: ' + e.message);
     console.error('[Load Filing Error]', e);
   }

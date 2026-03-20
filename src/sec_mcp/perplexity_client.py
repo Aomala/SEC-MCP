@@ -56,6 +56,7 @@ _VALIDATION_PROMPT = (
 # Supabase client (lazy init, separate from supabase_cache module)
 _sb_client = None
 _sb_available: bool | None = None
+_quota_exhausted_until: float = 0  # Circuit breaker timestamp
 
 
 def _get_sb_client():
@@ -151,6 +152,11 @@ def _call(system: str, user_message: str) -> dict | None:
         log.debug("Perplexity API key not configured — skipping request")
         return None
 
+    # Circuit breaker: skip if we've hit quota recently (avoid 30s timeouts)
+    global _quota_exhausted_until
+    if _quota_exhausted_until and time.time() < _quota_exhausted_until:
+        return None
+
     try:
         resp = requests.post(
             _BASE,
@@ -173,7 +179,16 @@ def _call(system: str, user_message: str) -> dict | None:
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         citations = data.get("citations", [])
 
+        _quota_exhausted_until = 0  # Reset on success
         return {"content": content, "citations": citations}
+    except requests.exceptions.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code in (401, 429):
+            # Quota exhausted or rate limited — back off for 10 minutes
+            _quota_exhausted_until = time.time() + 600
+            log.warning("Perplexity quota exhausted — disabling for 10 min")
+        else:
+            log.warning("Perplexity API request failed: %s", exc)
+        return None
     except Exception as exc:
         log.warning("Perplexity API request failed: %s", exc)
         return None
