@@ -14,8 +14,9 @@
   <!-- Leaflet for geographic map -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg"/>
-  <link rel="stylesheet" href="/static/app.css?v=42"/>
+  <link rel="icon" type="image/png" href="/static/logo-32.png"/>
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
+  <link rel="stylesheet" href="/static/app.css?v=43"/>
 </head>
 <body>
 <div class="app">
@@ -23,15 +24,7 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-brand">
       <div class="brand-icon">
-        <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-          <defs><linearGradient id="bi" x1="0%" y1="100%" x2="100%" y2="0%"><stop offset="0%" stop-color="#4f46e5"/><stop offset="100%" stop-color="#8b5cf6"/></linearGradient></defs>
-          <rect width="32" height="32" rx="7" fill="#0a0f1e"/>
-          <rect x="7" y="6" width="4" height="20" rx="1" fill="url(#bi)"/>
-          <rect x="11" y="6" width="14" height="4" rx="1" fill="url(#bi)"/>
-          <rect x="11" y="14" width="10" height="3.5" rx="1" fill="#06b6d4"/>
-          <polyline points="13,24 18,16 21,18.5 25,9" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="25" cy="9" r="1.5" fill="#fff"/>
-        </svg>
+        <img src="/static/logo-64.png" alt="Fineas.ai" width="32" height="32" style="border-radius:50%"/>
       </div>
       <div class="brand-text">
         <span class="brand-name">Fineas</span>
@@ -132,7 +125,7 @@
     <div class="content" id="content">
       <!-- Welcome State -->
       <div class="welcome" id="welcome">
-        <div class="welcome-icon"><i data-lucide="trending-up"></i></div>
+        <div class="welcome-icon"><img src="/static/logo-256.png" alt="Fineas.ai" width="72" height="72" style="border-radius:50%"/></div>
         <h2>Financial Intelligence Platform</h2>
         <p>Search any public company — US domestic or foreign filer</p>
         <div class="welcome-pills">
@@ -473,7 +466,7 @@
   <aside class="chat-panel" id="chat-panel">
     <div class="chat-header">
       <div class="chat-brand">
-        <div class="chat-icon"><i data-lucide="zap"></i></div>
+        <div class="chat-icon"><img src="/static/logo-32.png" alt="" width="24" height="24" style="border-radius:50%"/></div>
         <div>
           <span class="chat-title">AI Analyst</span>
           <span class="chat-subtitle">Powered by Claude</span>
@@ -570,6 +563,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=42"></script>
+<script src="/static/app.js?v=43"></script>
 </body>
 </html>
