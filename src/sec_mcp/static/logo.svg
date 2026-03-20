@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Fineas.ai — Logo Mark
+
+    Concept: Rounded square mark with a stylized "F" constructed from
+    chart bars. The vertical stroke is a solid bar; the two horizontal
+    strokes are formed by three ascending data columns that step upward
+    to the right, implying growth and financial analysis.
+
+    Palette: indigo #6366f1 primary, navy #0a0f1e background, white accent.
+    No gradients. Pure geometry. Scales from 16px to 512px.
+  -->
+
+  <!-- Background -->
+  <rect width="512" height="512" rx="96" fill="#0a0f1e"/>
+
+  <!-- Vertical stroke of F -->
+  <rect x="112" y="96" width="56" height="320" rx="10" fill="#6366f1"/>
+
+  <!-- Top horizontal stroke of F: three stepped blocks ascending right -->
+  <rect x="192" y="96" width="72" height="48" rx="8" fill="#6366f1"/>
+  <rect x="280" y="96" width="72" height="48" rx="8" fill="#818cf8"/>
+  <rect x="368" y="96" width="48" height="48" rx="8" fill="#a5b4fc"/>
+
+  <!-- Middle horizontal stroke of F: two blocks, shorter reach -->
+  <rect x="192" y="232" width="72" height="44" rx="8" fill="#6366f1"/>
+  <rect x="280" y="232" width="56" height="44" rx="8" fill="#818cf8"/>
+
+  <!-- Ascending trend line from bottom-left to top-right -->
+  <polyline
+    points="192,384 272,296 336,328 400,192"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="10"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Data points on trend line -->
+  <circle cx="192" cy="384" r="8" fill="#ffffff"/>
+  <circle cx="272" cy="296" r="8" fill="#ffffff"/>
+  <circle cx="336" cy="328" r="8" fill="#ffffff"/>
+  <circle cx="400" cy="192" r="8" fill="#ffffff"/>
+</svg>
