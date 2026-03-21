@@ -1600,25 +1600,31 @@ function renderRevenueChart(d) {
     },
     options: {
       ...defaults,
-      layout: { padding: { top: 24 } },
+      layout: { padding: { top: 30, bottom: 4 } },
       plugins: {
         ...defaults.plugins,
         legend: {
           display: true,
-          labels: { color: CHART_COLORS.text, usePointStyle: true, pointStyle: 'rect', padding: 12, font: { size: 11 } }
+          position: 'bottom',
+          labels: { color: CHART_COLORS.text, usePointStyle: true, pointStyle: 'rect', padding: 16, font: { size: 11 } }
         },
         datalabels: {
-          display: true,
+          display: function(ctx) {
+            // Only show label on the last data point per dataset (latest period)
+            return ctx.dataIndex === ctx.dataset.data.length - 1;
+          },
           anchor: 'end',
           align: 'top',
-          offset: 2,
+          offset: 4,
           font: { size: 10, weight: 600, family: "'JetBrains Mono', monospace" },
           color: function(ctx) {
             return ctx.dataset.borderColor || CHART_COLORS.text;
           },
           formatter: function(v) {
             if (v == null || v === 0) return '';
-            return '$' + v.toFixed(1) + 'B';
+            const abs = Math.abs(v);
+            const sign = v < 0 ? '-' : '';
+            return sign + '$' + abs.toFixed(1) + 'B';
           },
         },
       },
