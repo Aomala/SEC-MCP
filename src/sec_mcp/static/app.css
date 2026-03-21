@@ -1406,6 +1406,45 @@ a:hover { color: var(--brand); }
   max-height: 450px;
 }
 
+/* 3-column compact overview */
+.overview-3col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+.ov-col {
+  min-width: 0;
+}
+
+.ov-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ov-col:not(:first-child) {
+  border-left: 1px solid var(--border-light);
+  padding-left: 16px;
+}
+
+@media (max-width: 900px) {
+  .overview-3col {
+    grid-template-columns: 1fr;
+  }
+  .ov-col:not(:first-child) {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid var(--border-light);
+    padding-top: 10px;
+  }
+}
+
 .overview-section {
   margin-bottom: 14px;
 }
@@ -1481,9 +1520,10 @@ a:hover { color: var(--brand); }
 .metric-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 10px 12px;
+  gap: 1px;
+  padding: 6px 8px;
   background: var(--bg-primary);
+  border-radius: 4px;
 }
 
 .metric-item .metric-label {

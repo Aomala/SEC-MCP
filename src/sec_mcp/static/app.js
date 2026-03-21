@@ -1389,61 +1389,73 @@ function renderCompanyOverview(d) {
   const netDebt = m.net_debt != null ? m.net_debt : ((m.long_term_debt != null || m.total_debt != null) && m.cash != null ? (m.total_debt || m.long_term_debt || 0) - m.cash : null);
   const interestCoverage = (m.operating_income != null && m.interest_expense != null && m.interest_expense !== 0) ? m.operating_income / Math.abs(m.interest_expense) : null;
 
-  // Build HTML — Bloomberg-style structured grid
-  let h = '';
-
-  // Business description (compact)
-  h += '<div class="overview-section">';
-  h += '<div class="overview-label">BUSINESS <span style="color:' + perfColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + perfLabel + '</span></div>';
-  h += '<p class="overview-text">' + esc(name) + ' — <strong>' + esc(sicDesc) + '</strong>';
-  h += ' (SIC ' + esc(sic) + ')';
-  if (m.revenue) {
-    h += ' — ' + fmtN(m.revenue) + ' revenue';
-    if (fi.filing_date && fi.filing_date.length >= 4) h += ' (' + fi.filing_date.substring(0, 4) + ')';
-  }
-  h += '</p></div>';
-
-  // Structured metrics grid — Bloomberg Terminal style
-  // Helper to build a metric cell
+  // Helpers
   function mCell(label, value) {
     if (value == null || value === '—') return '';
     const cls = typeof value === 'string' && value.startsWith('-') ? ' negative' : (typeof value === 'string' && value.startsWith('+') ? ' positive' : '');
     return '<div class="metric-item"><span class="metric-label">' + label + '</span><span class="metric-value' + cls + '">' + value + '</span></div>';
   }
-
-  // Key financials table
-  h += '<table class="data-table" style="margin:12px 0;font-size:12px">';
-  h += '<thead><tr><th>Metric</th><th class="right">Value</th><th class="right">YoY</th></tr></thead><tbody>';
-
   function mRow(label, val, priorVal) {
     if (val == null) return '';
     const fmtV = typeof val === 'number' ? (Math.abs(val) < 1 && val !== 0 ? (val * 100).toFixed(1) + '%' : fmtN(val)) : val;
-    let changeHtml = '—';
+    let chgHtml = '';
     if (priorVal != null && typeof val === 'number' && typeof priorVal === 'number' && priorVal !== 0) {
       const chg = ((val - priorVal) / Math.abs(priorVal)) * 100;
-      const color = chg >= 0 ? 'var(--success)' : 'var(--danger)';
-      changeHtml = '<span style="color:' + color + '">' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%</span>';
+      const c = chg >= 0 ? 'var(--success)' : 'var(--danger)';
+      chgHtml = '<span style="color:' + c + ';font-size:10px">' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%</span>';
     }
-    return '<tr><td>' + label + '</td><td class="right" style="font-family:var(--font-mono)">' + fmtV + '</td><td class="right">' + changeHtml + '</td></tr>';
+    return '<tr><td style="font-size:11px;padding:3px 6px">' + label + '</td><td class="right" style="font-family:var(--font-mono);font-size:11px;padding:3px 6px">' + fmtV + '</td><td class="right" style="padding:3px 6px">' + chgHtml + '</td></tr>';
   }
 
+  // Compute margins from raw data
+  const grossMargin = m.gross_profit && m.revenue ? (m.gross_profit / m.revenue * 100) : (r.gross_margin != null ? r.gross_margin * 100 : null);
+  const opMargin = m.operating_income && m.revenue ? (m.operating_income / m.revenue * 100) : null;
+  const netMarginPct = m.net_income && m.revenue ? (m.net_income / m.revenue * 100) : (r.net_margin != null ? r.net_margin * 100 : null);
+  const de = r.debt_to_equity != null ? r.debt_to_equity : (m.long_term_debt != null && m.stockholders_equity ? m.long_term_debt / m.stockholders_equity : null);
+  const roe = r.roe != null ? r.roe * 100 : null;
+
+  // 3-column compact layout: Description | Financials | Ratios + Health
+  let h = '<div class="overview-3col">';
+
+  // Column 1: Business summary
+  h += '<div class="ov-col">';
+  h += '<div class="ov-section-label">BUSINESS <span style="color:' + perfColor + '">' + perfLabel.toUpperCase() + '</span></div>';
+  h += '<p style="font-size:12px;color:var(--text-secondary);margin:4px 0 8px;line-height:1.5">' + esc(name) + ' — ' + esc(sicDesc) + '</p>';
+  h += '<table class="data-table" style="font-size:11px"><tbody>';
   h += mRow('Revenue', m.revenue, pm.revenue);
   h += mRow('Net Income', m.net_income, pm.net_income);
   h += mRow('EBITDA', m.ebitda, pm.ebitda);
-  h += mRow('Operating Income', m.operating_income, pm.operating_income);
-  h += mRow('EPS (Diluted)', eps, pm.eps_diluted);
-  h += mRow('Free Cash Flow', m.free_cash_flow, pm.free_cash_flow);
+  h += mRow('Op Income', m.operating_income, pm.operating_income);
+  h += mRow('EPS', eps, pm.eps_diluted);
+  h += mRow('FCF', m.free_cash_flow, pm.free_cash_flow);
   h += '</tbody></table>';
+  h += '</div>';
 
-  // Ratios grid
-  h += '<div class="metrics-grid" style="margin-top:8px">';
+  // Column 2: Margins & Profitability
+  h += '<div class="ov-col">';
+  h += '<div class="ov-section-label">PROFITABILITY</div>';
+  h += '<div class="metrics-grid" style="grid-template-columns:1fr 1fr;gap:6px">';
+  h += mCell('Gross Margin', grossMargin != null ? grossMargin.toFixed(1) + '%' : null);
+  h += mCell('Op Margin', opMargin != null ? opMargin.toFixed(1) + '%' : null);
+  h += mCell('Net Margin', netMarginPct != null ? netMarginPct.toFixed(1) + '%' : null);
+  h += mCell('ROE', roe != null ? roe.toFixed(1) + '%' : null);
+  h += mCell('Rev Growth', revGrowth != null ? (revGrowth >= 0 ? '+' : '') + revGrowth.toFixed(1) + '%' : null);
+  h += mCell('NI Growth', niGrowth != null ? (niGrowth >= 0 ? '+' : '') + niGrowth.toFixed(1) + '%' : null);
+  h += '</div>';
+  h += '</div>';
 
-  h += mCell('Gross Margin', m.gross_profit && m.revenue ? ((m.gross_profit / m.revenue) * 100).toFixed(1) + '%' : (r.gross_margin != null ? (r.gross_margin * 100).toFixed(1) + '%' : null));
-  h += mCell('Net Margin', m.net_income && m.revenue ? ((m.net_income / m.revenue) * 100).toFixed(1) + '%' : (r.net_margin != null ? (r.net_margin * 100).toFixed(1) + '%' : null));
-  h += mCell('ROE', r.roe != null ? (r.roe * 100).toFixed(1) + '%' : null);
-  h += mCell('D/E Ratio', r.debt_to_equity != null ? r.debt_to_equity.toFixed(2) + 'x' : (m.long_term_debt != null && m.stockholders_equity ? (m.long_term_debt / m.stockholders_equity).toFixed(2) + 'x' : null));
-  h += mCell('Interest Coverage', interestCoverage != null ? interestCoverage.toFixed(1) + 'x' : null);
+  // Column 3: Balance Sheet & Leverage
+  h += '<div class="ov-col">';
+  h += '<div class="ov-section-label">FINANCIAL HEALTH</div>';
+  h += '<div class="metrics-grid" style="grid-template-columns:1fr 1fr;gap:6px">';
+  h += mCell('D/E Ratio', de != null ? de.toFixed(2) + 'x' : null);
+  h += mCell('Current Ratio', r.current_ratio != null ? r.current_ratio.toFixed(2) + 'x' : null);
+  h += mCell('Int Coverage', interestCoverage != null ? interestCoverage.toFixed(1) + 'x' : null);
   h += mCell('Net Debt', netDebt != null ? fmtN(netDebt) : null);
+  h += mCell('Work Capital', workingCapital != null ? fmtN(workingCapital) : null);
+  h += mCell('Total Assets', m.total_assets != null ? fmtN(m.total_assets) : null);
+  h += '</div>';
+  h += '</div>';
 
   h += '</div>';
 
