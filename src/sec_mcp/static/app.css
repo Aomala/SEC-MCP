@@ -1370,11 +1370,40 @@ a:hover { color: var(--brand); }
 }
 
 /* ── Company Overview Card ── */
+/* Overview split: metrics left, segments right */
+.overview-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.overview-left {
+  overflow-y: auto;
+  max-height: 450px;
+}
+
+.overview-right {
+  border-left: 1px solid var(--border);
+  padding-left: 20px;
+}
+
+@media (max-width: 900px) {
+  .overview-split {
+    grid-template-columns: 1fr;
+  }
+  .overview-right {
+    border-left: none;
+    padding-left: 0;
+    border-top: 1px solid var(--border);
+    padding-top: 16px;
+  }
+}
+
 .company-overview {
   font-size: 13px;
   line-height: 1.6;
   overflow-y: auto;
-  max-height: 420px;
+  max-height: 450px;
 }
 
 .overview-section {

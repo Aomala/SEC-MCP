@@ -1411,27 +1411,39 @@ function renderCompanyOverview(d) {
     return '<div class="metric-item"><span class="metric-label">' + label + '</span><span class="metric-value' + cls + '">' + value + '</span></div>';
   }
 
-  h += '<div class="metrics-grid">';
+  // Key financials table
+  h += '<table class="data-table" style="margin:12px 0;font-size:12px">';
+  h += '<thead><tr><th>Metric</th><th class="right">Value</th><th class="right">YoY</th></tr></thead><tbody>';
 
-  // Row 1: Growth & Margins
-  h += mCell('Rev Growth', revGrowth != null ? (revGrowth >= 0 ? '+' : '') + revGrowth.toFixed(1) + '%' : null);
-  h += mCell('NI Growth', niGrowth != null ? (niGrowth >= 0 ? '+' : '') + niGrowth.toFixed(1) + '%' : null);
-  h += mCell('Gross Margin', r.gross_margin != null ? (r.gross_margin * 100).toFixed(1) + '%' : null);
+  function mRow(label, val, priorVal) {
+    if (val == null) return '';
+    const fmtV = typeof val === 'number' ? (Math.abs(val) < 1 && val !== 0 ? (val * 100).toFixed(1) + '%' : fmtN(val)) : val;
+    let changeHtml = '—';
+    if (priorVal != null && typeof val === 'number' && typeof priorVal === 'number' && priorVal !== 0) {
+      const chg = ((val - priorVal) / Math.abs(priorVal)) * 100;
+      const color = chg >= 0 ? 'var(--success)' : 'var(--danger)';
+      changeHtml = '<span style="color:' + color + '">' + (chg >= 0 ? '+' : '') + chg.toFixed(1) + '%</span>';
+    }
+    return '<tr><td>' + label + '</td><td class="right" style="font-family:var(--font-mono)">' + fmtV + '</td><td class="right">' + changeHtml + '</td></tr>';
+  }
 
-  // Row 2: Profitability
-  h += mCell('Net Margin', r.net_margin != null ? (r.net_margin * 100).toFixed(1) + '%' : null);
+  h += mRow('Revenue', m.revenue, pm.revenue);
+  h += mRow('Net Income', m.net_income, pm.net_income);
+  h += mRow('EBITDA', m.ebitda, pm.ebitda);
+  h += mRow('Operating Income', m.operating_income, pm.operating_income);
+  h += mRow('EPS (Diluted)', eps, pm.eps_diluted);
+  h += mRow('Free Cash Flow', m.free_cash_flow, pm.free_cash_flow);
+  h += '</tbody></table>';
+
+  // Ratios grid
+  h += '<div class="metrics-grid" style="margin-top:8px">';
+
+  h += mCell('Gross Margin', m.gross_profit && m.revenue ? ((m.gross_profit / m.revenue) * 100).toFixed(1) + '%' : (r.gross_margin != null ? (r.gross_margin * 100).toFixed(1) + '%' : null));
+  h += mCell('Net Margin', m.net_income && m.revenue ? ((m.net_income / m.revenue) * 100).toFixed(1) + '%' : (r.net_margin != null ? (r.net_margin * 100).toFixed(1) + '%' : null));
   h += mCell('ROE', r.roe != null ? (r.roe * 100).toFixed(1) + '%' : null);
-  h += mCell('EPS (Diluted)', eps != null ? '$' + eps.toFixed(2) : null);
-
-  // Row 3: Financial Health
-  h += mCell('Current Ratio', r.current_ratio != null ? r.current_ratio.toFixed(2) + 'x' : null);
-  h += mCell('D/E Ratio', r.debt_to_equity != null ? r.debt_to_equity.toFixed(2) + 'x' : null);
-  h += mCell('Free Cash Flow', m.free_cash_flow ? fmtN(m.free_cash_flow) : null);
-
-  // Row 4: Leverage & Capital
-  h += mCell('Net Debt', netDebt != null ? fmtN(netDebt) : null);
+  h += mCell('D/E Ratio', r.debt_to_equity != null ? r.debt_to_equity.toFixed(2) + 'x' : (m.long_term_debt != null && m.stockholders_equity ? (m.long_term_debt / m.stockholders_equity).toFixed(2) + 'x' : null));
   h += mCell('Interest Coverage', interestCoverage != null ? interestCoverage.toFixed(1) + 'x' : null);
-  h += mCell('Working Capital', workingCapital != null ? fmtN(workingCapital) : null);
+  h += mCell('Net Debt', netDebt != null ? fmtN(netDebt) : null);
 
   h += '</div>';
 

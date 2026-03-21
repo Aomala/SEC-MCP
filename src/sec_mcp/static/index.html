@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="icon" type="image/png" href="/static/logo-32.png"/>
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
-  <link rel="stylesheet" href="/static/app.css?v=44"/>
+  <link rel="stylesheet" href="/static/app.css?v=45"/>
 </head>
 <body>
 <div class="app">
@@ -175,7 +175,32 @@
           </div>
         </div>
 
-        <!-- Revenue Chart + Company Overview -->
+        <!-- Company Overview: Summary + Metrics + Segments -->
+        <div class="chart-card" id="company-overview-card">
+          <div class="card-header">
+            <div>
+              <h3 id="overview-title">Company Overview</h3>
+              <p class="card-subtitle" id="overview-subtitle">Business summary</p>
+            </div>
+          </div>
+            <div class="overview-split">
+            <div class="overview-left">
+              <div id="company-overview" class="company-overview">
+                <p class="text-muted" style="font-size:13px">Load a company to see overview</p>
+              </div>
+            </div>
+            <div class="overview-right">
+              <div class="card-header" style="padding:0 0 8px">
+                <h3 style="font-size:14px">Revenue Segments</h3>
+                <p class="card-subtitle" id="segments-subtitle">Breakdown</p>
+              </div>
+              <canvas id="segment-chart" height="200"></canvas>
+              <div id="segment-legend" class="segment-legend"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Revenue Chart + Margin Profile -->
         <div class="charts-row">
           <div class="chart-card wide">
             <div class="card-header">
@@ -185,29 +210,6 @@
               </div>
             </div>
             <canvas id="revenue-chart" height="280"></canvas>
-          </div>
-          <div class="chart-card" id="company-overview-card">
-            <div class="card-header">
-              <div>
-                <h3 id="overview-title">Company Overview</h3>
-                <p class="card-subtitle" id="overview-subtitle">Business summary</p>
-              </div>
-            </div>
-            <div id="company-overview" class="company-overview">
-              <p class="text-muted" style="font-size:13px">Load a company to see overview</p>
-            </div>
-          </div>
-        </div>
-
-        <!-- Segments + Margins -->
-        <div class="charts-row">
-          <div class="chart-card">
-            <div class="card-header">
-              <h3>Revenue Segments</h3>
-              <p class="card-subtitle" id="segments-subtitle">Breakdown</p>
-            </div>
-            <canvas id="segment-chart" height="280"></canvas>
-            <div id="segment-legend" class="segment-legend"></div>
           </div>
           <div class="chart-card">
             <div class="card-header">
@@ -669,6 +671,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=44"></script>
+<script src="/static/app.js?v=45"></script>
 </body>
 </html>
