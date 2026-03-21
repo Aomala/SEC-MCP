@@ -1153,13 +1153,41 @@ async def search_assets(q: str = "", limit: int = 12):
 
 @app.get("/api/cache/stats")
 async def cache_stats():
-    """Return cache statistics (memory + disk)."""
+    """Return cache statistics (memory + disk + Supabase)."""
     mem_entries = len(_result_cache)
+    sb_count = 0
+    try:
+        from sec_mcp.screener import get_cached_ticker_count
+        sb_count = get_cached_ticker_count()
+    except Exception:
+        pass
+    total_tickers = sum(len(v) for v in SECTOR_UNIVERSE.values())
     return {
         "memory": {"entries": mem_entries},
         "disk": disk_cache.stats(),
+        "supabase": {"cached_tickers": sb_count, "total_tickers": total_tickers,
+                     "coverage_pct": round(sb_count / max(total_tickers, 1) * 100, 1)},
         "tickers": disk_cache.list_tickers(),
     }
+
+
+@app.post("/api/cache/batch")
+async def trigger_batch_cache(bg: BackgroundTasks):
+    """Trigger background batch caching of all SECTOR_UNIVERSE tickers."""
+    import threading
+
+    def _run_batch():
+        try:
+            from sec_mcp.batch_cache import run
+            run(delay=0.5)
+        except Exception as exc:
+            log.exception("Batch cache failed: %s", exc)
+
+    threading.Thread(target=_run_batch, daemon=True).start()
+    total = sum(len(v) for v in SECTOR_UNIVERSE.values())
+    return {"status": "started", "total_tickers": total,
+            "message": f"Caching {total} tickers in background — check /api/cache/stats for progress"}
+
 
 @app.get("/api/peers/{ticker}")
 async def get_peers(ticker: str):
