@@ -1430,6 +1430,53 @@ async def get_comps(req: CompsRequest):
     return result
 
 
+class SnapshotRequest(BaseModel):
+    tickers: list[str]
+
+
+@app.post("/api/comps/snapshot")
+async def save_comps_snapshot(req: SnapshotRequest):
+    """Save a comparison snapshot to Supabase for quick recall."""
+    tickers = [t.strip().upper() for t in req.tickers if t.strip()]
+    if not tickers:
+        return {"saved": False}
+    try:
+        from sec_mcp import supabase_cache
+        client = supabase_cache._get_client()
+        if not client:
+            return {"saved": False, "reason": "Supabase not available"}
+
+        # Build snapshot data from cached financials
+        snapshot = {}
+        for tk in tickers:
+            cached = supabase_cache.get_cached(tk, "financials", "10-K|latest")
+            if cached and isinstance(cached, dict):
+                m = cached.get("metrics", {})
+                snapshot[tk] = {
+                    "company": cached.get("company_name", ""),
+                    "revenue": m.get("revenue"),
+                    "net_income": m.get("net_income"),
+                    "ebitda": m.get("ebitda"),
+                    "gross_profit": m.get("gross_profit"),
+                    "operating_income": m.get("operating_income"),
+                    "free_cash_flow": m.get("free_cash_flow"),
+                    "eps_diluted": m.get("eps_diluted"),
+                    "total_assets": m.get("total_assets"),
+                    "long_term_debt": m.get("long_term_debt"),
+                    "stockholders_equity": m.get("stockholders_equity"),
+                }
+
+        client.table("comparison_snapshots").insert({
+            "tickers": tickers,
+            "data": snapshot,
+        }).execute()
+
+        return {"saved": True, "tickers": tickers, "count": len(snapshot)}
+    except Exception as exc:
+        log.debug("Snapshot save failed: %s", exc)
+        return {"saved": False, "error": str(exc)}
+
+
 @app.delete("/api/cache/clear")
 async def cache_clear(ticker: str | None = None):
     """Clear disk cache. Optional ticker query param to clear just one company."""

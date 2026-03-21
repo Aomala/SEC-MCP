@@ -2676,6 +2676,13 @@ async function fetchComps() {
 
   await Promise.all(promises);
   if (sub) sub.textContent = total + ' companies compared';
+
+  // Save comparison snapshot to database for quick recall
+  fetch(API_BASE + '/api/comps/snapshot', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tickers: _compsTickers}),
+  }).catch(() => {});
 }
 
 // ========================================
