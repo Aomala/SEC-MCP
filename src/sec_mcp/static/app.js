@@ -405,7 +405,9 @@ function debSearch(val) {
         h += '<div class="sr-item" onclick="pickAsset(\'' + esc(x.ticker) + '\')" title="' + esc(x.name || '') + '">';
         h += '<span class="sr-ticker">' + esc(x.ticker) + '</span>';
         h += '<span class="sr-name">' + esc(x.name || '') + '</span>';
-        if (x.exchange) {
+        if (x.cached) {
+          h += '<span class="sr-exchange" style="color:var(--success);font-size:10px">CACHED</span>';
+        } else if (x.exchange) {
           h += '<span class="sr-exchange">' + esc(x.exchange) + '</span>';
         }
         h += '</div>';

@@ -1127,11 +1127,47 @@ async def load_specific_filing(req: LoadFilingRequest):
 
 @app.get("/api/search")
 async def search_assets(q: str = "", limit: int = 12):
-    """Search for companies by ticker or name. Returns ticker, CIK, name, and exchange."""
-    if len(q.strip()) < 1:
+    """Search for companies by ticker or name.
+
+    Checks Supabase company_directory first (instant, 8K+ companies),
+    then falls back to SEC EDGAR API if no matches.
+    """
+    query = q.strip()
+    if len(query) < 1:
         return {"results": []}
+
+    # 1. Try Supabase company_directory first (instant)
     try:
-        results = search_companies(q.strip())
+        from sec_mcp import supabase_cache
+        client = supabase_cache._get_client()
+        if client:
+            # Search by ticker (exact prefix) or name (ilike)
+            query_upper = query.upper()
+            sb_results = (
+                client.table("company_directory")
+                .select("cik, ticker, name, exchange, sic_description, cached, revenue")
+                .or_(f"ticker.ilike.{query_upper}%,name.ilike.%{query}%")
+                .order("revenue", desc=True, nulls_last=True)
+                .limit(limit)
+                .execute()
+            )
+            if sb_results.data and len(sb_results.data) >= 1:
+                return {"results": [
+                    {
+                        "ticker": r.get("ticker", ""),
+                        "cik": str(r.get("cik", "")).zfill(10),
+                        "name": r.get("name", ""),
+                        "exchange": r.get("exchange", ""),
+                        "cached": r.get("cached", False),
+                    }
+                    for r in sb_results.data
+                ], "source": "database"}
+    except Exception as exc:
+        log.debug("Supabase search failed, falling back to SEC: %s", exc)
+
+    # 2. Fall back to SEC EDGAR API
+    try:
+        results = search_companies(query)
     except Exception as exc:
         log.warning("Search failed: %s", exc)
         return {"results": []}
@@ -1148,7 +1184,7 @@ async def search_assets(q: str = "", limit: int = 12):
             })
         if len(deduped) >= limit:
             break
-    return {"results": deduped}
+    return {"results": deduped, "source": "sec_edgar"}
 
 
 @app.get("/api/cache/stats")
