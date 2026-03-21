@@ -73,9 +73,13 @@ app.add_middleware(
 )
 
 
+# ── Hot tickers for pre-warming cache ──
+_HOT_TICKERS = ["AAPL", "MSFT", "GOOG", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "JNJ"]
+
+
 @app.on_event("startup")
 async def _startup():
-    """Non-blocking startup: init DB connection in background thread."""
+    """Non-blocking startup: init DB connection + pre-warm popular tickers."""
     import threading
 
     def _warmup():
@@ -85,8 +89,36 @@ async def _startup():
         except Exception as exc:
             log.warning("DB warmup failed (non-fatal): %s", exc)
 
+    def _prewarm_cache():
+        """Pre-warm the top 10 most-searched tickers if not already cached."""
+        from sec_mcp import supabase_cache
+        try:
+            for ticker in _HOT_TICKERS:
+                # Check if already cached in Supabase
+                cached = supabase_cache.get_cached(ticker, "financials", "10-K|latest")
+                if cached and isinstance(cached, dict) and cached.get("metrics"):
+                    log.debug("Pre-warm: %s already cached", ticker)
+                    continue
+                # Not cached — extract and cache in background
+                try:
+                    data = extract_financials(
+                        ticker, include_statements=True, include_segments=True,
+                    )
+                    if data and data.get("metrics"):
+                        supabase_cache.set_cached(ticker, "financials", data, "10-K|latest")
+                        acc = (data.get("filing_info") or {}).get("accession_number", "prewarm")
+                        summary = generate_local_summary(data)
+                        _rcache_put(ticker, acc, data, summary)
+                        log.info("Pre-warm: cached %s", ticker)
+                except Exception as exc:
+                    log.debug("Pre-warm: %s failed: %s", ticker, exc)
+            log.info("Pre-warm complete (%d tickers)", len(_HOT_TICKERS))
+        except Exception as exc:
+            log.warning("Pre-warm failed (non-fatal): %s", exc)
+
     threading.Thread(target=_warmup, daemon=True).start()
-    log.info("SEC Terminal ready (DB warming up in background)")
+    threading.Thread(target=_prewarm_cache, daemon=True).start()
+    log.info("SEC Terminal ready (DB + cache warming up in background)")
 
 # Serve static assets (CSS, JS)
 _STATIC_DIR = Path(__file__).parent / "static"
@@ -446,44 +478,14 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
         else:
             summary = "No data available."
 
-    # ── Data provenance: cross-validate SEC data with external sources ──
+    # ── Data provenance ──
+    # Polygon cross-check and Perplexity news are now DEFERRED to /api/enrich/{ticker}
+    # to avoid 5-30s delays on initial load. The frontend calls enrich after rendering.
     sources = {"sec_edgar": True, "polygon_validated": False, "web_context": None, "web_citations": []}
-    cross_check_results = {}
-
-    # Polygon.io cross-check (non-blocking, cached in Supabase)
-    if data and data.get("metrics"):
-        try:
-            from sec_mcp.polygon_client import cross_check, is_available as poly_avail
-            if poly_avail():
-                # Check Supabase for cached cross-check
-                cached_xcheck = supabase_cache.get_cached(ticker.upper(), "cross_check", period_key)
-                if cached_xcheck:
-                    cross_check_results = cached_xcheck
-                    sources["polygon_validated"] = True
-                else:
-                    validation = cross_check(ticker.upper(), data["metrics"])
-                    if validation:
-                        sources["polygon_validated"] = True
-                        cross_check_results = validation
-                        # Cache cross-check results (24h TTL via supabase_cache defaults)
-                        supabase_cache.set_cached(ticker.upper(), "cross_check", validation, period_key)
-        except Exception as exc:
-            log.debug("Polygon cross-check failed for %s: %s", ticker, exc)
-
-    # Perplexity web context (non-blocking, already cached by perplexity_client)
-    try:
-        from sec_mcp.perplexity_client import search_financial_news, is_available as pplx_avail
-        if pplx_avail():
-            news = search_financial_news(ticker.upper())
-            if news and news.get("content"):
-                sources["web_context"] = news["content"][:3000]
-                sources["web_citations"] = news.get("citations", [])[:8]
-    except Exception as exc:
-        log.debug("Perplexity news fetch failed for %s: %s", ticker, exc)
 
     result = {"tool": "financials", "data": data, "summary": summary}
     result["sources"] = sources
-    result["cross_check"] = cross_check_results
+    result["cross_check"] = {}
     return result
 
 
@@ -1969,6 +1971,228 @@ async def cross_check_ticker(ticker: str):
     except Exception as e:
         log.exception("Cross-check failed for %s", ticker)
         return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Data export endpoints (CSV / JSON)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/export/{ticker}/csv")
+async def export_csv(ticker: str, year: int | None = None, form_type: str = "10-K"):
+    """Export financial data as CSV download."""
+    from starlette.responses import StreamingResponse
+    import io
+    import csv
+
+    result = _handle_financials(ticker.upper(), year, form_type)
+    data = result.get("data") or {}
+    metrics = data.get("metrics", {})
+    prior = data.get("prior_metrics", {})
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["metric_name", "current_value", "prior_value", "change_pct"])
+
+    for key, val in metrics.items():
+        if val is None:
+            continue
+        prior_val = prior.get(key)
+        change = None
+        if prior_val and prior_val != 0:
+            try:
+                change = round(((val - prior_val) / abs(prior_val)) * 100, 2)
+            except (TypeError, ZeroDivisionError):
+                pass
+        writer.writerow([key, val, prior_val, change])
+
+    # Add ratios
+    ratios = data.get("ratios", {})
+    for key, val in ratios.items():
+        if val is not None:
+            writer.writerow([f"ratio_{key}", val, None, None])
+
+    # Add income statement rows
+    for row in data.get("income_statement", []):
+        label = row.get("label", "")
+        # Get the first non-metadata value
+        vals = {k: v for k, v in row.items()
+                if k not in ("label", "concept", "standard_concept", "level",
+                             "is_abstract", "is_total", "abstract", "units", "decimals")
+                and v is not None}
+        if vals:
+            first_val = list(vals.values())[0]
+            second_val = list(vals.values())[1] if len(vals) > 1 else None
+            writer.writerow([f"is_{label}", first_val, second_val, None])
+
+    # Add balance sheet rows
+    for row in data.get("balance_sheet", []):
+        label = row.get("label", "")
+        vals = {k: v for k, v in row.items()
+                if k not in ("label", "concept", "standard_concept", "level",
+                             "is_abstract", "is_total", "abstract", "units", "decimals")
+                and v is not None}
+        if vals:
+            first_val = list(vals.values())[0]
+            second_val = list(vals.values())[1] if len(vals) > 1 else None
+            writer.writerow([f"bs_{label}", first_val, second_val, None])
+
+    buf.seek(0)
+    company = data.get("company_name", ticker.upper())
+    filename = f"{ticker.upper()}_{company.replace(' ', '_')}_financials.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/export/{ticker}/json")
+async def export_json(ticker: str, year: int | None = None, form_type: str = "10-K"):
+    """Export full financial data as downloadable JSON."""
+    from starlette.responses import StreamingResponse
+    import io
+    import json as json_mod
+
+    result = _handle_financials(ticker.upper(), year, form_type)
+    data = result.get("data") or {}
+
+    export = {
+        "ticker": ticker.upper(),
+        "company": data.get("company_name"),
+        "filing_info": data.get("filing_info"),
+        "metrics": data.get("metrics", {}),
+        "ratios": data.get("ratios", {}),
+        "prior_metrics": data.get("prior_metrics", {}),
+        "income_statement": data.get("income_statement", []),
+        "balance_sheet": data.get("balance_sheet", []),
+        "cash_flow_statement": data.get("cash_flow_statement", []),
+        "segments": data.get("segments", {}),
+        "summary": result.get("summary"),
+    }
+
+    buf = io.StringIO()
+    json_mod.dump(export, buf, indent=2, default=str)
+    buf.seek(0)
+
+    company = data.get("company_name", ticker.upper())
+    filename = f"{ticker.upper()}_{company.replace(' ', '_')}_financials.json"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Lazy enrichment endpoint (Polygon + Perplexity, called after dashboard renders)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/enrich/{ticker}")
+async def enrich_ticker(ticker: str, year: int | None = None, form_type: str = "10-K"):
+    """Lazy enrichment: Polygon cross-check + Perplexity news.
+
+    Called AFTER the dashboard renders with SEC data. This removes 5-30s
+    from the initial company load by deferring external API calls.
+    """
+    from sec_mcp import supabase_cache
+
+    tk = ticker.upper()
+    period_key = f"{form_type}|{year or 'latest'}"
+    sources = {"polygon_validated": False, "web_context": None, "web_citations": []}
+    cross_check_results = {}
+
+    # Get SEC metrics from cache for cross-check input
+    sec_metrics = {}
+    sb_cached = supabase_cache.get_cached(tk, "financials", period_key)
+    if sb_cached and isinstance(sb_cached, dict):
+        sec_metrics = sb_cached.get("metrics", {})
+
+    # If no cached metrics, try memory cache
+    if not sec_metrics:
+        for key, entry in _result_cache.items():
+            if key.startswith(tk + "|") and (time.time() - entry["ts"]) < _RESULT_CACHE_TTL:
+                sec_metrics = (entry.get("data") or {}).get("metrics", {})
+                break
+
+    # Polygon.io cross-check
+    if sec_metrics:
+        try:
+            from sec_mcp.polygon_client import cross_check, is_available as poly_avail
+            if poly_avail():
+                cached_xcheck = supabase_cache.get_cached(tk, "cross_check", period_key)
+                if cached_xcheck:
+                    cross_check_results = cached_xcheck
+                    sources["polygon_validated"] = True
+                else:
+                    validation = cross_check(tk, sec_metrics)
+                    if validation:
+                        sources["polygon_validated"] = True
+                        cross_check_results = validation
+                        supabase_cache.set_cached(tk, "cross_check", validation, period_key)
+        except Exception as exc:
+            log.debug("Enrich: Polygon cross-check failed for %s: %s", tk, exc)
+
+    # Perplexity web context
+    try:
+        from sec_mcp.perplexity_client import search_financial_news, is_available as pplx_avail
+        if pplx_avail():
+            news = search_financial_news(tk)
+            if news and news.get("content"):
+                sources["web_context"] = news["content"][:3000]
+                sources["web_citations"] = news.get("citations", [])[:8]
+    except Exception as exc:
+        log.debug("Enrich: Perplexity news failed for %s: %s", tk, exc)
+
+    return {
+        "ticker": tk,
+        "sources": sources,
+        "cross_check": cross_check_results,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Stock screener endpoint
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/screener")
+async def run_screener(request: Request):
+    """Screen companies from SECTOR_UNIVERSE by financial metrics."""
+    from sec_mcp.screener import screen, get_available_sectors, get_cached_ticker_count
+
+    body = await request.json()
+    filters = body.get("filters", {})
+    limit = body.get("limit", 50)
+
+    results = screen(filters, limit=limit)
+    return {
+        "matches": results,
+        "count": len(results),
+        "sectors": get_available_sectors(),
+        "cached_tickers": get_cached_ticker_count(),
+    }
+
+
+@app.get("/api/insider/{ticker}")
+async def get_insider_data(ticker: str):
+    """Get insider trading data from SEC Form 4 filings."""
+    try:
+        from sec_mcp.insider_tracker import get_insider_transactions, get_insider_summary
+        transactions = get_insider_transactions(ticker.upper(), limit=15)
+        summary = get_insider_summary(ticker.upper())
+        return {"ticker": ticker.upper(), "transactions": transactions, "summary": summary}
+    except Exception as e:
+        log.exception("Insider data failed for %s", ticker)
+        return {"ticker": ticker.upper(), "transactions": [], "summary": None, "error": str(e)}
+
+
+@app.get("/api/screener/sectors")
+async def screener_sectors():
+    """Return available sectors for the screener."""
+    from sec_mcp.screener import get_available_sectors, get_cached_ticker_count
+    return {
+        "sectors": get_available_sectors(),
+        "cached_tickers": get_cached_ticker_count(),
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════

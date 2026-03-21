@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="icon" type="image/png" href="/static/logo-32.png"/>
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
-  <link rel="stylesheet" href="/static/app.css?v=43"/>
+  <link rel="stylesheet" href="/static/app.css?v=44"/>
 </head>
 <body>
 <div class="app">
@@ -46,6 +46,9 @@
       </a>
       <a href="#" class="nav-item" data-view="insights">
         <i data-lucide="zap"></i> AI Insights
+      </a>
+      <a href="#" class="nav-item" data-view="screener">
+        <i data-lucide="filter"></i> Screener
       </a>
       <a href="/docs" class="nav-item" target="_blank">
         <i data-lucide="code"></i> API Docs
@@ -89,7 +92,7 @@
         </div>
         <div class="header-actions">
           <button class="icon-btn" onclick="refreshData()" title="Refresh"><i data-lucide="refresh-cw"></i></button>
-          <button class="icon-btn" onclick="exportData()" title="Export"><i data-lucide="download"></i></button>
+          <button class="icon-btn" onclick="showExportMenu()" title="Export"><i data-lucide="download"></i></button>
           <button class="icon-btn" id="chat-toggle" onclick="toggleChat()" title="AI Analyst">
             <i data-lucide="message-square"></i>
           </button>
@@ -102,6 +105,7 @@
           <button class="view-tab" data-view="comps"><i data-lucide="git-compare"></i> Comparables</button>
           <button class="view-tab" data-view="filings"><i data-lucide="book-open"></i> 10-K Explorer</button>
           <button class="view-tab" data-view="insights"><i data-lucide="zap"></i> AI Insights</button>
+          <button class="view-tab" data-view="screener"><i data-lucide="filter"></i> Screener</button>
         </div>
         <div class="header-controls">
           <div class="toggle-group">
@@ -246,6 +250,29 @@
               </tr>
             </thead>
             <tbody id="peer-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Insider Trading -->
+        <div class="chart-card" id="insider-card" style="display:none">
+          <div class="card-header">
+            <div>
+              <h3>Insider Trading</h3>
+              <p class="card-subtitle" id="insider-sub">Recent Form 4 filings</p>
+            </div>
+          </div>
+          <table class="data-table" id="insider-table">
+            <thead>
+              <tr>
+                <th>Insider</th>
+                <th>Title</th>
+                <th class="right">Type</th>
+                <th class="right">Shares</th>
+                <th class="right">Value</th>
+                <th class="right">Date</th>
+              </tr>
+            </thead>
+            <tbody id="insider-tbody"></tbody>
           </table>
         </div>
 
@@ -459,6 +486,85 @@
           </div>
         </div>
       </div>
+
+      <!-- ═══ SCREENER VIEW ═══ -->
+      <div class="view-panel" id="panel-screener" style="display:none">
+        <div class="chart-card">
+          <div class="card-header">
+            <div>
+              <h3>Stock Screener</h3>
+              <p class="card-subtitle" id="screener-sub">Filter by financial metrics</p>
+            </div>
+            <button class="send-btn" style="padding:6px 12px;font-size:12px" onclick="runScreener()">Screen</button>
+          </div>
+          <div class="screener-filters" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:16px">
+            <div>
+              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Min Revenue</label>
+              <select id="scr-rev-min" class="sel" style="width:100%">
+                <option value="">Any</option>
+                <option value="1000000000">$1B+</option>
+                <option value="10000000000">$10B+</option>
+                <option value="50000000000">$50B+</option>
+                <option value="100000000000">$100B+</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Min Gross Margin</label>
+              <select id="scr-gm-min" class="sel" style="width:100%">
+                <option value="">Any</option>
+                <option value="0.2">20%+</option>
+                <option value="0.3">30%+</option>
+                <option value="0.5">50%+</option>
+                <option value="0.7">70%+</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Min Net Margin</label>
+              <select id="scr-nm-min" class="sel" style="width:100%">
+                <option value="">Any</option>
+                <option value="0.05">5%+</option>
+                <option value="0.1">10%+</option>
+                <option value="0.2">20%+</option>
+                <option value="0.3">30%+</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Max D/E Ratio</label>
+              <select id="scr-de-max" class="sel" style="width:100%">
+                <option value="">Any</option>
+                <option value="0.5">&lt; 0.5x</option>
+                <option value="1">&lt; 1x</option>
+                <option value="2">&lt; 2x</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Sector</label>
+              <select id="scr-sector" class="sel" style="width:100%">
+                <option value="">All Sectors</option>
+              </select>
+            </div>
+          </div>
+          <div style="overflow-x:auto">
+          <table class="data-table" id="screener-table">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th class="right">Revenue</th>
+                <th class="right">Net Income</th>
+                <th class="right">Gross Margin</th>
+                <th class="right">Net Margin</th>
+                <th class="right">EPS</th>
+                <th class="right">D/E</th>
+                <th>Sector</th>
+              </tr>
+            </thead>
+            <tbody id="screener-tbody">
+              <tr><td colspan="8" class="text-center text-muted">Set filters and click Screen</td></tr>
+            </tbody>
+          </table>
+          </div>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -563,6 +669,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=43"></script>
+<script src="/static/app.js?v=44"></script>
 </body>
 </html>

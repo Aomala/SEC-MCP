@@ -120,6 +120,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadResearchFolders();
   initResearchQueryClicks();
 
+  // Load screener sector options
+  loadScreenerSectors();
+
   // Log initialization complete
   console.log('[Fineas.ai] Application initialized');
 });
@@ -698,7 +701,28 @@ function handleResult(j) {
     
     // Render all dashboard components
     renderDashboard(d);
-    
+
+    // Lazy enrichment: Polygon + Perplexity (non-blocking, updates badges after render)
+    if (tk) {
+      fetch(API_BASE + '/api/enrich/' + encodeURIComponent(tk))
+        .then(r => r.json())
+        .then(enrichment => {
+          if (enrichment.cross_check) {
+            _curData._crossCheck = enrichment.cross_check;
+            // Re-render KPIs with verification badges
+            const m = _curData.metrics || {};
+            const r = _curData.ratios || {};
+            const pm = _curData.prior_metrics || {};
+            renderKPIs(m, r, pm, enrichment.cross_check);
+          }
+          if (enrichment.sources?.web_context) {
+            _curData._sources = enrichment.sources;
+            renderWebContext(_curData);
+          }
+        })
+        .catch(() => {}); // Non-blocking
+    }
+
     // Fetch available filings for period dropdown
     if (tk) fetchAvail(tk);
 
@@ -1033,6 +1057,9 @@ function renderDashboard(d) {
 
   // 6. Render financial statement preview
   renderStatementPreview(d);
+
+  // 7. Load insider trading data
+  loadInsiderData(d.ticker_or_cik || _tk);
 }
 
 /**
@@ -3920,6 +3947,135 @@ function refreshData() {
   } else {
     showError('No ticker selected');
   }
+}
+
+// ============================================================
+// EXPORT MENU
+// ============================================================
+
+function showExportMenu() {
+  if (!_tk) { showError('Load a company first'); return; }
+  const modal = document.getElementById('modal');
+  const title = document.getElementById('m-title');
+  const body = document.getElementById('m-body');
+  if (!modal || !title || !body) return;
+  title.textContent = 'Export ' + _tk;
+  body.innerHTML =
+    '<div style="display:flex;flex-direction:column;gap:12px;padding:8px 0">' +
+    '<a href="' + API_BASE + '/api/export/' + encodeURIComponent(_tk) + '/csv" class="send-btn" style="text-decoration:none;text-align:center;padding:12px">Download CSV</a>' +
+    '<a href="' + API_BASE + '/api/export/' + encodeURIComponent(_tk) + '/json" class="send-btn" style="text-decoration:none;text-align:center;padding:12px;background:var(--bg-tertiary)">Download JSON</a>' +
+    '</div>';
+  modal.style.display = 'flex';
+}
+
+// ============================================================
+// INSIDER TRADING
+// ============================================================
+
+function loadInsiderData(ticker) {
+  const card = document.getElementById('insider-card');
+  const tbody = document.getElementById('insider-tbody');
+  const sub = document.getElementById('insider-sub');
+  if (!card || !tbody) return;
+
+  fetch(API_BASE + '/api/insider/' + encodeURIComponent(ticker))
+    .then(r => r.json())
+    .then(j => {
+      const txns = j.transactions || [];
+      if (!txns.length) { card.style.display = 'none'; return; }
+
+      card.style.display = 'block';
+      if (sub && j.summary) {
+        const s = j.summary;
+        sub.textContent = s.net_insider_sentiment + ' — ' + s.buys_90d + ' buys, ' + s.sells_90d + ' sells (90d)';
+      }
+
+      tbody.innerHTML = txns.slice(0, 10).map(t =>
+        '<tr>' +
+        '<td>' + esc(t.insider_name || '') + '</td>' +
+        '<td class="text-muted" style="font-size:11px">' + esc(t.title || '') + '</td>' +
+        '<td class="right"><span style="color:' + (t.transaction_type === 'Purchase' ? 'var(--success)' : 'var(--danger)') + '">' + esc(t.transaction_type || '') + '</span></td>' +
+        '<td class="right">' + (t.shares ? t.shares.toLocaleString() : '—') + '</td>' +
+        '<td class="right">' + (t.total_value ? fmtN(t.total_value) : '—') + '</td>' +
+        '<td class="right" style="font-size:11px">' + esc(t.transaction_date || '') + '</td>' +
+        '</tr>'
+      ).join('');
+    })
+    .catch(() => { if (card) card.style.display = 'none'; });
+}
+
+// ============================================================
+// STOCK SCREENER
+// ============================================================
+
+async function runScreener() {
+  const tbody = document.getElementById('screener-tbody');
+  const sub = document.getElementById('screener-sub');
+  if (!tbody) return;
+
+  tbody.innerHTML = '<tr><td colspan="8" class="text-center"><div class="spinner" style="margin:8px auto"></div></td></tr>';
+
+  const filters = {};
+  const revMin = document.getElementById('scr-rev-min')?.value;
+  const gmMin = document.getElementById('scr-gm-min')?.value;
+  const nmMin = document.getElementById('scr-nm-min')?.value;
+  const deMax = document.getElementById('scr-de-max')?.value;
+  const sector = document.getElementById('scr-sector')?.value;
+
+  if (revMin) filters.revenue_min = parseFloat(revMin);
+  if (gmMin) filters.gross_margin_min = parseFloat(gmMin);
+  if (nmMin) filters.net_margin_min = parseFloat(nmMin);
+  if (deMax) filters.de_ratio_max = parseFloat(deMax);
+  if (sector) filters.sector = sector;
+
+  try {
+    const r = await fetch(API_BASE + '/api/screener', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({filters}),
+    });
+    const j = await r.json();
+    const results = j.results || [];
+
+    if (sub) sub.textContent = results.length + ' companies match' + (j.scanned ? ' (scanned ' + j.scanned + ')' : '');
+
+    if (!results.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No matches — try wider filters</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = results.map(r =>
+      '<tr style="cursor:pointer" onclick="pickAsset(\'' + esc(r.ticker) + '\')">' +
+      '<td><strong>' + esc(r.ticker) + '</strong><br><span class="text-muted" style="font-size:11px">' + esc(r.company || '') + '</span></td>' +
+      '<td class="right">' + fmtN(r.revenue) + '</td>' +
+      '<td class="right">' + fmtN(r.net_income) + '</td>' +
+      '<td class="right">' + (r.gross_margin != null ? (r.gross_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+      '<td class="right">' + (r.net_margin != null ? (r.net_margin * 100).toFixed(1) + '%' : '—') + '</td>' +
+      '<td class="right">' + (r.eps != null ? '$' + r.eps.toFixed(2) : '—') + '</td>' +
+      '<td class="right">' + (r.de_ratio != null ? r.de_ratio.toFixed(2) + 'x' : '—') + '</td>' +
+      '<td style="font-size:11px;color:var(--text-tertiary)">' + esc((r.sector || '').replace(/_/g, ' ')) + '</td>' +
+      '</tr>'
+    ).join('');
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">Error: ' + esc(e.message) + '</td></tr>';
+  }
+}
+
+// Load screener sectors on init
+function loadScreenerSectors() {
+  fetch(API_BASE + '/api/screener/sectors')
+    .then(r => r.json())
+    .then(j => {
+      const sel = document.getElementById('scr-sector');
+      if (!sel || !j.sectors) return;
+      j.sectors.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        sel.appendChild(opt);
+      });
+    })
+    .catch(() => {});
 }
 
 // ============================================================
