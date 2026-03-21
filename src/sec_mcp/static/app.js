@@ -219,11 +219,21 @@ function loadFmpFootnote() {
 
 function renderFootnote(hist) {
   const el = document.getElementById('data-footnote');
-  if (!el) return;
+  if (!el || !_curData) return;
 
-  const m = _curData?.metrics || {};
-  const fmp = hist.income[0] || {};
-  const poly = _curData?._crossCheck || {};
+  // Use the SAME metrics that KPI cards show — directly from _curData
+  const m = _curData.metrics || {};
+  const fmp = (hist && hist.income && hist.income[0]) || {};
+  const poly = _curData._crossCheck || {};
+
+  // Verify the FMP data is for the same company as _curData
+  const secTicker = (_curData.ticker_or_cik || _tk || '').toUpperCase();
+  const fmpSymbol = (fmp.symbol || '').toUpperCase();
+  if (fmpSymbol && secTicker && fmpSymbol !== secTicker) {
+    // FMP data is stale/wrong company — hide the comparison
+    el.style.display = 'none';
+    return;
+  }
 
   // Polygon metric key mapping
   const polyMap = {
@@ -247,7 +257,10 @@ function renderFootnote(hist) {
   ];
 
   for (const [label, xbrl, fmpVal] of pairs) {
+    // Skip if SEC has no data AND FMP has no data
     if (xbrl == null && fmpVal == null) continue;
+    // Skip if SEC has no data — don't show misleading "—" for our primary source
+    // Only show rows where we have SEC data to compare against
     const xbrlStr = xbrl != null ? fmtN(xbrl) : '—';
     const fmpStr = fmpVal != null ? fmtN(fmpVal) : '—';
 
