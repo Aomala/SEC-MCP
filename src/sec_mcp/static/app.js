@@ -608,7 +608,43 @@ function q(t) {
 async function send(msg) {
   msg = msg ? msg.trim() : (document.getElementById('search-input')?.value?.trim() || '');
   if (!msg) return;
-  
+
+  // ── Route: detect if this is a generic question vs a company query ──
+  // Generic questions: no ticker, just knowledge questions about finance
+  const isGenericQuestion = /^(what|how|why|explain|define|tell me|can you|describe|difference between)\b/i.test(msg)
+    && !/\b[A-Z]{1,5}\b/.test(msg); // no uppercase ticker-like words
+
+  if (isGenericQuestion) {
+    // Answer directly via chatbot — no dashboard, no company load
+    const chatPanel = document.getElementById('chat-panel');
+    if (chatPanel && !chatPanel.classList.contains('open')) toggleChat();
+    addChatMessage('user', msg);
+    addChatLoading();
+    try {
+      const r = await fetch(API_BASE + '/api/chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, ticker: '', context: {}, history: _chatHistory.slice(-6) }),
+      });
+      if (!r.ok) throw new Error('API error: ' + r.status);
+      const j = await r.json();
+      removeChatLoading();
+      addChatMessage('assistant', j.answer || 'No response.');
+      _chatHistory.push({ role: 'user', content: msg });
+      _chatHistory.push({ role: 'assistant', content: j.answer || '' });
+    } catch (e) {
+      removeChatLoading();
+      addChatMessage('assistant', 'Error: ' + e.message);
+    }
+    // Clear input
+    const inp = document.getElementById('search-input');
+    if (inp) inp.value = '';
+    const welcomeInp = document.getElementById('welcome-inp');
+    if (welcomeInp) welcomeInp.value = '';
+    return;
+  }
+
+  // ── Route: company-specific query → load dashboard ──
   // Hide welcome panel
   const welcome = document.getElementById('welcome');
   if (welcome) welcome.style.display = 'none';
@@ -619,7 +655,7 @@ async function send(msg) {
   if (isCompare) {
     switchView('comps');
     const tbody = document.getElementById('comps-tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner" style="margin:8px auto"></div><p class="text-muted" style="margin-top:8px">Comparing companies — this may take 30-60 seconds...</p></td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center"><div class="spinner" style="margin:8px auto"></div><p class="text-muted" style="margin-top:8px">Comparing companies — this may take 30-60 seconds...</p></td></tr>';
   } else {
     const dashboard = document.getElementById('dashboard');
     if (dashboard) dashboard.style.display = 'block';
@@ -636,7 +672,6 @@ async function send(msg) {
       '<p class="loading-sub">Parsing XBRL from EDGAR</p>' +
       '<p class="loading-timer" id="load-timer" style="font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);margin-top:4px">0.0s</p>';
     content.appendChild(spinner);
-    // Live timer
     const _timerStart = Date.now();
     const _timerInterval = setInterval(() => {
       const el = document.getElementById('load-timer');
@@ -645,26 +680,39 @@ async function send(msg) {
     }, 100);
     spinner._timerInterval = _timerInterval;
   }
-  
+
   try {
     const r = await fetch(API_BASE + '/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg }),
     });
-    
+
     if (!r.ok) throw new Error('API error: ' + r.status);
-    
+
     const j = await r.json();
-    
+
     // Remove loading spinner + stop timer
     const spinner = document.getElementById('main-spinner');
     if (spinner) {
       if (spinner._timerInterval) clearInterval(spinner._timerInterval);
       spinner.remove();
     }
-    
-    if (j.type === 'error') {
+
+    // If the backend couldn't find a ticker, treat as generic question
+    if (j.type === 'info' && !j.intent_tickers?.length) {
+      const chatPanel = document.getElementById('chat-panel');
+      if (chatPanel && !chatPanel.classList.contains('open')) toggleChat();
+      addChatMessage('user', msg);
+      addChatMessage('assistant', j.message || 'Try searching for a company ticker.');
+      // Re-show welcome if dashboard is empty
+      if (!_curData) {
+        const w = document.getElementById('welcome');
+        const d = document.getElementById('dashboard');
+        if (w) w.style.display = 'block';
+        if (d) d.style.display = 'none';
+      }
+    } else if (j.type === 'error') {
       showError(j.message || 'Unknown error');
     } else if (j.type === 'result') {
       handleResult(j);

@@ -1646,18 +1646,29 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
             except Exception as exc:
                 log.debug("Financial context fetch failed for chatbot: %s", exc)
 
-        context_text = (
-            "\n".join(context_parts) if context_parts
-            else "No financial data loaded."
-        )
+        context_text = "\n".join(context_parts) if context_parts else ""
+        has_data = bool(context_parts)
 
         import anthropic
         client = anthropic.Anthropic(api_key=config.anthropic_api_key)
 
+        if has_data:
+            system_intro = (
+                "You are a senior financial analyst AI assistant embedded in an SEC filings dashboard. "
+                "You have DIRECT ACCESS to the company's financial data currently displayed on the user's screen. "
+                "This data comes from real SEC EDGAR XBRL filings — it is authoritative.\n\n"
+            )
+        else:
+            system_intro = (
+                "You are a senior financial analyst AI assistant. No company data is currently loaded. "
+                "Answer general finance questions clearly with examples. If the user asks about a specific "
+                "company, suggest they search for it using the search bar above. "
+                "You can explain: financial concepts, how to read SEC filings, XBRL data, valuation metrics, "
+                "accounting terms, market analysis frameworks, and investment strategies.\n\n"
+            )
+
         system = (
-            "You are a senior financial analyst AI assistant embedded in an SEC filings dashboard. "
-            "You have DIRECT ACCESS to the company's financial data currently displayed on the user's screen. "
-            "This data comes from real SEC EDGAR XBRL filings — it is authoritative.\n\n"
+            system_intro +
             "ADAPTIVE RESPONSE STYLE — match depth to the question:\n"
             "- Simple factual questions (\"what's revenue?\") → 1-2 sentences with the number and source.\n"
             "- Analytical questions (\"how are margins trending?\") → 2-3 paragraphs with bullets.\n"
@@ -1701,7 +1712,7 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
 
         # Current message with full data context
         user_msg = (
-            f"FINANCIAL DATA ON SCREEN:\n{context_text}\n\n"
+            (f"FINANCIAL DATA ON SCREEN:\n{context_text}\n\n" if has_data else "") +
             f"USER QUESTION: {req.message}"
         )
         messages.append({"role": "user", "content": user_msg})
