@@ -40,16 +40,16 @@ _available: bool | None = None
 
 # Cache TTLs by data type (seconds)
 CACHE_TTLS = {
-    "financials": 3600,         # 1 hour — XBRL data changes rarely
-    "cross_check": 86400,       # 24 hours — Polygon validation
-    "geo_segments": 86400,      # 24 hours — segments are annual
-    "product_segments": 86400,  # 24 hours
-    "income_history": 86400,    # 24 hours
-    "balance_history": 86400,
-    "cashflow_history": 86400,
+    "financials": 604800,       # 7 days — SEC filings don't change after filed
+    "cross_check": 604800,      # 7 days — Polygon validation
+    "geo_segments": 604800,     # 7 days — segments are annual
+    "product_segments": 604800, # 7 days
+    "income_history": 604800,   # 7 days
+    "balance_history": 604800,
+    "cashflow_history": 604800,
 }
-# Section text gets 24h TTL (matched by prefix)
-_SECTION_TTL = 86400
+# Section text gets 7 day TTL (matched by prefix)
+_SECTION_TTL = 604800
 
 
 def _get_client():
