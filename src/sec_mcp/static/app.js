@@ -605,9 +605,23 @@ function q(t) {
  * Main query: send message to /api/chat and handle response.
  * This is the primary entry point for user queries.
  */
+let _sendAbort = null; // AbortController for cancelling in-progress loads
+
 async function send(msg) {
   msg = msg ? msg.trim() : (document.getElementById('search-input')?.value?.trim() || '');
   if (!msg) return;
+
+  // Cancel any in-progress load so new search takes priority
+  if (_sendAbort) {
+    _sendAbort.abort();
+    const oldSpinner = document.getElementById('main-spinner');
+    if (oldSpinner) {
+      if (oldSpinner._timerInterval) clearInterval(oldSpinner._timerInterval);
+      oldSpinner.remove();
+    }
+  }
+  _sendAbort = new AbortController();
+  const signal = _sendAbort.signal;
 
   // ── Route: detect if this is a generic question vs a company query ──
   // Generic questions: no ticker, just knowledge questions about finance
@@ -686,6 +700,7 @@ async function send(msg) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: msg }),
+      signal,
     });
 
     if (!r.ok) throw new Error('API error: ' + r.status);
@@ -720,6 +735,7 @@ async function send(msg) {
   } catch (e) {
     const spinner = document.getElementById('main-spinner');
     if (spinner) spinner.remove();
+    if (e.name === 'AbortError') return; // User started a new search — ignore
     showError('Request failed: ' + e.message);
     console.error('[Send Error]', e);
   }
