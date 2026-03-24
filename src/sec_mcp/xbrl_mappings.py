@@ -607,23 +607,32 @@ EBITDA_COMPONENTS: list[ConceptEntry] = [
 
 TOTAL_ASSETS: list[ConceptEntry] = [
     ConceptEntry("Assets", "Total Assets"),
-    # IFRS — same concept name, but listed for clarity
+    ConceptEntry("AssetsNet", "Net Assets"),
+    ConceptEntry("TotalAssets", "Total Assets (alt tag)"),
+    # IFRS
     ConceptEntry("NoncurrentAssets", "Noncurrent Assets"),
+    # Insurance / bank
+    ConceptEntry("InvestmentsAndCash", "Investments and Cash"),
 ]
 
 CURRENT_ASSETS: list[ConceptEntry] = [
     ConceptEntry("AssetsCurrent", "Current Assets"),
     ConceptEntry("CurrentAssets", "IFRS Current Assets"),
+    ConceptEntry("TotalCurrentAssets", "Total Current Assets"),
 ]
 
 TOTAL_LIABILITIES: list[ConceptEntry] = [
     ConceptEntry("Liabilities", "Total Liabilities"),
+    ConceptEntry("LiabilitiesAndStockholdersEquity", "Liabilities + Equity (for derivation)"),
+    ConceptEntry("TotalLiabilities", "Total Liabilities (alt tag)"),
+    # IFRS
     ConceptEntry("NoncurrentLiabilities", "Noncurrent Liabilities"),
 ]
 
 CURRENT_LIABILITIES: list[ConceptEntry] = [
     ConceptEntry("LiabilitiesCurrent", "Current Liabilities"),
     ConceptEntry("CurrentLiabilities", "IFRS Current Liabilities"),
+    ConceptEntry("TotalCurrentLiabilities", "Total Current Liabilities"),
 ]
 
 STOCKHOLDERS_EQUITY: list[ConceptEntry] = [
@@ -632,8 +641,13 @@ STOCKHOLDERS_EQUITY: list[ConceptEntry] = [
                  "Total Equity (incl. NCI)"),
     ConceptEntry("Equity", "Equity"),
     ConceptEntry("CommonStockholdersEquity", "Common Stockholders' Equity"),
+    ConceptEntry("MembersEquity", "Members' Equity (partnerships)"),
+    ConceptEntry("PartnersCapital", "Partners' Capital"),
+    ConceptEntry("TotalEquity", "Total Equity"),
+    ConceptEntry("TotalStockholdersEquity", "Total Stockholders' Equity"),
     # IFRS
     ConceptEntry("EquityAttributableToOwnersOfParent", "IFRS Equity Attributable to Parent"),
+    ConceptEntry("EquityAttributableToParent", "IFRS Equity to Parent (alt)"),
 ]
 
 TOTAL_EQUITY: list[ConceptEntry] = [
