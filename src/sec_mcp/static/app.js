@@ -2025,26 +2025,77 @@ function renderMarginChart(d) {
  */
 function renderPeerTable(d) {
   const tbody = document.getElementById('peer-tbody');
+  const sub = document.getElementById('peer-sub');
+  const card = document.getElementById('peer-card');
   if (!tbody) return;
-  
-  const peers = d.peers || [];
-  if (!peers.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No peer data available</td></tr>';
+
+  const tk = (d.ticker_or_cik || _tk || '').toUpperCase();
+  if (!tk) {
+    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No peer data available</td></tr>';
     return;
   }
-  
-  let h = '';
-  for (const p of peers) {
-    h += '<tr>';
-    h += '<td class="peer-name">' + esc(p.ticker || p.name) + '</td>';
-    h += '<td>' + fmtN(p.revenue) + '</td>';
-    h += '<td>' + fmtN(p.net_income) + '</td>';
-    h += '<td>' + (p.net_margin != null ? (p.net_margin * 100).toFixed(1) + '%' : '—') + '</td>';
-    h += '<td>' + (p.pe_ratio != null ? p.pe_ratio.toFixed(1) + 'x' : '—') + '</td>';
-    h += '</tr>';
-  }
-  
-  tbody.innerHTML = h;
+
+  // Show loading state
+  tbody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner" style="width:16px;height:16px;border-width:2px;margin:4px auto"></div></td></tr>';
+
+  // Fetch peers then load each from cached /v1/financials
+  fetch(API_BASE + '/api/peers/' + encodeURIComponent(tk))
+    .then(r => r.json())
+    .then(j => {
+      const peers = (j.peers || []).slice(0, 5); // Top 5 peers
+      if (!peers.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No peers found</td></tr>';
+        return;
+      }
+
+      // Also set comps tickers for when user clicks "View Full Comps"
+      _compsTickers = [tk, ...peers];
+
+      if (sub && j.sector) {
+        const sectorLabel = j.sector.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        sub.textContent = sectorLabel + ' sector peers';
+      }
+
+      // Show skeleton rows
+      tbody.innerHTML = peers.map(p =>
+        '<tr id="peer-row-' + esc(p) + '"><td><strong>' + esc(p) + '</strong></td>' +
+        '<td class="right"><div class="spinner" style="width:12px;height:12px;border-width:2px;margin:0 auto"></div></td>' +
+        '<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>'
+      ).join('');
+
+      // Fetch each peer progressively from cached v1 endpoint
+      peers.forEach(p => {
+        fetch(API_BASE + '/v1/financials/' + encodeURIComponent(p))
+          .then(r => r.json())
+          .then(pj => {
+            const pm = pj.metrics || {};
+            const name = pj.company || '';
+            const gm = (pm.gross_profit && pm.revenue) ? (pm.gross_profit / pm.revenue * 100) : null;
+            const nm = (pm.net_income && pm.revenue) ? (pm.net_income / pm.revenue * 100) : null;
+
+            const row = document.getElementById('peer-row-' + p);
+            if (row) {
+              row.innerHTML =
+                '<td style="cursor:pointer" onclick="pickAsset(\'' + esc(p) + '\')"><strong>' + esc(p) + '</strong>' +
+                (name ? '<br><span class="text-muted" style="font-size:10px">' + esc(name.slice(0, 25)) + '</span>' : '') + '</td>' +
+                '<td class="right">' + fmtN(pm.revenue) + '</td>' +
+                '<td class="right">' + fmtN(pm.net_income) + '</td>' +
+                '<td class="right">' + fmtN(pm.ebitda) + '</td>' +
+                '<td class="right">' + (gm != null ? gm.toFixed(1) + '%' : '—') + '</td>' +
+                '<td class="right">' + (nm != null ? nm.toFixed(1) + '%' : '—') + '</td>' +
+                '<td class="right">' + (pm.eps_diluted != null ? '$' + pm.eps_diluted.toFixed(2) : '—') + '</td>';
+              row.style.animation = 'fadeIn 0.3s ease';
+            }
+          })
+          .catch(() => {
+            const row = document.getElementById('peer-row-' + p);
+            if (row) row.querySelector('td:nth-child(2)').textContent = '—';
+          });
+      });
+    })
+    .catch(() => {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No peer data available</td></tr>';
+    });
 }
 
 /**

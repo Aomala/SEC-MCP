@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="icon" type="image/png" href="/static/logo-32.png"/>
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
-  <link rel="stylesheet" href="/static/app.css?v=53"/>
+  <link rel="stylesheet" href="/static/app.css?v=55"/>
 </head>
 <body>
 <div class="app">
@@ -231,24 +231,30 @@
         </div>
 
         <!-- Peers -->
-        <div class="chart-card">
+        <div class="chart-card" id="peer-card">
           <div class="card-header">
             <div>
               <h3>Peer Comparison</h3>
-              <p class="card-subtitle">Key metrics vs industry peers</p>
+              <p class="card-subtitle" id="peer-sub">Key metrics vs industry peers</p>
             </div>
+            <button class="text-btn" onclick="switchView('comps')" style="font-size:11px">View Full Comps →</button>
           </div>
+          <div style="overflow-x:auto">
           <table class="data-table" id="peer-table">
             <thead>
               <tr>
                 <th>Company</th>
                 <th class="right">Revenue</th>
+                <th class="right">Net Income</th>
+                <th class="right">EBITDA</th>
+                <th class="right">Gross Margin</th>
                 <th class="right">Net Margin</th>
-                <th class="right">P/E</th>
+                <th class="right">EPS</th>
               </tr>
             </thead>
             <tbody id="peer-tbody"></tbody>
           </table>
+          </div>
         </div>
 
         <!-- Insider Trading -->
@@ -667,6 +673,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=54"></script>
+<script src="/static/app.js?v=55"></script>
 </body>
 </html>
