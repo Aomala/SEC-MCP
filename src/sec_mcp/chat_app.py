@@ -443,7 +443,9 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
     from sec_mcp import supabase_cache
 
     # ── Try Supabase cache first (before hitting SEC EDGAR) ──
-    period_key = f"{form_type}|{year or 'latest'}"
+    # Cache version bumped to v2 — schema added industry_class + sector-aware
+    # income_statement[] rows; v1 entries lack these fields, force refresh.
+    period_key = f"v2|{form_type}|{year or 'latest'}"
     sb_cached = supabase_cache.get_cached(ticker.upper(), "financials", period_key)
     if sb_cached and isinstance(sb_cached, dict) and sb_cached.get("metrics"):
         log.info("Supabase cache hit for %s financials", ticker)
@@ -2351,7 +2353,9 @@ async def api_v1_financials(request: Request, ticker: str, year: int | None = No
         "company": data.get("company_name"),
         "period": data.get("fiscal_period"),
         "year": data.get("fiscal_year"),
+        "industry_class": data.get("industry_class"),
         "metrics": data.get("metrics", {}),
+        "ratios": data.get("ratios", {}),
         "filing": data.get("filing_info"),
         "summary": result.get("summary"),
     }
@@ -2391,6 +2395,17 @@ async def api_v1_search(request: Request, q: str):
 async def api_v1_cross_check(request: Request, ticker: str):
     """Public API: Cross-check SEC data against Polygon.io."""
     return await cross_check_ticker(ticker)
+
+
+@app.get("/v1/price/{ticker}")
+async def api_v1_price(ticker: str):
+    """Real-time price with multi-provider fallback (Polygon → yfinance → FMP).
+
+    30-second cache shared across providers. Response includes `source`,
+    `timestamp`, and `cached_age_seconds` so the UI can show freshness.
+    """
+    from sec_mcp.core.realtime_price import get_realtime_price
+    return get_realtime_price(ticker)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

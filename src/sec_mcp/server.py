@@ -594,42 +594,28 @@ def analyze_filing(
 @mcp.tool()
 def get_stock_price(ticker: str) -> dict:
     """Get current stock price, change, volume, and market cap for a company.
-    
+
     Returns real-time(ish) price data including 52-week range and P/E ratio.
     Requires yfinance package. Returns error dict if unavailable.
     """
-    try:
-        # Try to import and use market data provider
-        import yfinance as yf
-        
-        # Fetch stock data
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        
-        # Build response with available fields
-        result = {
-            "ticker": ticker,
-            "price": info.get("currentPrice"),
-            "change": info.get("regularMarketChange"),
-            "change_pct": info.get("regularMarketChangePercent"),
-            "volume": info.get("volume"),
-            "market_cap": info.get("marketCap"),
-            "high_52w": info.get("fiftyTwoWeekHigh"),
-            "low_52w": info.get("fiftyTwoWeekLow"),
-            "pe_ratio": info.get("trailingPE"),
-            "forward_pe": info.get("forwardPE"),
-            "source": "yfinance",
-            "timestamp": None,
-        }
-        return result
-    except ImportError:
-        # yfinance not available
-        return {
-            "error": "Market data module (yfinance) not available. Install with: pip install yfinance"
-        }
-    except Exception as e:
-        # API error or ticker not found
-        return {"error": f"Failed to fetch stock price for {ticker}: {str(e)}"}
+    from datetime import datetime, timezone
+    from sec_mcp.core.market_data import get_market_data_provider, YFINANCE_AVAILABLE
+
+    if not YFINANCE_AVAILABLE:
+        return {"error": "Market data module (yfinance) not available. Install with: uv pip install yfinance"}
+
+    # yfinance uses '-' for class shares (BRK-B), not '.'. Normalize both.
+    normalized = ticker.strip().upper().replace(".", "-")
+    data = get_market_data_provider().get_price(normalized)
+    if data is None:
+        return {"error": f"Failed to fetch stock price for {ticker}"}
+
+    return {
+        "ticker": normalized,
+        **data,
+        "source": "yfinance",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @mcp.tool()
@@ -645,14 +631,19 @@ def get_valuation_metrics(ticker: str, year: int | None = None) -> dict:
         if "error" in financials:
             return {"error": f"Could not fetch financials for {ticker}: {financials.get('error')}"}
         
-        # Get market data via yfinance
+        # Get market data via yfinance — normalize class-share dots and fall back through price keys
         import yfinance as yf
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        
-        # Extract needed values
+        normalized = ticker.strip().upper().replace(".", "-")
+        stock = yf.Ticker(normalized)
+        info = stock.info or {}
+
+        # Extract needed values, with fallback so ETFs/crypto/dot-tickers don't return None
         market_cap = info.get("marketCap")
-        current_price = info.get("currentPrice")
+        current_price = (
+            info.get("currentPrice")
+            or info.get("regularMarketPrice")
+            or info.get("previousClose")
+        )
         shares_outstanding = info.get("sharesOutstanding")
         
         # Extract XBRL metrics
