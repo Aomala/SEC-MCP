@@ -69,9 +69,19 @@ def phase1_download_tickers():
     r.raise_for_status()
     data = r.json()
 
+    # SEC's company_tickers.json can map multiple tickers to the same CIK
+    # (share classes: GOOGL/GOOG, BRK.A/BRK.B). PK is cik, so dedupe keeping the
+    # first ticker seen per CIK — Postgres on_conflict can't touch the same row
+    # twice in one statement.
+    seen_ciks: set[str] = set()
     companies = []
+    dupes = 0
     for entry in data.values():
         cik = str(entry["cik_str"])
+        if cik in seen_ciks:
+            dupes += 1
+            continue
+        seen_ciks.add(cik)
         ticker = entry.get("ticker", "")
         name = entry.get("title", "")
         companies.append({
@@ -81,7 +91,7 @@ def phase1_download_tickers():
             "updated_at": datetime.now(timezone.utc).isoformat(),
         })
 
-    log.info("Downloaded %d companies from SEC EDGAR", len(companies))
+    log.info("Downloaded %d unique companies from SEC EDGAR (%d dupe share-class rows skipped)", len(companies), dupes)
 
     # Batch upsert to Supabase (chunks of 500)
     sb = _get_sb()
@@ -110,12 +120,29 @@ def phase2_check_filings(limit: int = 0):
     """
     sb = _get_sb()
 
-    # Get companies that haven't been checked yet
-    query = sb.table("company_directory").select("cik, ticker, name").eq("has_10k", False).eq("has_20f", False)
-    if limit > 0:
-        query = query.limit(limit)
-    result = query.execute()
-    companies = result.data or []
+    # Supabase caps a single select at 1000 rows — paginate with .range() until exhausted.
+    companies: list[dict] = []
+    page_size = 1000
+    offset = 0
+    while True:
+        q = (
+            sb.table("company_directory")
+            .select("cik, ticker, name")
+            .eq("has_10k", False)
+            .eq("has_20f", False)
+            .order("cik")
+            .range(offset, offset + page_size - 1)
+        )
+        page = q.execute().data or []
+        if not page:
+            break
+        companies.extend(page)
+        if limit > 0 and len(companies) >= limit:
+            companies = companies[:limit]
+            break
+        if len(page) < page_size:
+            break
+        offset += page_size
 
     log.info("Phase 2: Checking filing types for %d companies...", len(companies))
 
@@ -198,16 +225,30 @@ def phase3_extract(top: int = 500):
 
     sb = _get_sb()
 
-    # Get companies with 10-K/20-F that aren't cached yet
-    result = (
-        sb.table("company_directory")
-        .select("cik, ticker, name")
-        .or_("has_10k.eq.true,has_20f.eq.true")
-        .eq("cached", False)
-        .limit(top)
-        .execute()
-    )
-    companies = result.data or []
+    # Supabase PostgREST caps any single select at 1000 rows — paginate until
+    # we either exhaust the queue or hit the requested `top`.
+    companies: list[dict] = []
+    page_size = 1000
+    offset = 0
+    while len(companies) < top:
+        remaining = top - len(companies)
+        hi = offset + min(page_size, remaining) - 1
+        page = (
+            sb.table("company_directory")
+            .select("cik, ticker, name")
+            .or_("has_10k.eq.true,has_20f.eq.true")
+            .eq("cached", False)
+            .order("cik")
+            .range(offset, hi)
+            .execute()
+            .data or []
+        )
+        if not page:
+            break
+        companies.extend(page)
+        if len(page) < page_size:
+            break
+        offset += page_size
 
     log.info("Phase 3: Extracting financials for %d companies...", len(companies))
 
