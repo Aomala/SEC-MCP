@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="icon" type="image/png" href="/static/logo-32.png"/>
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
-  <link rel="stylesheet" href="/static/app.css?v=55"/>
+  <link rel="stylesheet" href="/static/app.css?v=56"/>
 </head>
 <body>
 <div class="app">
@@ -331,7 +331,7 @@
             </div>
           </div>
           <table class="data-table" id="full-stmt-table">
-            <thead><tr><th>Line Item</th><th class="right">Value</th><th class="right">Prior</th><th class="right">Change</th></tr></thead>
+            <thead><tr><th>Line Item</th><th class="right" id="full-stmt-th-cur">Current</th><th class="right" id="full-stmt-th-prior">Prior</th><th class="right">Change</th></tr></thead>
             <tbody id="full-stmt-tbody"></tbody>
           </table>
         </div>
@@ -673,6 +673,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=55"></script>
+<script src="/static/app.js?v=56"></script>
 </body>
 </html>

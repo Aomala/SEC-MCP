@@ -444,10 +444,10 @@ function pickAsset(tk) {
   // Close dropdown and clear input
   const drop = document.getElementById('search-results');
   if (drop) drop.style.display = 'none';
-  
+
   const inp = document.getElementById('search-input');
   if (inp) inp.value = '';
-  
+
   // Reset state and load company
   _tk = tk.toUpperCase();
   _bgSections = {};
@@ -455,9 +455,88 @@ function pickAsset(tk) {
   _curAcc = null;
   _curData = null;
   _fmpHistory = null;
-  
+
+  // Real-time price for the new ticker — start polling immediately
+  startPricePolling(_tk);
+
   // Trigger main query
   send(tk);
+}
+
+// ========================================
+//  REAL-TIME PRICE POLLING
+// ========================================
+// Polls /v1/price/{tk} every 30s for the active ticker. Pauses when the tab
+// is hidden (Page Visibility API) so backgrounded tabs don't burn API calls.
+// Shows a pulsing live-dot when fresh, dims it when cached/stale.
+
+let _pricePollHandle = null;
+let _pricePollTicker = null;
+
+function startPricePolling(tk) {
+  // Stop any existing poll loop before starting a new one
+  stopPricePolling();
+  if (!tk) return;
+  _pricePollTicker = tk;
+  // Fetch immediately, then on a 30s cadence
+  fetchAndRenderPrice(tk);
+  _pricePollHandle = setInterval(() => {
+    if (document.hidden) return;  // tab not visible — skip this tick
+    if (_pricePollTicker !== tk) return;  // ticker changed under us — bail
+    fetchAndRenderPrice(tk);
+  }, 30_000);
+}
+
+function stopPricePolling() {
+  if (_pricePollHandle) clearInterval(_pricePollHandle);
+  _pricePollHandle = null;
+}
+
+// Resume polling immediately when the user comes back to the tab — feels
+// fresh after they switch back instead of waiting up to 30s for the next tick
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && _pricePollTicker) fetchAndRenderPrice(_pricePollTicker);
+});
+
+async function fetchAndRenderPrice(tk) {
+  try {
+    const r = await fetch(API_BASE + '/v1/price/' + encodeURIComponent(tk));
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j || j.error || j.price == null) return;
+    if (_pricePollTicker !== tk) return;  // ticker changed during fetch
+    renderPricePill(j);
+  } catch (e) { /* network errors are OK to swallow — next tick will retry */ }
+}
+
+function renderPricePill(p) {
+  const priceEl = document.getElementById('pill-price');
+  const changeEl = document.getElementById('pill-change');
+  const tickerEl = document.getElementById('pill-ticker');
+  if (priceEl) {
+    const formatted = p.price >= 1000 ? '$' + p.price.toFixed(0) : '$' + p.price.toFixed(2);
+    if (priceEl.textContent !== formatted) {
+      priceEl.textContent = formatted;
+      priceEl.style.transition = 'color 0.4s';
+      priceEl.style.color = 'var(--accent)';
+      setTimeout(() => { priceEl.style.color = ''; }, 400);
+    }
+  }
+  if (changeEl && p.change_pct != null) {
+    const up = p.change_pct >= 0;
+    changeEl.className = 'price-change ' + (up ? 'positive' : 'negative');
+    const arrow = up ? '<i data-lucide="arrow-up-right"></i>' : '<i data-lucide="arrow-down-right"></i>';
+    changeEl.innerHTML = arrow + ' ' + (up ? '+' : '') + p.change_pct.toFixed(2) + '%';
+    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+  }
+  if (tickerEl && p.ticker) tickerEl.textContent = p.ticker;
+  // Show source + freshness on hover via title attr (e.g. "polygon · 12s ago")
+  const pill = document.getElementById('company-pill');
+  if (pill) {
+    const age = (p.cached_age_seconds != null) ? Math.round(p.cached_age_seconds) + 's ago' : 'live';
+    pill.title = (p.source || 'unknown') + ' · ' + age;
+    pill.style.display = 'flex';
+  }
 }
 
 /**
@@ -775,9 +854,12 @@ function handleResult(j) {
     // Save to research folders
     saveResearch(_tk, d.company_name);
 
+    // Real-time price polling — ensure it's running for whatever ticker we just loaded
+    if (_tk && _pricePollTicker !== _tk) startPricePolling(_tk);
+
     // Switch to dashboard view
     switchView('dashboard');
-    
+
     // Render all dashboard components
     renderDashboard(d);
 
@@ -2044,7 +2126,19 @@ function renderPeerTable(d) {
     .then(j => {
       const peers = (j.peers || []).slice(0, 5); // Top 5 peers
       if (!peers.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No peers found</td></tr>';
+        // Still show the target row so user sees their company data even when no peers come back
+        const tm = (d && d.metrics) || {};
+        const tGm = (tm.gross_profit && tm.revenue) ? (tm.gross_profit / tm.revenue * 100) : null;
+        const tNm = (tm.net_income && tm.revenue) ? (tm.net_income / tm.revenue * 100) : null;
+        tbody.innerHTML =
+          '<tr style="background:rgba(99,102,241,0.08)"><td><strong>' + esc(tk) + '</strong> <span class="text-muted" style="font-size:10px">(this company)</span></td>' +
+          '<td class="right">' + fmtN(tm.revenue) + '</td>' +
+          '<td class="right">' + fmtN(tm.net_income) + '</td>' +
+          '<td class="right">' + fmtN(tm.ebitda) + '</td>' +
+          '<td class="right">' + (tGm != null ? tGm.toFixed(1) + '%' : '—') + '</td>' +
+          '<td class="right">' + (tNm != null ? tNm.toFixed(1) + '%' : '—') + '</td>' +
+          '<td class="right">' + (tm.eps_diluted != null ? '$' + tm.eps_diluted.toFixed(2) : '—') + '</td></tr>' +
+          '<tr><td colspan="7" class="text-center text-muted" style="font-size:11px">No peers found</td></tr>';
         return;
       }
 
@@ -2056,8 +2150,33 @@ function renderPeerTable(d) {
         sub.textContent = sectorLabel + ' sector peers';
       }
 
-      // Show skeleton rows
-      tbody.innerHTML = peers.map(p =>
+      // Build target row from already-loaded current-company data so it always shows up alongside peers
+      const tm = (d && d.metrics) || {};
+      const tName = (d && (d.company_name || d.company)) || '';
+      const tIsBank = (d && d.industry_class) === 'bank';
+      let tGm = (tm.gross_profit && tm.revenue) ? (tm.gross_profit / tm.revenue * 100) : null;
+      let tGmSynthetic = false;
+      if (tGm == null && tIsBank && tm.revenue && tm.interest_expense != null) {
+        tGm = (tm.revenue - Math.abs(tm.interest_expense)) / tm.revenue * 100;
+        tGmSynthetic = true;
+      }
+      const tNm = (tm.net_income && tm.revenue) ? (tm.net_income / tm.revenue * 100) : null;
+      const tGmHtml = tGm == null ? '—'
+        : (tGmSynthetic ? '<span title="Net-revenue spread (banks): (Revenue − Interest Expense) / Revenue" style="border-bottom:1px dotted var(--text-muted)">' + tGm.toFixed(1) + '%*</span>'
+                        : tGm.toFixed(1) + '%');
+      const targetRow =
+        '<tr id="peer-row-' + esc(tk) + '" style="background:rgba(99,102,241,0.08)">' +
+        '<td><strong>' + esc(tk) + '</strong> <span class="text-muted" style="font-size:10px">(this company)</span>' +
+        (tName ? '<br><span class="text-muted" style="font-size:10px">' + esc(tName.slice(0, 25)) + '</span>' : '') + '</td>' +
+        '<td class="right">' + fmtN(tm.revenue) + '</td>' +
+        '<td class="right">' + fmtN(tm.net_income) + '</td>' +
+        '<td class="right">' + fmtN(tm.ebitda) + '</td>' +
+        '<td class="right">' + tGmHtml + '</td>' +
+        '<td class="right">' + (tNm != null ? tNm.toFixed(1) + '%' : '—') + '</td>' +
+        '<td class="right">' + (tm.eps_diluted != null ? '$' + tm.eps_diluted.toFixed(2) : '—') + '</td></tr>';
+
+      // Show target row first, then skeleton rows for peers
+      tbody.innerHTML = targetRow + peers.map(p =>
         '<tr id="peer-row-' + esc(p) + '"><td><strong>' + esc(p) + '</strong></td>' +
         '<td class="right"><div class="spinner" style="width:12px;height:12px;border-width:2px;margin:0 auto"></div></td>' +
         '<td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td><td class="right">—</td></tr>'
@@ -2070,8 +2189,17 @@ function renderPeerTable(d) {
           .then(pj => {
             const pm = pj.metrics || {};
             const name = pj.company || '';
-            const gm = (pm.gross_profit && pm.revenue) ? (pm.gross_profit / pm.revenue * 100) : null;
+            const isBank = pj.industry_class === 'bank';
+            let gm = (pm.gross_profit && pm.revenue) ? (pm.gross_profit / pm.revenue * 100) : null;
+            let gmSynthetic = false;
+            if (gm == null && isBank && pm.revenue && pm.interest_expense != null) {
+              gm = (pm.revenue - Math.abs(pm.interest_expense)) / pm.revenue * 100;
+              gmSynthetic = true;
+            }
             const nm = (pm.net_income && pm.revenue) ? (pm.net_income / pm.revenue * 100) : null;
+            const gmHtml = gm == null ? '—'
+              : (gmSynthetic ? '<span title="Net-revenue spread (banks): (Revenue − Interest Expense) / Revenue" style="border-bottom:1px dotted var(--text-muted)">' + gm.toFixed(1) + '%*</span>'
+                             : gm.toFixed(1) + '%');
 
             const row = document.getElementById('peer-row-' + p);
             if (row) {
@@ -2081,7 +2209,7 @@ function renderPeerTable(d) {
                 '<td class="right">' + fmtN(pm.revenue) + '</td>' +
                 '<td class="right">' + fmtN(pm.net_income) + '</td>' +
                 '<td class="right">' + fmtN(pm.ebitda) + '</td>' +
-                '<td class="right">' + (gm != null ? gm.toFixed(1) + '%' : '—') + '</td>' +
+                '<td class="right">' + gmHtml + '</td>' +
                 '<td class="right">' + (nm != null ? nm.toFixed(1) + '%' : '—') + '</td>' +
                 '<td class="right">' + (pm.eps_diluted != null ? '$' + pm.eps_diluted.toFixed(2) : '—') + '</td>';
               row.style.animation = 'fadeIn 0.3s ease';
@@ -2558,28 +2686,69 @@ function renderFullStatement(type) {
     sub.textContent = (_curData.company_name || _tk || '') + ' · ' + (_curData.filing_info?.form_type || '') + ' ' + (_curData.filing_info?.filing_date || '');
   }
 
+  // Compute fiscal-year column headers from the loaded data and write them in.
+  // For 10-K shows "FY2024 / FY2023"; for 10-Q shows "Q3-2025 / Q3-2024" etc.
+  (function setStmtHeaders() {
+    const thCur = document.getElementById('full-stmt-th-cur');
+    const thPr  = document.getElementById('full-stmt-th-prior');
+    if (!thCur || !thPr) return;
+    const fy = _curData.fiscal_year;
+    const fp = (_curData.filing_info && _curData.filing_info.fiscal_period) || _curData.fiscal_period;
+    const ft = _curData.filing_info && _curData.filing_info.form_type;
+    const isQ = (ft || '').toUpperCase().includes('10-Q') || (fp || '').toUpperCase().startsWith('Q');
+    let curLabel = 'Current', prLabel = 'Prior';
+    if (fy) {
+      if (isQ && fp) {
+        curLabel = fp + '-' + fy;
+        prLabel  = fp + '-' + (fy - 1);
+      } else {
+        curLabel = 'FY' + fy;
+        prLabel  = 'FY' + (fy - 1);
+      }
+    }
+    thCur.textContent = curLabel;
+    thPr.textContent  = prLabel;
+  })();
+
   // Try to use the richer statement arrays from backend
   const stmtKey = type === 'income' ? 'income_statement' : type === 'balance' ? 'balance_sheet' : 'cash_flow_statement';
   const stmtData = _curData[stmtKey];
 
   if (stmtData && stmtData.length > 0) {
-    // Use backend statement array: [{label, value, prior_value, concept}, ...]
+    // Use backend statement array: [{label, value, prior_value, concept, bold?, fmt?, is_section?}, ...]
     if (title) title.textContent = type === 'income' ? 'Income Statement' : type === 'balance' ? 'Balance Sheet' : 'Cash Flow Statement';
+
+    // Format helpers honoring the row's `fmt` field (pct, eps, shares) — falls back to fmtN
+    function rowFmt(val, fmt) {
+      if (val == null) return '—';
+      if (fmt === 'pct') return val.toFixed(1) + '%';
+      if (fmt === 'eps') return '$' + val.toFixed(2);
+      if (fmt === 'shares') return (val / 1e6).toFixed(0) + 'M';
+      return fmtN(val);
+    }
 
     let h = '';
     for (const row of stmtData) {
+      // Section divider (e.g. "FFO Reconciliation" for REITs) — full-width header row
+      if (row.is_section) {
+        h += '<tr><td colspan="4" style="background:rgba(99,102,241,0.10);padding:8px 12px;font-weight:600;font-style:italic;color:var(--text-primary)">' + esc(row.label) + '</td></tr>';
+        continue;
+      }
       if (row.value == null && row.prior_value == null) continue;
-      const change = calcChange(row.value, row.prior_value);
+      const change = (row.fmt === 'pct')
+        ? ((row.value != null && row.prior_value != null) ? (row.value - row.prior_value) : null)
+        : calcChange(row.value, row.prior_value);
       const changeHtml = change != null
-        ? '<span class="' + (change >= 0 ? 'positive' : 'negative') + '">' + (change >= 0 ? '+' : '') + change.toFixed(1) + '%</span>'
+        ? '<span class="' + (change >= 0 ? 'positive' : 'negative') + '">' + (change >= 0 ? '+' : '') +
+          (row.fmt === 'pct' ? change.toFixed(1) + ' pp' : change.toFixed(1) + '%') + '</span>'
         : '—';
-      // Bold totals / key lines
-      const isBold = /^(total|net income|revenue|gross profit|operating income|free cash flow|stockholders)/i.test(row.label);
+      // Honor backend `bold` flag, then fall back to label-based heuristics
+      const isBold = row.bold === true || /^(total|net income|revenue|gross profit|operating income|free cash flow|stockholders|ffo|pre-tax|income before)/i.test(row.label);
       const boldStyle = isBold ? ' style="font-weight:600;color:var(--text-primary)"' : '';
       h += '<tr>' +
         '<td class="stmt-label"' + boldStyle + '>' + esc(row.label) + '</td>' +
-        '<td class="stmt-value">' + fmtN(row.value) + '</td>' +
-        '<td class="stmt-value">' + fmtN(row.prior_value) + '</td>' +
+        '<td class="stmt-value">' + rowFmt(row.value, row.fmt) + '</td>' +
+        '<td class="stmt-value">' + rowFmt(row.prior_value, row.fmt) + '</td>' +
         '<td class="stmt-change">' + changeHtml + '</td>' +
         '</tr>';
     }
@@ -2669,6 +2838,119 @@ function renderFullStatement(type) {
 
   if (!h) h = '<tr><td colspan="4" class="text-center text-muted">No data available for this statement</td></tr>';
   tbody.innerHTML = h;
+}
+
+/**
+ * Render 3 inline statement tables (Income / Balance / Cash Flow) for the
+ * 10-K Explorer's Financial Statements tab. Pulls from _curData.metrics +
+ * prior_metrics with the same row schema as renderFullStatement.
+ */
+function buildInlineStatements() {
+  if (!_curData) return '';
+  const m = _curData.metrics || {};
+  const pm = _curData.prior_metrics || {};
+  const fy = _curData.fiscal_year;
+  const pt = _curData.period_type === 'quarterly' ? 'Q' : 'FY';
+  const curLabel = fy ? pt + fy : 'Current';
+  const priorLabel = fy ? pt + (fy - 1) : 'Prior';
+
+  const incomeRows = [
+    { label: 'Revenue', cur: m.revenue, pr: pm.revenue, bold: true },
+    { label: 'Cost of Revenue', cur: m.cost_of_revenue, pr: pm.cost_of_revenue },
+    { label: 'Gross Profit', cur: m.gross_profit, pr: pm.gross_profit, bold: true, divider: true },
+    { label: 'Research & Development', cur: m.rd_expense, pr: pm.rd_expense },
+    { label: 'SG&A', cur: m.sga_expense, pr: pm.sga_expense },
+    { label: 'Operating Expenses', cur: m.operating_expenses, pr: pm.operating_expenses },
+    { label: 'Operating Income', cur: m.operating_income, pr: pm.operating_income, bold: true, divider: true },
+    { label: 'Interest Expense', cur: m.interest_expense, pr: pm.interest_expense },
+    { label: 'Other Income / Expense', cur: m.other_income_expense, pr: pm.other_income_expense },
+    { label: 'Income Before Tax', cur: m.income_before_tax, pr: pm.income_before_tax },
+    { label: 'Income Tax', cur: m.income_tax_expense, pr: pm.income_tax_expense },
+    { label: 'Net Income', cur: m.net_income, pr: pm.net_income, bold: true, divider: true },
+    { label: 'EBITDA', cur: m.ebitda, pr: pm.ebitda, subtle: true },
+    { label: 'D&A', cur: m.depreciation_amortization, pr: pm.depreciation_amortization, subtle: true },
+  ];
+
+  const balanceRows = [
+    { label: 'Cash & Equivalents', cur: m.cash_and_equivalents, pr: pm.cash_and_equivalents },
+    { label: 'Accounts Receivable', cur: m.accounts_receivable, pr: pm.accounts_receivable },
+    { label: 'Inventory', cur: m.inventory, pr: pm.inventory },
+    { label: 'Total Current Assets', cur: m.current_assets, pr: pm.current_assets, bold: true },
+    { label: 'PP&E (Net)', cur: m.property_plant_equipment, pr: pm.property_plant_equipment },
+    { label: 'Goodwill', cur: m.goodwill, pr: pm.goodwill },
+    { label: 'Intangible Assets', cur: m.intangible_assets, pr: pm.intangible_assets },
+    { label: 'Total Assets', cur: m.total_assets, pr: pm.total_assets, bold: true, divider: true },
+    { label: 'Accounts Payable', cur: m.accounts_payable, pr: pm.accounts_payable },
+    { label: 'Short-term Debt', cur: m.short_term_debt, pr: pm.short_term_debt },
+    { label: 'Total Current Liabilities', cur: m.current_liabilities, pr: pm.current_liabilities, bold: true },
+    { label: 'Long-term Debt', cur: m.long_term_debt, pr: pm.long_term_debt },
+    { label: 'Total Liabilities', cur: m.total_liabilities, pr: pm.total_liabilities, bold: true, divider: true },
+    { label: 'Retained Earnings', cur: m.retained_earnings, pr: pm.retained_earnings },
+    { label: "Stockholders' Equity", cur: m.stockholders_equity, pr: pm.stockholders_equity, bold: true },
+  ];
+
+  const cashflowRows = [
+    { label: 'Net Income', cur: m.net_income, pr: pm.net_income },
+    { label: 'D&A', cur: m.depreciation_amortization, pr: pm.depreciation_amortization },
+    { label: 'Share-based Compensation', cur: m.share_based_compensation, pr: pm.share_based_compensation },
+    { label: 'Cash from Operations', cur: m.operating_cash_flow, pr: pm.operating_cash_flow, bold: true, divider: true },
+    { label: 'Capital Expenditures', cur: m.capex, pr: pm.capex },
+    { label: 'Cash from Investing', cur: m.investing_cash_flow, pr: pm.investing_cash_flow, bold: true, divider: true },
+    { label: 'Cash from Financing', cur: m.financing_cash_flow, pr: pm.financing_cash_flow, bold: true, divider: true },
+    { label: 'Free Cash Flow', cur: m.free_cash_flow, pr: pm.free_cash_flow, bold: true },
+  ];
+
+  const renderTable = (title, rows) => {
+    const body = rows
+      .filter((r) => r.cur != null || r.pr != null)
+      .map((r) => {
+        const change = calcChange(r.cur, r.pr);
+        const changeCell = change != null
+          ? '<span class="' + (change >= 0 ? 'positive' : 'negative') + '">' + (change >= 0 ? '+' : '') + change.toFixed(1) + '%</span>'
+          : '<span class="text-muted">—</span>';
+        const classes = [
+          'inline-stmt-row',
+          r.bold ? 'is-total' : '',
+          r.subtle ? 'is-subtle' : '',
+          r.divider ? 'has-divider' : '',
+        ].filter(Boolean).join(' ');
+        return (
+          '<tr class="' + classes + '">' +
+            '<td class="inline-stmt-label">' + esc(r.label) + '</td>' +
+            '<td class="inline-stmt-num">' + fmtN(r.cur) + '</td>' +
+            '<td class="inline-stmt-num muted">' + fmtN(r.pr) + '</td>' +
+            '<td class="inline-stmt-change">' + changeCell + '</td>' +
+          '</tr>'
+        );
+      }).join('');
+
+    if (!body) return '';
+    return (
+      '<section class="inline-stmt-block">' +
+        '<header class="inline-stmt-header">' +
+          '<h3 class="inline-stmt-title">' + esc(title) + '</h3>' +
+          '<span class="inline-stmt-period">' + esc(curLabel) + ' <span class="text-muted">vs</span> ' + esc(priorLabel) + '</span>' +
+        '</header>' +
+        '<table class="inline-stmt-table">' +
+          '<thead><tr>' +
+            '<th></th>' +
+            '<th class="inline-stmt-num">' + esc(curLabel) + '</th>' +
+            '<th class="inline-stmt-num">' + esc(priorLabel) + '</th>' +
+            '<th class="inline-stmt-change">YoY</th>' +
+          '</tr></thead>' +
+          '<tbody>' + body + '</tbody>' +
+        '</table>' +
+      '</section>'
+    );
+  };
+
+  const tables =
+    renderTable('Income Statement', incomeRows) +
+    renderTable('Balance Sheet', balanceRows) +
+    renderTable('Cash Flow Statement', cashflowRows);
+
+  if (!tables) return '';
+  return '<div class="inline-stmt-wrap">' + tables + '</div>';
 }
 
 /**
@@ -2773,15 +3055,41 @@ async function fetchComps() {
 
       const m = j.metrics || {};
       const name = j.company || '';
+      const industry = j.industry_class || '';
+      const isBank = industry === 'bank';
 
       // Compute margins from raw metrics
-      const grossMargin = (m.gross_profit && m.revenue) ? (m.gross_profit / m.revenue * 100) : null;
+      let grossMargin = (m.gross_profit && m.revenue) ? (m.gross_profit / m.revenue * 100) : null;
+      // Bank fallback: synthetic net-revenue margin (revenue - interest expense) / revenue.
+      // Not strictly "gross margin" but a comparable spread across financial firms.
+      let gmIsSynthetic = false;
+      if (grossMargin == null && isBank && m.revenue && m.interest_expense != null) {
+        grossMargin = (m.revenue - Math.abs(m.interest_expense)) / m.revenue * 100;
+        gmIsSynthetic = true;
+      }
       const opMargin = (m.operating_income && m.revenue) ? (m.operating_income / m.revenue * 100) : null;
       const netMargin = (m.net_income && m.revenue) ? (m.net_income / m.revenue * 100) : null;
       const de = (m.long_term_debt != null && m.stockholders_equity) ? (m.long_term_debt / m.stockholders_equity) : null;
 
-      function pct(v) { return v != null ? v.toFixed(1) + '%' : '—'; }
+      // FCF: prefer real free_cash_flow; fall back to OCF for banks where capex isn't reported
+      let fcfDisplay = m.free_cash_flow;
+      let fcfIsSynthetic = false;
+      if (fcfDisplay == null && isBank && m.operating_cash_flow != null) {
+        fcfDisplay = m.operating_cash_flow;
+        fcfIsSynthetic = true;
+      }
+
+      function pct(v, synth) {
+        if (v == null) return '—';
+        const s = v.toFixed(1) + '%';
+        return synth ? '<span title="Net-revenue spread (banks): (Revenue − Interest Expense) / Revenue" style="border-bottom:1px dotted var(--text-muted)">' + s + '*</span>' : s;
+      }
       function rat(v) { return v != null ? v.toFixed(2) + 'x' : '—'; }
+      function fcfCell(v, synth) {
+        if (v == null) return '—';
+        const s = fmtN(v);
+        return synth ? '<span title="Operating cash flow shown — capex not reported (bank)" style="border-bottom:1px dotted var(--text-muted)">' + s + '*</span>' : s;
+      }
 
       const row = document.getElementById('comp-row-' + tk);
       if (row) {
@@ -2790,10 +3098,10 @@ async function fetchComps() {
           '<td class="right">' + fmtN(m.revenue) + '</td>' +
           '<td class="right">' + fmtN(m.net_income) + '</td>' +
           '<td class="right">' + fmtN(m.ebitda) + '</td>' +
-          '<td class="right">' + pct(grossMargin) + '</td>' +
-          '<td class="right">' + pct(opMargin) + '</td>' +
-          '<td class="right">' + pct(netMargin) + '</td>' +
-          '<td class="right">' + fmtN(m.free_cash_flow) + '</td>' +
+          '<td class="right">' + pct(grossMargin, gmIsSynthetic) + '</td>' +
+          '<td class="right">' + pct(opMargin, false) + '</td>' +
+          '<td class="right">' + pct(netMargin, false) + '</td>' +
+          '<td class="right">' + fcfCell(fcfDisplay, fcfIsSynthetic) + '</td>' +
           '<td class="right">' + (m.eps_diluted != null ? '$' + m.eps_diluted.toFixed(2) : '—') + '</td>' +
           '<td class="right">' + rat(de) + '</td>';
         row.style.animation = 'fadeIn 0.3s ease';
@@ -3018,7 +3326,20 @@ async function loadSectionContent(section) {
 
     // Format raw SEC text into readable HTML with headers
     const formatted = formatSectionText(text);
-    if (body) body.innerHTML = formatted;
+    // For the Financial Statements section, prepend structured inline tables
+    // (Income / Balance / Cash Flow) from the loaded filing's XBRL data. Raw
+    // filing text stays available in a collapsible <details> below.
+    if (section === 'financial_statements' && _curData) {
+      const tables = buildInlineStatements();
+      if (tables) {
+        const raw = '<details class="inline-stmt-raw"><summary>View raw filing text (' + ((chars || 0) / 1000).toFixed(0) + 'K chars)</summary><div class="inline-stmt-raw-body">' + formatted + '</div></details>';
+        if (body) body.innerHTML = tables + raw;
+      } else if (body) {
+        body.innerHTML = formatted;
+      }
+    } else if (body) {
+      body.innerHTML = formatted;
+    }
 
     // Build TOC from headers
     buildSectionTOC(body);

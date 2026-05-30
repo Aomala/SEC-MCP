@@ -1812,6 +1812,138 @@ _BALANCE_CONCEPTS = [
     "Deposits",
 ]
 
+def _build_sector_income_statement(
+    industry_class: IndustryClass | None,
+    metrics: dict,
+    prior_metrics: dict,
+) -> list[dict]:
+    """Build a sector-templated, ordered income statement from extracted metrics.
+
+    Returns rows even when filer-specific XBRL concept names don't match the
+    standard list — this is the path that fixes banks (MS/JPM/GS) where
+    the XBRL-driven build comes back empty.
+    """
+    pm = prior_metrics or {}
+    rows: list[dict] = []
+
+    def add(label: str, key: str, *, bold: bool = False, fmt: str | None = None) -> None:
+        cur = metrics.get(key)
+        prior = pm.get(key)
+        if cur is None and prior is None:
+            return
+        rows.append({
+            "label": label,
+            "concept": key,
+            "value": cur,
+            "prior_value": prior,
+            "bold": bold,
+            "fmt": fmt,
+        })
+
+    ic = industry_class
+
+    if ic == IndustryClass.BANK:
+        add("Total Revenue (Net Revenues)", "revenue", bold=True)
+        add("Interest Expense", "interest_expense")
+        add("Provision for Credit Losses", "provision_for_credit_losses")
+        add("Operating Income", "operating_income", bold=True)
+        add("Other Income / (Expense)", "other_income_expense")
+        add("Income Before Tax", "income_before_tax", bold=True)
+        add("Income Tax Expense", "income_tax_expense")
+        add("Net Income", "net_income", bold=True)
+        add("EPS — Basic", "eps_basic", fmt="eps")
+        add("EPS — Diluted", "eps_diluted", fmt="eps")
+        add("Shares Outstanding", "shares_outstanding", fmt="shares")
+    elif ic == IndustryClass.INSURANCE:
+        add("Total Revenue (Premiums + Investment Income)", "revenue", bold=True)
+        add("Operating Expenses (Losses + Underwriting)", "operating_expenses")
+        add("Operating Income", "operating_income", bold=True)
+        add("Interest Expense", "interest_expense")
+        add("Income Before Tax", "income_before_tax", bold=True)
+        add("Income Tax Expense", "income_tax_expense")
+        add("Net Income", "net_income", bold=True)
+        add("EPS — Diluted", "eps_diluted", fmt="eps")
+    elif ic == IndustryClass.REIT:
+        add("Total Revenue (Rental + Other)", "revenue", bold=True)
+        add("Operating Expenses", "operating_expenses")
+        add("Depreciation & Amortization", "depreciation_amortization")
+        add("Operating Income", "operating_income", bold=True)
+        add("Interest Expense", "interest_expense")
+        add("Net Income", "net_income", bold=True)
+        # FFO reconciliation section header — analysts expect this for REITs
+        rows.append({
+            "label": "FFO Reconciliation",
+            "concept": "_section",
+            "value": None,
+            "prior_value": None,
+            "is_section": True,
+        })
+        add("Net Income (FFO start)", "net_income")
+        add("(+) Real Estate D&A", "depreciation_amortization")
+        ffo = metrics.get("reit_ffo")
+        if ffo is not None:
+            rows.append({
+                "label": "FFO (Funds From Operations)",
+                "concept": "reit_ffo",
+                "value": ffo,
+                "prior_value": pm.get("reit_ffo"),
+                "bold": True,
+            })
+    else:
+        # Standard / industrial template — used as fallback when XBRL build is empty
+        add("Revenue", "revenue", bold=True)
+        add("Cost of Revenue", "cost_of_revenue")
+        add("Gross Profit", "gross_profit", bold=True)
+        add("Research & Development", "rd_expense")
+        add("Selling, General & Administrative", "sga_expense")
+        add("Operating Expenses", "operating_expenses")
+        add("Operating Income (EBIT)", "operating_income", bold=True)
+        add("Interest Expense", "interest_expense")
+        add("Other Income / (Expense)", "other_income_expense")
+        add("Pre-Tax Income", "income_before_tax", bold=True)
+        add("Income Tax Expense", "income_tax_expense")
+        add("Net Income", "net_income", bold=True)
+        add("EPS — Basic", "eps_basic", fmt="eps")
+        add("EPS — Diluted", "eps_diluted", fmt="eps")
+        add("Shares Outstanding", "shares_outstanding", fmt="shares")
+
+    return rows
+
+
+def _insert_gross_margin_row(
+    rows: list[dict],
+    metrics: dict,
+    prior_metrics: dict,
+) -> list[dict]:
+    """Insert a 'Gross Margin %' row directly after Gross Profit when both
+    revenue and gross_profit are present.
+    """
+    if not rows:
+        return rows
+    rev = metrics.get("revenue")
+    gp = metrics.get("gross_profit")
+    if not (rev and gp):
+        return rows
+    cur_gm = (gp / rev) * 100.0
+    prev_rev = (prior_metrics or {}).get("revenue")
+    prev_gp = (prior_metrics or {}).get("gross_profit")
+    prev_gm = (prev_gp / prev_rev * 100.0) if (prev_rev and prev_gp) else None
+    out: list[dict] = []
+    inserted = False
+    for r in rows:
+        out.append(r)
+        if not inserted and (r.get("label") or "").lower().startswith("gross profit"):
+            out.append({
+                "label": "Gross Margin %",
+                "concept": "_gross_margin_pct",
+                "value": cur_gm,
+                "prior_value": prev_gm,
+                "fmt": "pct",
+            })
+            inserted = True
+    return out
+
+
 _CASHFLOW_CONCEPTS = [
     # Operating activities
     "NetCashProvidedByUsedInOperatingActivities",
@@ -1963,6 +2095,31 @@ def extract_financials(
         acc = filing_meta.get("accession_number")
         if acc and cik_val:
             result["sec_links"].update(_build_sec_links(cik_val, accession=acc))
+
+        # Derive fiscal_year + period_type from the actual filing the user
+        # selected — otherwise every period returns the string "latest" and
+        # the UI can't build YoY labels ("FY2025 vs FY2024").
+        if not year:
+            fd = filing_meta.get("filing_date") or ""
+            ft_for_label = filing_meta.get("form_type") or form_type or ""
+            try:
+                filing_year = int(fd[:4]) if fd else None
+                filing_month = int(fd[5:7]) if fd and len(fd) >= 7 else 0
+            except (ValueError, TypeError):
+                filing_year, filing_month = None, 0
+            if filing_year:
+                # Annual filings (10-K/20-F/40-F) filed Jan-Mar typically report
+                # the prior calendar year's FY (calendar-year fiscal companies).
+                # Companies with Sep fiscal year-end (e.g. AAPL) file Oct-Dec —
+                # filing_year matches their FY. Good enough heuristic.
+                is_annual = ft_for_label in ("10-K", "20-F", "40-F")
+                if is_annual and filing_month and filing_month <= 3:
+                    result["fiscal_year"] = filing_year - 1
+                else:
+                    result["fiscal_year"] = filing_year
+            result["period_type"] = (
+                "quarterly" if ft_for_label in ("10-Q", "6-K") else "annual"
+            )
 
     # ── Check disk cache ─────────────────────────────────────────────
     if filing_meta and filing_meta.get("accession_number"):
@@ -2350,9 +2507,32 @@ def extract_financials(
     # ── Statements ────────────────────────────────────────────────────
     # Build statement tables from companyfacts data
     if include_statements:
-        result["income_statement"] = _build_statement_from_facts(
+        xbrl_income = _build_statement_from_facts(
             facts_df, _INCOME_CONCEPTS, duration_pref=dur_pref,
             target_fp=target_fp, target_fy=target_fy)
+        # Sector template uses already-extracted metrics so banks/insurers/REITs
+        # always get an ordered, populated statement even when filer-specific
+        # XBRL concept names don't match the standard list.
+        sector_income = _build_sector_income_statement(
+            result.get("industry_class"),
+            result.get("metrics") or {},
+            result.get("prior_metrics") or {},
+        )
+        # For financial-template sectors prefer the deterministic sector layout;
+        # for industrials prefer the richer XBRL build (more line items) and
+        # fall back to the template only when XBRL returns nothing.
+        ic = result.get("industry_class")
+        if ic in (IndustryClass.BANK, IndustryClass.INSURANCE, IndustryClass.REIT):
+            result["income_statement"] = sector_income
+        else:
+            result["income_statement"] = xbrl_income or sector_income
+        # Always insert a Gross Margin % row right after Gross Profit when both
+        # revenue and gross_profit are present (one-line readout analysts expect).
+        result["income_statement"] = _insert_gross_margin_row(
+            result["income_statement"],
+            result.get("metrics") or {},
+            result.get("prior_metrics") or {},
+        )
         result["balance_sheet"] = _build_statement_from_facts(
             facts_df, _BALANCE_CONCEPTS, is_instant_statement=True,
             target_fp=target_fp, target_fy=target_fy)
