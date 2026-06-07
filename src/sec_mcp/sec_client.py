@@ -626,72 +626,83 @@ class SECClient:
             accession: Filter to specific filing accession number
             taxonomy: XBRL taxonomy to try first (default: "us-gaap")
         """
-        facts_data = self.get_company_facts(ticker_or_cik)
-        all_facts = facts_data.get("facts", {})
+        # Build the FULL (unfiltered) DataFrame once per (cik, taxonomy) and cache
+        # it — multi-period extraction filters this in-memory by accession/form,
+        # which avoids re-iterating thousands of facts (the dominant per-period
+        # cost when shaping multi-year/quarter history).
+        cik = self.resolve_cik(ticker_or_cik).zfill(10)
+        cache_key = f"{cik}:{taxonomy}"
+        if not hasattr(self, "_facts_df_cache"):
+            self._facts_df_cache = {}
+        entry = self._facts_df_cache.get(cache_key)
+        if entry is not None and not entry.expired(FACTS_CACHE_TTL):
+            df = entry.data
+        else:
+            facts_data = self.get_company_facts(ticker_or_cik)
+            all_facts = facts_data.get("facts", {})
 
-        # Build ordered list of taxonomies to try: requested first, then ifrs, then rest
-        taxonomies_to_try = [taxonomy]
-        if "ifrs-full" not in taxonomies_to_try:
-            taxonomies_to_try.append("ifrs-full")
-        for tax_key in all_facts:
-            if tax_key not in taxonomies_to_try and tax_key != "dei":
-                taxonomies_to_try.append(tax_key)
-        # dei last (mostly entity info, not financial data)
-        if "dei" not in taxonomies_to_try:
-            taxonomies_to_try.append("dei")
+            taxonomies_to_try = [taxonomy]
+            if "ifrs-full" not in taxonomies_to_try:
+                taxonomies_to_try.append("ifrs-full")
+            for tax_key in all_facts:
+                if tax_key not in taxonomies_to_try and tax_key != "dei":
+                    taxonomies_to_try.append(tax_key)
+            if "dei" not in taxonomies_to_try:
+                taxonomies_to_try.append("dei")
 
-        rows: list[dict] = []
-        used_taxonomy = None
+            rows: list[dict] = []
+            used_taxonomy = None
+            for tax in taxonomies_to_try:
+                taxonomy_data = all_facts.get(tax, {})
+                if not taxonomy_data:
+                    continue
+                tax_rows: list[dict] = []
+                for concept_name, concept_data in taxonomy_data.items():
+                    label = concept_data.get("label", concept_name)
+                    for unit_name, unit_facts in concept_data.get("units", {}).items():
+                        for fact in unit_facts:
+                            tax_rows.append({
+                                "concept": concept_name,
+                                "label": label,
+                                "value": fact.get("val") if "val" in fact else fact.get("value"),
+                                "start": fact.get("start"),
+                                "end": fact.get("end"),
+                                "filed": fact.get("filed"),
+                                "form": fact.get("form"),
+                                "accn": fact.get("accn"),
+                                "fy": fact.get("fy"),
+                                "fp": fact.get("fp"),
+                                "units": unit_name,
+                                "taxonomy": tax,
+                            })
+                if tax_rows:
+                    if not rows:
+                        used_taxonomy = tax
+                    rows.extend(tax_rows)
+                    if tax == taxonomy and len(tax_rows) > 10:
+                        break
 
-        for tax in taxonomies_to_try:
-            taxonomy_data = all_facts.get(tax, {})
-            if not taxonomy_data:
-                continue
+            if used_taxonomy and used_taxonomy != taxonomy:
+                log.info("Using %s taxonomy for %s (requested %s was empty)",
+                         used_taxonomy, ticker_or_cik, taxonomy)
 
-            tax_rows: list[dict] = []
-            for concept_name, concept_data in taxonomy_data.items():
-                label = concept_data.get("label", concept_name)
-                for unit_name, unit_facts in concept_data.get("units", {}).items():
-                    for fact in unit_facts:
-                        if form_type and fact.get("form") != form_type:
-                            continue
-                        if accession and fact.get("accn") != accession:
-                            continue
-                        tax_rows.append({
-                            "concept": concept_name,
-                            "label": label,
-                            "value": fact.get("val") if "val" in fact else fact.get("value"),
-                            "start": fact.get("start"),
-                            "end": fact.get("end"),
-                            "filed": fact.get("filed"),
-                            "form": fact.get("form"),
-                            "accn": fact.get("accn"),
-                            "fy": fact.get("fy"),
-                            "fp": fact.get("fp"),
-                            "units": unit_name,
-                            "taxonomy": tax,
-                        })
+            df = pd.DataFrame(rows)
+            if not df.empty:
+                df["end"] = pd.to_datetime(df["end"], errors="coerce")
+                df["filed"] = pd.to_datetime(df["filed"], errors="coerce")
+                df = df.sort_values("end", ascending=False)
+            # Bound memory: keep at most ~24 companies' frames cached.
+            if len(self._facts_df_cache) > 24:
+                self._facts_df_cache.clear()
+            self._facts_df_cache[cache_key] = _CacheEntry(df)
 
-            if tax_rows:
-                if not rows:
-                    used_taxonomy = tax
-                rows.extend(tax_rows)
-                # If the primary taxonomy had data, don't merge others (avoid duplicates)
-                if tax == taxonomy and len(tax_rows) > 10:
-                    break
-
-        if used_taxonomy and used_taxonomy != taxonomy:
-            log.info(
-                "Using %s taxonomy for %s (requested %s was empty)",
-                used_taxonomy, ticker_or_cik, taxonomy,
-            )
-
-        df = pd.DataFrame(rows)
-        if not df.empty:
-            df["end"] = pd.to_datetime(df["end"], errors="coerce")
-            df["filed"] = pd.to_datetime(df["filed"], errors="coerce")
-            df = df.sort_values("end", ascending=False)
-
+        # In-memory filter (cheap) for the requested filing/form.
+        if df.empty:
+            return df
+        if form_type is not None:
+            df = df[df["form"] == form_type]
+        if accession is not None:
+            df = df[df["accn"] == accession]
         return df
 
     # ── Single concept history ────────────────────────────────────────

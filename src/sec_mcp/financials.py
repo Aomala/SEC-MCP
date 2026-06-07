@@ -3230,44 +3230,104 @@ def sec_to_fmp_statements(result: dict) -> dict:
     return {"income": income, "balance": balance, "cashflow": cashflow}
 
 
+_FP_RANK = {"Q1": 1, "Q2": 2, "H1": 2, "Q3": 3, "M9": 3, "Q4": 4, "FY": 4}
+
+
+def _quarter_rank(result: dict) -> int | None:
+    fp = (result.get("quarter_label") or "").split()
+    return _FP_RANK.get(fp[0].upper()) if fp else None
+
+
+def _decumulate_quarters_inmemory(results: list[dict]) -> list[dict]:
+    """Turn a list of per-quarter YTD extractions into standalone 3-month
+    quarters using the adjacent quarter already in hand (Q2=H1-Q1, Q3=9M-H1).
+    No re-extraction — pure arithmetic — so it's ~free vs re-fetching filings.
+    """
+    by_key: dict[tuple, dict] = {}
+    for r in results:
+        fy, rk = r.get("fiscal_year"), _quarter_rank(r)
+        if isinstance(fy, int) and rk:
+            by_key[(fy, rk)] = r
+    for r in results:
+        fy, rk = r.get("fiscal_year"), _quarter_rank(r)
+        cm = r.get("metrics") or {}
+        if isinstance(fy, int) and rk and rk > 1:
+            prior = by_key.get((fy, rk - 1))
+            pm = (prior or {}).get("metrics") or {}
+            if pm:
+                for k in _FLOW_DECUM_METRICS:
+                    cv, pv = cm.get(k), pm.get(k)
+                    if cv is not None and pv is not None:
+                        cm[k] = cv - pv
+                ocf, capex = cm.get("operating_cash_flow"), cm.get("capital_expenditures")
+                if ocf is not None and capex is not None:
+                    cm["free_cash_flow"] = ocf - abs(capex)
+                ni, sh = cm.get("net_income"), cm.get("shares_outstanding")
+                if ni is not None and sh:
+                    cm["eps_basic"] = round(ni / sh, 2)
+                    cm["eps_diluted"] = round(ni / sh, 2)
+        # Q1 YTD already equals the standalone quarter.
+        r["is_ytd"] = False
+        if rk:
+            r["quarter_label"] = f"Q{min(rk, 4)} (Standalone)"
+    return results
+
+
 def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 8) -> dict:
     """SEC-native replacement for FMP's multi-period statements. Returns
-    {ticker, period, income[], balance[], cashflow[], source:"sec"} with rows
-    newest-first — a drop-in for the old FMP-backed /api/financials-history.
-    Quarters are standalone (decumulated). FMP is NOT used anywhere here.
+    {ticker, period, income[], balance[], cashflow[], source:"sec"} newest-first
+    — a drop-in for the old FMP-backed /api/financials-history. Quarters are
+    standalone. FMP is NOT used. Periods are extracted in PARALLEL as YTD, then
+    quarters are decumulated in-memory (avoids a 2nd extraction per quarter).
     """
     tk = ticker.upper()
     is_q = period == "quarter"
     form = "10-Q" if is_q else "10-K"
-    income: list[dict] = []
-    balance: list[dict] = []
-    cashflow: list[dict] = []
+    want = min(max(limit, 1), 12)
+    # Pull one extra quarter so the oldest returned has a decumulation neighbour.
+    fetch_n = want + 1 if is_q else want
     try:
         client = get_sec_client()
-        filings = client.get_filings_smart(tk, form_type=form, limit=max(limit + 2, 12)) or []
+        filings = client.get_filings_smart(tk, form_type=form, limit=max(fetch_n, 12)) or []
+        accs: list[str] = []
         seen: set[str] = set()
         for f in filings:
-            if len(income) >= limit:
-                break
-            acc = f.accession_number
-            if not acc or acc in seen:
-                continue
-            seen.add(acc)
+            a = f.accession_number
+            if a and a not in seen:
+                seen.add(a)
+                accs.append(a)
+        accs = accs[:fetch_n]
+
+        def _ex(acc: str) -> dict | None:
             try:
-                data = extract_financials(tk, accession=acc, standalone_quarter=is_q)
+                # Extract as YTD (fast: single companyfacts parse, no inner re-fetch).
+                return extract_financials(tk, accession=acc, standalone_quarter=False)
             except Exception as exc:
                 log.debug("history extract failed for %s/%s: %s", tk, acc, exc)
-                continue
-            if not data or not (data.get("metrics") or {}).get("revenue"):
-                continue
+                return None
+
+        with ThreadPoolExecutor(max_workers=min(8, max(1, len(accs)))) as ex:
+            results = [r for r in ex.map(_ex, accs)
+                       if r and (r.get("metrics") or {}).get("revenue") is not None]
+
+        # newest-first by report period end
+        results.sort(key=lambda r: (r.get("filing_info") or {}).get("report_date") or "", reverse=True)
+        if is_q:
+            results = _decumulate_quarters_inmemory(results)
+        results = results[:want]
+
+        income, balance, cashflow = [], [], []
+        for data in results:
             rows = sec_to_fmp_statements(data)
             income.append(rows["income"])
             balance.append(rows["balance"])
             cashflow.append(rows["cashflow"])
+        return {"ticker": tk, "period": period, "income": income,
+                "balance": balance, "cashflow": cashflow, "source": "sec"}
     except Exception as exc:
         log.warning("get_fmp_shaped_history failed for %s: %s", tk, exc)
-    return {"ticker": tk, "period": period, "income": income,
-            "balance": balance, "cashflow": cashflow, "source": "sec"}
+        return {"ticker": tk, "period": period, "income": [],
+                "balance": [], "cashflow": [], "source": "sec"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
