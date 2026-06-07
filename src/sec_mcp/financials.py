@@ -115,16 +115,28 @@ def _find_filing_accession(
         return None
 
     if year is not None:
-        # Filter to filings from the target year or year+1
-        # (companies often file annual reports in Jan/Feb of the following year)
-        matching = [
+        # Match on the REPORT period-end (fiscal) year — the authoritative basis
+        # for "which fiscal year is this". filing_date lags the period end (a
+        # Sept-FY company files FY2024 in Nov 2024; a Dec-FY company files FY2024
+        # in Feb 2025), so matching filing_date mislabels periods. Prefer the
+        # filing whose reportDate falls in the requested year.
+        by_report = [
             f for f in filings
-            if f.filing_date and any(
-                f.filing_date.startswith(str(y)) for y in (year, year + 1)
-            )
+            if getattr(f, "report_date", "") and f.report_date.startswith(str(year))
         ]
-        if matching:
-            filings = matching
+        if by_report:
+            filings = by_report
+        else:
+            # Fallback for filings missing reportDate: keep the old filing_date
+            # window (year or the following calendar year for Jan/Feb filers).
+            matching = [
+                f for f in filings
+                if f.filing_date and any(
+                    f.filing_date.startswith(str(y)) for y in (year, year + 1)
+                )
+            ]
+            if matching:
+                filings = matching
 
     if not filings:
         return None
@@ -135,6 +147,7 @@ def _find_filing_accession(
         "accession_number": best.accession_number,
         "filing_date": best.filing_date,
         "form_type": best.form_type,
+        "report_date": getattr(best, "report_date", ""),
     }
 
 
@@ -574,6 +587,45 @@ def _filter_by_duration(
     """
     if "start" not in df.columns:
         return df
+
+    # ── Standalone 3-month quarter selection (10-Q flow metrics) ────────────
+    # 10-Qs tag BOTH the YTD duration (e.g. Q3 = 273 days) AND the standalone
+    # 3-month quarter (~90 days) under the SAME fp — so fp-based selection keeps
+    # the YTD. For Fineas we want the standalone quarter: among facts at the
+    # latest period-end, take the shortest (~3-month) duration. The filer has
+    # already done the decumulation; we just pick the right context. If a filer
+    # only tagged YTD (no <=100-day fact), we fall through to the YTD value.
+    if prefer == "standalone_q":
+        work = df.copy()
+        start_dt = pd.to_datetime(work["start"], errors="coerce")
+        end_dt = pd.to_datetime(work[end_col], errors="coerce")
+        work["_dur"] = (end_dt - start_dt).dt.days
+        is_instant = work["start"].isna() | work["_dur"].isna()
+        instant_rows = work[is_instant]
+        dur_rows = work[~is_instant]
+        if not dur_rows.empty:
+            if target_fy is not None and "fy" in dur_rows.columns:
+                fy_match = dur_rows[pd.to_numeric(dur_rows["fy"], errors="coerce") == target_fy]
+                if not fy_match.empty:
+                    dur_rows = fy_match
+            latest_end = pd.to_datetime(dur_rows[end_col], errors="coerce").max()
+            at_latest = dur_rows[pd.to_datetime(dur_rows[end_col], errors="coerce") == latest_end]
+            # Take the YTD-through-this-quarter = the LONGEST duration ending at
+            # the current period end (uniform for income AND cash-flow, whether or
+            # not the filer also tagged a standalone 3-month context). The caller
+            # then decumulates (currentYTD - priorYTD) to get the standalone
+            # quarter — never double-counting a directly-tagged 3-month value.
+            picked = at_latest
+            concept_col = _find_column(at_latest, ("concept", "Concept", "tag", "Tag"))
+            if concept_col is not None:
+                idx = at_latest.groupby(concept_col)["_dur"].idxmax()
+                picked = at_latest.loc[idx]
+            dur_rows = picked
+        result = pd.concat([instant_rows, dur_rows], ignore_index=True)
+        result.drop(columns=["_dur"], inplace=True, errors="ignore")
+        if end_col in result.columns:
+            result = result.sort_values(end_col, ascending=False)
+        return result
 
     # ── Primary: fp-based selection ─────────────────────────────────────────
     if target_fp and "fp" in df.columns:
@@ -1977,6 +2029,75 @@ _CASHFLOW_CONCEPTS = [
 #  Core extraction
 # ═══════════════════════════════════════════════════════════════════════════
 
+# FLOW metrics (income statement + cash flow). In standalone-quarter mode these
+# are taken as the YTD-through-this-quarter, then decumulated (currentYTD -
+# priorYTD) to the 3-month quarter. Balance-sheet (instant) items and per-share
+# values are NOT in this set — they are point-in-time, not cumulative.
+_FLOW_DECUM_METRICS = (
+    # Income statement
+    "revenue", "cost_of_revenue", "gross_profit", "operating_income",
+    "operating_expenses", "sga_expense", "rd_expense", "interest_expense",
+    "income_tax_expense", "depreciation_amortization", "provision_for_credit_losses",
+    "other_income_expense", "income_before_tax", "share_based_compensation",
+    "net_income", "ebitda",
+    # Cash flow
+    "operating_cash_flow", "investing_cash_flow", "financing_cash_flow",
+    "capital_expenditures", "dividends_paid", "shares_repurchased",
+    "sbc_cash_flow", "acquisitions", "proceeds_from_debt", "repayment_of_debt",
+    "free_cash_flow",
+)
+
+
+def _decumulate_cash_flow(
+    result: dict, ticker_or_cik: str, filing_meta: dict | None, target_fy: int | None
+) -> None:
+    """Turn YTD cash-flow metrics into the standalone 3-month quarter by
+    subtracting the prior 10-Q's YTD (Q2 = H1 - Q1, Q3 = 9M - H1). Income-
+    statement metrics are left alone (already taken at the 3-month tag). Only
+    runs for Q2/Q3-type periods; Q1 YTD already equals the standalone quarter.
+    """
+    try:
+        cur_acc = (filing_meta or {}).get("accession_number")
+        cm = result.get("metrics") or {}
+        if not cur_acc or not cm:
+            return
+        client = get_sec_client()
+        filings = client.get_filings_smart(ticker_or_cik, form_type="10-Q", limit=8)
+        accs = [f.accession_number for f in (filings or [])]
+        if cur_acc not in accs:
+            return
+        idx = accs.index(cur_acc)
+        if idx + 1 >= len(accs):
+            return  # no prior 10-Q to subtract
+        prior = extract_financials(
+            ticker_or_cik, accession=accs[idx + 1], standalone_quarter=False
+        )
+        if not prior or not prior.get("metrics"):
+            return
+        # Only subtract when the prior quarter is the SAME fiscal year (so we're
+        # genuinely peeling one quarter off a YTD, not crossing a year boundary).
+        if target_fy is not None and prior.get("fiscal_year") not in (target_fy, None):
+            return
+        pm = prior["metrics"]
+        for k in _FLOW_DECUM_METRICS:
+            cv, pv = cm.get(k), pm.get(k)
+            if cv is not None and pv is not None:
+                cm[k] = cv - pv
+        # Recompute free cash flow from the decumulated components.
+        ocf, capex = cm.get("operating_cash_flow"), cm.get("capital_expenditures")
+        if ocf is not None and capex is not None:
+            cm["free_cash_flow"] = ocf - abs(capex)
+        # EPS is per-period, not cumulative — recompute from decumulated net
+        # income over shares outstanding (weighted shares aren't always tagged;
+        # period-end shares are a close proxy and far better than the YTD EPS).
+        ni, shares = cm.get("net_income"), cm.get("shares_outstanding")
+        if ni is not None and shares:
+            cm["eps_basic"] = round(ni / shares, 2)
+            cm["eps_diluted"] = round(ni / shares, 2)
+    except Exception as exc:  # never let decumulation break extraction
+        log.debug("cash-flow decumulation failed for %s: %s", ticker_or_cik, exc)
+
+
 def extract_financials(
     ticker_or_cik: str,
     *,
@@ -1986,6 +2107,7 @@ def extract_financials(
     include_statements: bool = False,
     include_segments: bool = False,
     period_index: int = 0,
+    standalone_quarter: bool = False,
 ) -> dict | None:
     """Extract standardized financials for one company.
 
@@ -2071,12 +2193,22 @@ def extract_financials(
                     if f.accession_number == accession:
                         filing_meta["filing_date"] = f.filing_date
                         filing_meta["form_type"] = f.form_type
+                        filing_meta["report_date"] = getattr(f, "report_date", "")
                         found = True
                         break
                 if found:
                     break
         except Exception as exc:
             log.warning("Filing metadata lookup failed for %s: %s", ticker_or_cik, exc)
+
+        # Derive fiscal_year + period_type from the filing's report period-end
+        # (authoritative) so accession-targeted extractions are labelled the same
+        # way as year-targeted ones.
+        rd = (filing_meta or {}).get("report_date") or ""
+        ftl = (filing_meta or {}).get("form_type") or form_type or ""
+        if rd and len(rd) >= 4 and rd[:4].isdigit():
+            result["fiscal_year"] = int(rd[:4])
+        result["period_type"] = "quarterly" if ftl in ("10-Q", "6-K") else "annual"
     else:
         # Search by year/form_type — _find_filing_accession uses get_filings_smart
         # which auto-tries FPI alternatives (20-F for 10-K, 6-K for 10-Q)
@@ -2096,36 +2228,43 @@ def extract_financials(
         if acc and cik_val:
             result["sec_links"].update(_build_sec_links(cik_val, accession=acc))
 
-        # Derive fiscal_year + period_type from the actual filing the user
-        # selected — otherwise every period returns the string "latest" and
-        # the UI can't build YoY labels ("FY2025 vs FY2024").
-        if not year:
+        # Derive fiscal_year + period_type from the ACTUAL filing selected.
+        # Authoritative source = the report period-end (reportDate). The fiscal
+        # year is the calendar year of the period END (AAPL FY2024 ends
+        # 2024-09-28 -> FY2024), which is correct for any fiscal-year-end month
+        # and any filing lag. Only fall back to the filing_date heuristic when a
+        # filing somehow lacks a reportDate.
+        ft_for_label = filing_meta.get("form_type") or form_type or ""
+        report_date = filing_meta.get("report_date") or ""
+        if report_date and len(report_date) >= 4 and report_date[:4].isdigit():
+            result["fiscal_year"] = int(report_date[:4])
+        else:
             fd = filing_meta.get("filing_date") or ""
-            ft_for_label = filing_meta.get("form_type") or form_type or ""
             try:
                 filing_year = int(fd[:4]) if fd else None
                 filing_month = int(fd[5:7]) if fd and len(fd) >= 7 else 0
             except (ValueError, TypeError):
                 filing_year, filing_month = None, 0
             if filing_year:
-                # Annual filings (10-K/20-F/40-F) filed Jan-Mar typically report
-                # the prior calendar year's FY (calendar-year fiscal companies).
-                # Companies with Sep fiscal year-end (e.g. AAPL) file Oct-Dec —
-                # filing_year matches their FY. Good enough heuristic.
                 is_annual = ft_for_label in ("10-K", "20-F", "40-F")
                 if is_annual and filing_month and filing_month <= 3:
                     result["fiscal_year"] = filing_year - 1
                 else:
                     result["fiscal_year"] = filing_year
-            result["period_type"] = (
-                "quarterly" if ft_for_label in ("10-Q", "6-K") else "annual"
-            )
+        result["period_type"] = (
+            "quarterly" if ft_for_label in ("10-Q", "6-K") else "annual"
+        )
 
     # ── Check disk cache ─────────────────────────────────────────────
-    if filing_meta and filing_meta.get("accession_number"):
-        cached = disk_cache.get(ticker_or_cik, filing_meta["accession_number"])
+    # Key by accession + standalone flag so 3-month and YTD quarterly results
+    # never collide in the cache.
+    cache_acc = (filing_meta or {}).get("accession_number", "")
+    if cache_acc and standalone_quarter:
+        cache_acc = f"{cache_acc}#sq"
+    if filing_meta and cache_acc:
+        cached = disk_cache.get(ticker_or_cik, cache_acc)
         if cached and "data" in cached:
-            log.info("Disk cache hit for %s / %s", ticker_or_cik, filing_meta["accession_number"])
+            log.info("Disk cache hit for %s / %s", ticker_or_cik, cache_acc)
             return cached["data"]
 
     # ── Get XBRL facts ────────────────────────────────────────────────
@@ -2205,9 +2344,14 @@ def extract_financials(
     sourced: dict[str, str | None] = {}
     confidence: dict[str, float] = {}
 
-    # Duration preference: quarterly for 10-Q/6-K, annual for 10-K/20-F
+    # Duration preference: quarterly for 10-Q/6-K, annual for 10-K/20-F.
+    # standalone_quarter=True asks for the 3-month standalone quarter (Fineas),
+    # otherwise quarterly flow metrics return the SEC-native YTD (dashboard default).
     is_quarterly = actual_form in ("10-Q", "10-q", "6-K", "6-k")
-    dur_pref = "quarterly" if is_quarterly else "annual"
+    if is_quarterly:
+        dur_pref = "standalone_q" if standalone_quarter else "quarterly"
+    else:
+        dur_pref = "annual"
     pq = is_quarterly  # legacy compat
     result["period_type"] = "quarterly" if is_quarterly else "annual"
 
@@ -2226,15 +2370,26 @@ def extract_financials(
         if not fy_vals.empty:
             target_fy = int(fy_vals.mode().iloc[0])
             log.debug("Filing fy (authoritative): %s", target_fy)
+            # DEI fy is the filer-declared fiscal year — authoritative for BOTH
+            # annual and quarterly. report_date-year is wrong for quarters whose
+            # period end falls in a different calendar year than the fiscal-year
+            # end (e.g. AAPL Q1 FY2026 ends Dec 2025). Override the provisional
+            # report_date label so fiscal_year + the decumulation FY-match are right.
+            result["fiscal_year"] = target_fy
 
     # Flag YTD vs standalone for 10-Q data
     if is_quarterly and target_fp:
         fp_upper = target_fp.upper()
-        result["is_ytd"] = fp_upper in ("Q2", "Q3", "H1", "M9")
-        result["quarter_label"] = {
-            "Q1": "Q1 (Standalone)", "Q2": "Q2 (6-month YTD)",
-            "Q3": "Q3 (9-month YTD)", "H1": "H1 (6-month)", "M9": "M9 (9-month)"
-        }.get(fp_upper, fp_upper)
+        if standalone_quarter:
+            # Flow metrics are decumulated to the 3-month standalone quarter.
+            result["is_ytd"] = False
+            result["quarter_label"] = f"{fp_upper} (Standalone)"
+        else:
+            result["is_ytd"] = fp_upper in ("Q2", "Q3", "H1", "M9")
+            result["quarter_label"] = {
+                "Q1": "Q1 (Standalone)", "Q2": "Q2 (6-month YTD)",
+                "Q3": "Q3 (9-month YTD)", "H1": "H1 (6-month)", "M9": "M9 (9-month)"
+            }.get(fp_upper, fp_upper)
 
     # Revenue (industry-aware, with confidence)
     rev_concepts = get_revenue_concepts(industry)
@@ -2540,11 +2695,16 @@ def extract_financials(
             facts_df, _CASHFLOW_CONCEPTS, duration_pref=dur_pref,
             target_fp=target_fp, target_fy=target_fy)
 
+    # ── Standalone-quarter cash-flow decumulation (YTD-only metrics) ──
+    if (standalone_quarter and is_quarterly and result.get("metrics")
+            and (target_fp or "").upper() in ("Q2", "Q3", "H1", "M9")):
+        _decumulate_cash_flow(result, ticker_or_cik, filing_meta, target_fy)
+
     # ── Write to disk cache ──────────────────────────────────────────
     if filing_meta and filing_meta.get("accession_number"):
         try:
             summary = generate_local_summary(result)
-            disk_cache.put(ticker_or_cik, filing_meta["accession_number"], result, summary)
+            disk_cache.put(ticker_or_cik, cache_acc, result, summary)
         except Exception as exc:
             log.warning("Disk cache write failed for %s: %s", ticker_or_cik, exc)
 
@@ -2975,6 +3135,139 @@ def generate_local_summary(data: dict) -> str:
         parts.append(f"*[View on EDGAR]({filing_link})*")
 
     return "\n".join(parts)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  FMP-compatible statement shaping (drop-in for downstream FMP consumers)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _period_label(result: dict) -> tuple[str, str, str]:
+    """(date, fiscalYear, period) for an FMP-shaped row, from SEC fields."""
+    fi = result.get("filing_info") or {}
+    date = fi.get("report_date") or fi.get("filing_date") or ""
+    fy = result.get("fiscal_year")
+    fy_s = str(fy) if isinstance(fy, int) else ""
+    if result.get("period_type") == "quarterly":
+        ql = (result.get("quarter_label") or "").split()
+        period = ql[0] if ql else "Q"
+    else:
+        period = "FY"
+    return date, fy_s, period
+
+
+def sec_to_fmp_statements(result: dict) -> dict:
+    """Convert one extract_financials() result into FMP-shaped income /
+    balance / cash-flow row dicts. Field names mirror Financial Modeling Prep's
+    `stable` API so existing FMP consumers (e.g. Fineas) parse it unchanged.
+    Outflows (capex, dividends, buybacks) use FMP's negative-sign convention.
+    """
+    m = result.get("metrics") or {}
+    fi = result.get("filing_info") or {}
+    date, fy, period = _period_label(result)
+    sym = result.get("ticker_or_cik", "")
+    ccy = result.get("reporting_currency") or "USD"
+    cik = result.get("cik")
+    fd = fi.get("filing_date", "")
+    base = {"date": date, "symbol": sym, "reportedCurrency": ccy, "cik": cik,
+            "filingDate": fd, "acceptedDate": fd, "fiscalYear": fy, "period": period}
+
+    def neg(v):
+        return -abs(v) if v is not None else None
+
+    income = {**base,
+        "revenue": m.get("revenue"), "costOfRevenue": m.get("cost_of_revenue"),
+        "grossProfit": m.get("gross_profit"),
+        "researchAndDevelopmentExpenses": m.get("rd_expense"),
+        "generalAndAdministrativeExpenses": m.get("sga_expense"),
+        "sellingGeneralAndAdministrativeExpenses": m.get("sga_expense"),
+        "operatingExpenses": m.get("operating_expenses"),
+        "depreciationAndAmortization": m.get("depreciation_amortization"),
+        "ebitda": m.get("ebitda"), "ebit": m.get("operating_income"),
+        "operatingIncome": m.get("operating_income"),
+        "totalOtherIncomeExpensesNet": m.get("other_income_expense"),
+        "interestExpense": m.get("interest_expense"),
+        "incomeBeforeTax": m.get("income_before_tax"),
+        "incomeTaxExpense": m.get("income_tax_expense"),
+        "netIncome": m.get("net_income"), "bottomLineNetIncome": m.get("net_income"),
+        "eps": m.get("eps_basic"), "epsDiluted": m.get("eps_diluted"),
+        "weightedAverageShsOut": m.get("shares_outstanding"),
+        "weightedAverageShsOutDil": m.get("shares_outstanding")}
+
+    balance = {**base,
+        "cashAndCashEquivalents": m.get("cash_and_equivalents"),
+        "netReceivables": m.get("accounts_receivable"),
+        "accountsReceivables": m.get("accounts_receivable"),
+        "inventory": m.get("inventory"),
+        "totalCurrentAssets": m.get("current_assets"),
+        "propertyPlantEquipmentNet": m.get("property_plant_equipment"),
+        "goodwill": m.get("goodwill"), "intangibleAssets": m.get("intangible_assets"),
+        "totalAssets": m.get("total_assets"),
+        "accountPayables": m.get("accounts_payable"),
+        "deferredRevenue": m.get("deferred_revenue"),
+        "shortTermDebt": m.get("short_term_debt"),
+        "totalCurrentLiabilities": m.get("current_liabilities"),
+        "longTermDebt": m.get("long_term_debt"),
+        "totalLiabilities": m.get("total_liabilities"),
+        "totalDebt": m.get("total_debt"), "netDebt": m.get("net_debt"),
+        "retainedEarnings": m.get("retained_earnings"),
+        "totalStockholdersEquity": m.get("stockholders_equity"),
+        "totalEquity": m.get("total_equity") or m.get("stockholders_equity")}
+
+    cashflow = {**base,
+        "netIncome": m.get("net_income"),
+        "depreciationAndAmortization": m.get("depreciation_amortization"),
+        "stockBasedCompensation": m.get("share_based_compensation") or m.get("sbc_cash_flow"),
+        "operatingCashFlow": m.get("operating_cash_flow"),
+        "netCashProvidedByOperatingActivities": m.get("operating_cash_flow"),
+        "capitalExpenditure": neg(m.get("capital_expenditures")),
+        "freeCashFlow": m.get("free_cash_flow"),
+        "netCashProvidedByInvestingActivities": m.get("investing_cash_flow"),
+        "netCashProvidedByFinancingActivities": m.get("financing_cash_flow"),
+        "commonDividendsPaid": neg(m.get("dividends_paid")),
+        "netDividendsPaid": neg(m.get("dividends_paid")),
+        "commonStockRepurchased": neg(m.get("shares_repurchased"))}
+
+    return {"income": income, "balance": balance, "cashflow": cashflow}
+
+
+def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 8) -> dict:
+    """SEC-native replacement for FMP's multi-period statements. Returns
+    {ticker, period, income[], balance[], cashflow[], source:"sec"} with rows
+    newest-first — a drop-in for the old FMP-backed /api/financials-history.
+    Quarters are standalone (decumulated). FMP is NOT used anywhere here.
+    """
+    tk = ticker.upper()
+    is_q = period == "quarter"
+    form = "10-Q" if is_q else "10-K"
+    income: list[dict] = []
+    balance: list[dict] = []
+    cashflow: list[dict] = []
+    try:
+        client = get_sec_client()
+        filings = client.get_filings_smart(tk, form_type=form, limit=max(limit + 2, 12)) or []
+        seen: set[str] = set()
+        for f in filings:
+            if len(income) >= limit:
+                break
+            acc = f.accession_number
+            if not acc or acc in seen:
+                continue
+            seen.add(acc)
+            try:
+                data = extract_financials(tk, accession=acc, standalone_quarter=is_q)
+            except Exception as exc:
+                log.debug("history extract failed for %s/%s: %s", tk, acc, exc)
+                continue
+            if not data or not (data.get("metrics") or {}).get("revenue"):
+                continue
+            rows = sec_to_fmp_statements(data)
+            income.append(rows["income"])
+            balance.append(rows["balance"])
+            cashflow.append(rows["cashflow"])
+    except Exception as exc:
+        log.warning("get_fmp_shaped_history failed for %s: %s", tk, exc)
+    return {"ticker": tk, "period": period, "income": income,
+            "balance": balance, "cashflow": cashflow, "source": "sec"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════

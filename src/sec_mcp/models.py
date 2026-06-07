@@ -24,6 +24,10 @@ class FilingMetadata(BaseModel):
     form_type: str
     filing_date: str
     description: str | None = None
+    # Period of report (fiscal period END, e.g. "2024-09-28"). Authoritative
+    # basis for the fiscal-year label — NOT filing_date, which lags the period
+    # end (by a full calendar year for Jan/Feb filers).
+    report_date: str = ""
 
 
 # ---------------------------------------------------------------------------

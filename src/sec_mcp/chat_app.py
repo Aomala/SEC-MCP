@@ -1413,47 +1413,33 @@ async def get_financials_history(ticker: str, period: str = "annual",
     tk = ticker.upper()
 
     from sec_mcp import supabase_cache
-    cache_type = "income_history"
+    # New cache_type ("sec_*") so we never serve stale FMP-sourced rows that may
+    # still be cached under the old "income_history" key.
+    cache_type = "sec_income_history"
     cached = supabase_cache.get_cached(tk, cache_type, period, date_from, date_to)
     if cached:
         return cached
 
     try:
-        from sec_mcp.fmp_client import (
-            get_income_statements,
-            get_balance_sheet,
-            get_cash_flow,
-            is_available as fmp_ok,
-        )
-        if not fmp_ok():
-            return {"ticker": tk, "error": "FMP API not configured", "income": [], "balance": [], "cashflow": []}
-
-        income = get_income_statements(tk, period=period, limit=limit)
-        balance = get_balance_sheet(tk, period=period, limit=limit)
-        cashflow = get_cash_flow(tk, period=period, limit=limit)
+        # SEC-native (XBRL) multi-period statements — FMP-shaped so existing
+        # consumers parse it unchanged. Quarters are standalone (decumulated).
+        from sec_mcp.financials import get_fmp_shaped_history
+        result = get_fmp_shaped_history(tk, period=period, limit=max(1, min(int(limit), 12)))
 
         # Apply date range filter if provided
-        if date_from:
-            income = [r for r in income if r.get("date", "") >= date_from]
-            balance = [r for r in balance if r.get("date", "") >= date_from]
-            cashflow = [r for r in cashflow if r.get("date", "") >= date_from]
-        if date_to:
-            income = [r for r in income if r.get("date", "") <= date_to]
-            balance = [r for r in balance if r.get("date", "") <= date_to]
-            cashflow = [r for r in cashflow if r.get("date", "") <= date_to]
+        for key in ("income", "balance", "cashflow"):
+            rows = result.get(key) or []
+            if date_from:
+                rows = [r for r in rows if r.get("date", "") >= date_from]
+            if date_to:
+                rows = [r for r in rows if r.get("date", "") <= date_to]
+            result[key] = rows
 
-        result = {
-            "ticker": tk,
-            "period": period,
-            "income": income,
-            "balance": balance,
-            "cashflow": cashflow,
-            "source": "fmp",
-        }
-        supabase_cache.set_cached(tk, cache_type, result, period, date_from, date_to)
+        if result.get("income"):
+            supabase_cache.set_cached(tk, cache_type, result, period, date_from, date_to)
         return result
     except Exception as exc:
-        log.warning("FMP history fetch failed for %s: %s", tk, exc)
+        log.warning("SEC history fetch failed for %s: %s", tk, exc)
         return {"ticker": tk, "error": str(exc), "income": [], "balance": [], "cashflow": []}
 
 

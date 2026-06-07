@@ -502,6 +502,7 @@ class SECClient:
                 form_type=form,
                 filing_date=dates[i] if i < len(dates) else "",
                 description=str(desc) if desc else None,
+                report_date=report_dates[i] if i < len(report_dates) else "",
             ))
 
             if len(results) >= limit:
