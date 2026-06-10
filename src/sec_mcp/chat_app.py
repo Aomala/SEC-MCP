@@ -124,6 +124,19 @@ async def _startup():
 _STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
+# Canonical metric series / chart-data / concept-graph endpoints (/api/v1/*)
+# — same router the standalone REST app mounts; the explorer page and Fineas
+# charts consume these.
+from sec_mcp.api.routes import metrics as _metrics_routes  # noqa: E402
+app.include_router(_metrics_routes.router)
+
+
+@app.get("/explorer")
+async def explorer_page():
+    """Interactive data explorer: ECharts time series, income waterfall, and
+    the per-filing calculation-tree view (the bad-match debugging surface)."""
+    return HTMLResponse((_STATIC_DIR / "explorer.html").read_text())
+
 
 class ChatRequest(BaseModel):
     message: str

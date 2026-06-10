@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
 # Import all route routers
-from sec_mcp.api.routes import companies, financials, filings, compare, screener, chat, export
+from sec_mcp.api.routes import companies, financials, filings, compare, screener, chat, export, metrics
 
 # Create logger for this module
 logger = logging.getLogger(__name__)
@@ -185,9 +185,12 @@ def create_api_app(
     
     # Include export router (endpoints for data export)
     app.include_router(export.router)
-    
+
+    # Include metrics router (canonical metric series, chart data, concept graphs)
+    app.include_router(metrics.router)
+
     # Log that app is fully configured
-    logger.info(f"FastAPI app created: {title} v{version} with 7 route groups")
+    logger.info(f"FastAPI app created: {title} v{version} with 8 route groups")
     
     # Return configured application
     return app

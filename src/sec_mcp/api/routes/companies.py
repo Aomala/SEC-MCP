@@ -8,7 +8,7 @@ GET /api/v1/companies/{ticker}/price -> PriceData (from core.market_data)
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Path
 from pydantic import BaseModel, Field
 
 # Import SEC client for company searches
@@ -68,7 +68,7 @@ class PriceData(BaseModel):
 
 @router.get("/{ticker}", response_model=CompanyProfile)
 async def get_company(
-    ticker: str = Field(..., description="Stock ticker symbol"),
+    ticker: str = Path(..., description="Stock ticker symbol"),
 ) -> CompanyProfile:
     """
     Get company profile and metadata.
@@ -132,7 +132,7 @@ async def get_company(
 
 @router.get("/{ticker}/price", response_model=PriceData)
 async def get_company_price(
-    ticker: str = Field(..., description="Stock ticker symbol"),
+    ticker: str = Path(..., description="Stock ticker symbol"),
 ) -> PriceData:
     """
     Get current price data for company.

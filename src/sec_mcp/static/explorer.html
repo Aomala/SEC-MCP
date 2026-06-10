@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEC Data Explorer</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0d10; --panel: #12151a; --line: #1f242c;
+    --text: #e8eaed; --dim: #8a919c; --accent: #5b9cf6;
+    --green: #34c08b; --red: #e5634c; --gold: #d9a441;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, "Inter", "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 22px;
+           border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; font-weight: 600; letter-spacing: .4px; margin-right: 8px; }
+  header span.sub { color: var(--dim); font-size: 12px; }
+  input, select, button {
+    background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 12px; font-size: 13px; outline: none;
+  }
+  input { width: 110px; text-transform: uppercase; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px 22px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+          padding: 14px 16px; min-height: 320px; }
+  .card.wide { grid-column: 1 / -1; }
+  .card h2 { font-size: 12px; font-weight: 600; color: var(--dim);
+             text-transform: uppercase; letter-spacing: .8px; margin-bottom: 8px; }
+  .chart { width: 100%; height: 290px; }
+  .chart.tall { height: 420px; }
+  #status { color: var(--dim); font-size: 12px; margin-left: auto; }
+  .flag { color: var(--gold); }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tabs button { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+  .tabs button.active { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SEC Data Explorer</h1>
+  <span class="sub">every number traceable to its filing</span>
+  <input id="ticker" value="AAPL" spellcheck="false">
+  <select id="period">
+    <option value="annual">Annual</option>
+    <option value="quarter">Quarterly</option>
+  </select>
+  <button class="primary" onclick="loadAll()">Load</button>
+  <span id="status"></span>
+</header>
+<main>
+  <div class="card"><h2>Revenue &amp; Net Income</h2><div id="c-rev" class="chart"></div></div>
+  <div class="card"><h2>Cash Flow (OCF / FCF / Capex)</h2><div id="c-cash" class="chart"></div></div>
+  <div class="card"><h2>Margins</h2><div id="c-margin" class="chart"></div></div>
+  <div class="card"><h2>Income Waterfall (latest period)</h2><div id="c-water" class="chart"></div></div>
+  <div class="card wide">
+    <h2>Calculation Tree — how this filing computes its statements</h2>
+    <div class="tabs" id="tree-tabs">
+      <button data-s="income" class="active">Income</button>
+      <button data-s="balance">Balance</button>
+      <button data-s="cashflow">Cash Flow</button>
+    </div>
+    <div id="c-tree" class="chart tall"></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const charts = {};
+const state = { concepts: null, stmt: "income" };
+const PALETTE = ["#5b9cf6", "#34c08b", "#e5634c", "#d9a441", "#9b7ef0"];
+
+function chart(id) {
+  if (!charts[id]) charts[id] = echarts.init($(id), null, { renderer: "canvas" });
+  return charts[id];
+}
+const fmtB = v => v == null ? "—" :
+  Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(1) + "B" :
+  Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (+v).toLocaleString();
+
+const BASE = {
+  backgroundColor: "transparent",
+  grid: { left: 56, right: 16, top: 28, bottom: 28 },
+  textStyle: { color: "#8a919c", fontSize: 11 },
+  tooltip: { trigger: "axis", backgroundColor: "#12151a", borderColor: "#1f242c",
+             textStyle: { color: "#e8eaed", fontSize: 12 },
+             valueFormatter: fmtB },
+  xAxis: { type: "category", axisLine: { lineStyle: { color: "#1f242c" } } },
+  yAxis: { type: "value", splitLine: { lineStyle: { color: "#1f242c" } },
+           axisLabel: { formatter: fmtB } },
+  legend: { top: 0, textStyle: { color: "#8a919c", fontSize: 11 } },
+};
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  return r.json();
+}
+
+function qualityMark(series) {
+  // synthesized / YTD-fallback points get a hollow style so estimates are
+  // visually honest
+  return (series.data || []).map((v, i) => {
+    const q = (series.quality || [])[i];
+    if (q === "q4_synthesized" || q === "ytd_fallback") {
+      return { value: v, itemStyle: { opacity: 0.55, borderType: "dashed" } };
+    }
+    return v;
+  });
+}
+
+async function loadAll() {
+  const t = $("ticker").value.trim().toUpperCase();
+  const p = $("period").value;
+  if (!t) return;
+  $("status").textContent = "loading " + t + "…";
+  try {
+    const cd = await getJSON(`/api/v1/chart-data/${t}?period=${p}&limit=12&metrics=` +
+      "revenue,net_income,gross_profit,operating_income,operating_cash_flow," +
+      "free_cash_flow,capital_expenditures");
+    const S = {}; cd.series.forEach(s => S[s.name] = s);
+    const labels = cd.labels;
+
+    chart("c-rev").setOption({ ...BASE,
+      xAxis: { ...BASE.xAxis, data: labels },
+      series: [
+        { name: "Revenue", type: "bar", data: qualityMark(S.revenue),
+          itemStyle: { color: PALETTE[0], borderRadius: [3, 3, 0, 0] } },
+        { name: "Net income", type: "line", data: qualityMark(S.net_income),
+          itemStyle: { color: PALETTE[1] }, lineStyle: { width: 2 }, smooth: true },
+      ]}, true);
+
+    chart("c-cash").setOption({ ...BASE,
+      xAxis: { ...BASE.xAxis, data: labels },
+      series: [
+        { name: "OCF", type: "bar", data: qualityMark(S.operating_cash_flow),
+          itemStyle: { color: PALETTE[0], borderRadius: [3, 3, 0, 0] } },
+        { name: "FCF", type: "bar", data: qualityMark(S.free_cash_flow),
+          itemStyle: { color: PALETTE[1], borderRadius: [3, 3, 0, 0] } },
+        { name: "Capex", type: "line", data: (S.capital_expenditures.data || []).map(v => v == null ? null : Math.abs(v)),
+          itemStyle: { color: PALETTE[2] }, lineStyle: { width: 2 } },
+      ]}, true);
+
+    const margin = (num, den) => (num.data || []).map((v, i) =>
+      v != null && den.data[i] ? +(100 * v / den.data[i]).toFixed(1) : null);
+    chart("c-margin").setOption({ ...BASE,
+      tooltip: { ...BASE.tooltip, valueFormatter: v => v == null ? "—" : v + "%" },
+      yAxis: { ...BASE.yAxis, axisLabel: { formatter: "{value}%" } },
+      xAxis: { ...BASE.xAxis, data: labels },
+      series: [
+        { name: "Gross", type: "line", data: margin(S.gross_profit, S.revenue), smooth: true },
+        { name: "Operating", type: "line", data: margin(S.operating_income, S.revenue), smooth: true },
+        { name: "Net", type: "line", data: margin(S.net_income, S.revenue), smooth: true },
+      ].map((s, i) => ({ ...s, itemStyle: { color: PALETTE[i] }, lineStyle: { width: 2 } }))}, true);
+
+    // Waterfall from the latest period: Revenue → Gross → Operating → Net
+    const last = labels.length - 1;
+    const rev = S.revenue.data[last], gp = S.gross_profit.data[last],
+          oi = S.operating_income.data[last], ni = S.net_income.data[last];
+    const steps = [
+      ["Revenue", rev, null],
+      ["COGS", gp != null && rev != null ? gp - rev : null, gp],
+      ["OpEx", oi != null && gp != null ? oi - gp : null, oi],
+      ["Other/Tax", ni != null && oi != null ? ni - oi : null, ni],
+      ["Net income", ni, null],
+    ];
+    let run = 0;
+    const base = [], vals = [], colors = [];
+    steps.forEach(([name, delta, after], i) => {
+      if (delta == null) { base.push(0); vals.push(0); colors.push(PALETTE[3]); return; }
+      if (i === 0 || i === steps.length - 1) { base.push(0); vals.push(delta); colors.push(PALETTE[0]); run = delta; }
+      else {
+        const next = after != null ? after : run + delta;
+        base.push(Math.min(run, next)); vals.push(Math.abs(run - next));
+        colors.push(next < run ? "#e5634c" : "#34c08b"); run = next;
+      }
+    });
+    chart("c-water").setOption({ ...BASE, legend: { show: false },
+      tooltip: { ...BASE.tooltip, trigger: "item",
+                 formatter: i => steps[i.dataIndex][0] + ": " + fmtB(vals[i.dataIndex] * (colors[i.dataIndex] === "#e5634c" ? -1 : 1)) },
+      xAxis: { ...BASE.xAxis, data: steps.map(s => s[0]) },
+      series: [
+        { type: "bar", stack: "w", data: base, itemStyle: { color: "transparent" }, silent: true },
+        { type: "bar", stack: "w", data: vals.map((v, i) => ({ value: v, itemStyle: { color: colors[i], borderRadius: 3 } })) },
+      ]}, true);
+
+    // Calc tree for the newest filing in the series
+    const mr = await getJSON(`/api/v1/metrics/${t}/revenue?period=${p}&limit=2`);
+    const acc = (mr.points || []).map(pt => pt.accession).filter(Boolean).pop();
+    state.concepts = acc ? await getJSON(`/api/v1/concepts/${t}/${acc}`) : null;
+    renderTree();
+    $("status").textContent = t + " loaded" + (acc ? " · filing " + acc : "");
+  } catch (e) {
+    $("status").textContent = "error: " + e.message;
+  }
+}
+
+function renderTree() {
+  const c = chart("c-tree");
+  const data = state.concepts && (state.concepts.calc[state.stmt] || state.concepts.pres[state.stmt]);
+  if (!data || !data.length) { c.clear(); return; }
+  const byName = {};
+  data.forEach(e => byName[e.child] = { name: e.child, children: [],
+    itemStyle: { color: e.weight < 0 ? "#e5634c" : "#34c08b" },
+    label: { color: "#e8eaed", fontSize: 11 } });
+  let roots = [];
+  data.forEach(e => {
+    if (e.parent && byName[e.parent]) byName[e.parent].children.push(byName[e.child]);
+    else roots.push(byName[e.child]);
+  });
+  c.setOption({
+    backgroundColor: "transparent",
+    tooltip: { backgroundColor: "#12151a", borderColor: "#1f242c",
+               textStyle: { color: "#e8eaed", fontSize: 12 } },
+    series: [{
+      type: "tree", data: roots.length === 1 ? roots : [{ name: state.stmt, children: roots }],
+      orient: "LR", left: 16, right: 220, top: 10, bottom: 10,
+      symbolSize: 8, initialTreeDepth: -1, roam: true,
+      lineStyle: { color: "#2a313b", width: 1 },
+      label: { position: "right", color: "#c8cdd4", fontSize: 11, distance: 6 },
+      leaves: { label: { position: "right" } },
+    }],
+  }, true);
+}
+
+$("tree-tabs").addEventListener("click", e => {
+  if (e.target.tagName !== "BUTTON") return;
+  document.querySelectorAll("#tree-tabs button").forEach(b => b.classList.remove("active"));
+  e.target.classList.add("active");
+  state.stmt = e.target.dataset.s;
+  renderTree();
+});
+window.addEventListener("resize", () => Object.values(charts).forEach(c => c.resize()));
+loadAll();
+</script>
+</body>
+</html>
