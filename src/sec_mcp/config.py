@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_key: str = ""
 
+    # Graph-based concept resolver (Phase 2):
+    #   off    — legacy 4-pass resolver only
+    #   shadow — run both, serve legacy, log disagreements
+    #   on     — graph resolver first, legacy as fallback
+    graph_resolver: str = "off"
+
     # Cache TTLs (seconds)
     cache_l1_ttl: int = 300      # 5 min in-memory
     cache_l2_ttl: int = 3600     # 1 hr disk
