@@ -64,6 +64,35 @@ src/sec_mcp/
 | `MONGODB_URI` | No | MongoDB connection for persistent cache |
 | `PORT` | No | Server port (default: 8877) |
 
+## Data Engine (Phase 1-4 upgrade, June 2026)
+
+- **Golden suite is the gate**: `pytest tests/golden -m integration` — 10 hand-verified
+  tickers (incl. FPIs). Any change to period selection or concept matching must keep it
+  green. Rebuild goldens with `python scripts/build_golden_values.py` (as-originally-
+  reported semantics). Regression snapshots: `python scripts/regression_compare.py
+  snapshot|diff`.
+- **Period selection** lives in `facts/periods.py`: facts are classified by their own
+  start/end duration, never `fy`/`fp` (those describe the filing, not the fact).
+  Latest-`filed` wins on duplicates.
+- **Filing lists for periodic forms** come from `sec_client.get_periodic_filings*`
+  (derived from companyfacts — full history) NOT `get_filings` (submissions `recent`
+  spans only months for heavy filers like JPM).
+- **Graph resolver** (`graph/`): per-filing calculation/presentation trees parsed via
+  edgartools arbitrate which tag is THE total for each canonical metric. Controlled by
+  `GRAPH_RESOLVER=off|shadow|on` (default off). Shadow logs disagreements to
+  `resolver_diffs`. Graphs cached forever in `~/.sec_mcp_cache/_graphs/` + Supabase
+  `filing_graphs`.
+- **Quarterly history** (`get_fmp_shaped_history`): rows carry `_meta` (quality,
+  confidence, sources, accession). Quality flags: `standalone`,
+  `standalone_decumulated`, `ytd_fallback` (neighbour missing — value stays YTD),
+  `q4_synthesized` (Q4 = FY − ΣQ1-3). Fineas consumes `/api/financials-history` on
+  chat_app — its shape is a frozen contract; only add keys, never change them.
+- **Query endpoints**: `/api/v1/metrics/{ticker}/{metric}`, `/api/v1/chart-data/{ticker}`,
+  `/api/v1/concepts/{ticker}/{accession}` (the filing's calc tree — bad-match debugging).
+  `/explorer` is the ECharts data-QA dashboard.
+- **Supabase migration** `supabase/migrations/20260609000000_concept_graph_schema.sql`
+  (sec_facts, concept graph, metric_observations) — code no-ops gracefully until applied.
+
 ## Testing
 
 ```bash

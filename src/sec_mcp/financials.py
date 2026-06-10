@@ -866,6 +866,25 @@ def _filter_by_duration(
     return result
 
 
+def _filter_to_currency(df: pd.DataFrame, currency: str) -> pd.DataFrame:
+    """Keep monetary facts in `currency` only; non-monetary units (shares,
+    pure, ratios) pass through. Currency-per-share units (e.g. 'TWD/shares')
+    are kept when their currency part matches."""
+    if df is None or df.empty or "units" not in df.columns:
+        return df
+
+    def _keep(u: str) -> bool:
+        u = str(u).replace("iso4217:", "")
+        cur = u.split("/")[0]
+        if not (len(cur) == 3 and cur.isalpha() and cur.isupper()):
+            return True  # shares, pure, etc.
+        return cur == currency
+
+    mask = df["units"].map(_keep)
+    filtered = df[mask]
+    return filtered if not filtered.empty else df
+
+
 def _find_column(df: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
     """Find the first matching column name from candidates."""
     for col in candidates:
@@ -2553,6 +2572,17 @@ def extract_financials(
         )
         return result
 
+    # ── Single-currency view of the facts ─────────────────────────────
+    # Dual-currency filers (TSM tags Revenue in BOTH USD and TWD) must be
+    # resolved in ONE currency — the detected reporting currency — and
+    # converted exactly once at the end. Without this filter the resolver
+    # could pick the USD-tagged fact and the FX step would convert it again
+    # (TSM revenue came out 32x low).
+    from sec_mcp.core.fx import detect_currency
+    reporting_currency = detect_currency(facts_df)
+    if reporting_currency != "USD":
+        facts_df = _filter_to_currency(facts_df, reporting_currency)
+
     # ── Extract metrics ───────────────────────────────────────────────
     metrics: dict[str, float | None] = {}
     sourced: dict[str, str | None] = {}
@@ -2800,9 +2830,8 @@ def extract_financials(
             sourced["revenue"] = best_src
             confidence["revenue"] = 0.80
 
-    # ── Currency detection & conversion to USD ─────────────────────
-    from sec_mcp.core.fx import convert_metrics_to_usd, detect_currency
-    reporting_currency = detect_currency(facts_df)
+    # ── Currency conversion to USD (currency detected pre-extraction) ──
+    from sec_mcp.core.fx import convert_metrics_to_usd
     result["reporting_currency"] = reporting_currency
     if reporting_currency != "USD":
         metrics, fx_rate = convert_metrics_to_usd(metrics, reporting_currency)

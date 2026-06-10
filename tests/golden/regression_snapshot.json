@@ -1,0 +1,2258 @@
+{
+ "AAPL": {
+  "ticker": "AAPL",
+  "annual": {
+   "revenue": 416161000000.0,
+   "net_income": 112010000000.0,
+   "gross_profit": 195201000000.0,
+   "operating_income": 133050000000.0,
+   "total_assets": 359241000000.0,
+   "total_liabilities": 285508000000.0,
+   "stockholders_equity": 73733000000.0,
+   "operating_cash_flow": 111482000000.0,
+   "capital_expenditures": 12715000000.0,
+   "free_cash_flow": 98767000000.0,
+   "eps_diluted": 7.46,
+   "ebitda": 144427000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-09-27",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-28",
+    "period": "Q2",
+    "revenue": 111184000000.0,
+    "netIncome": 29578000000.0,
+    "operatingCashFlow": 28702000000.0,
+    "freeCashFlow": 26731000000.0
+   },
+   {
+    "date": "2025-12-27",
+    "period": "Q1",
+    "revenue": 143756000000.0,
+    "netIncome": 42097000000.0,
+    "operatingCashFlow": 53925000000.0,
+    "freeCashFlow": 51552000000.0
+   },
+   {
+    "date": "2025-09-27",
+    "period": "Q4",
+    "revenue": 102466000000.0,
+    "netIncome": 27466000000.0,
+    "operatingCashFlow": 29728000000.0,
+    "freeCashFlow": 26486000000.0
+   },
+   {
+    "date": "2025-06-28",
+    "period": "Q3",
+    "revenue": 94036000000.0,
+    "netIncome": 23434000000.0,
+    "operatingCashFlow": 27867000000.0,
+    "freeCashFlow": 24405000000.0
+   }
+  ]
+ },
+ "MSFT": {
+  "ticker": "MSFT",
+  "annual": {
+   "revenue": 281724000000.0,
+   "net_income": 101832000000.0,
+   "gross_profit": 193893000000.0,
+   "operating_income": 128528000000.0,
+   "total_assets": 619003000000.0,
+   "total_liabilities": 275524000000.0,
+   "stockholders_equity": 343479000000.0,
+   "operating_cash_flow": 136162000000.0,
+   "capital_expenditures": 64551000000.0,
+   "free_cash_flow": 71611000000.0,
+   "eps_diluted": 13.64,
+   "ebitda": 151627000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-06-30",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q3",
+    "revenue": 82886000000.0,
+    "netIncome": 31778000000.0,
+    "operatingCashFlow": 46679000000.0,
+    "freeCashFlow": 15803000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q2",
+    "revenue": 81273000000.0,
+    "netIncome": 38458000000.0,
+    "operatingCashFlow": 35758000000.0,
+    "freeCashFlow": 5882000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q1",
+    "revenue": 77673000000.0,
+    "netIncome": 27747000000.0,
+    "operatingCashFlow": 45057000000.0,
+    "freeCashFlow": 25663000000.0
+   },
+   {
+    "date": "2025-03-31",
+    "period": "Q3",
+    "revenue": 70066000000.0,
+    "netIncome": 25824000000.0,
+    "operatingCashFlow": 37044000000.0,
+    "freeCashFlow": 20299000000.0
+   }
+  ]
+ },
+ "NVDA": {
+  "ticker": "NVDA",
+  "annual": {
+   "revenue": 215938000000.0,
+   "net_income": 120067000000.0,
+   "gross_profit": 153463000000.0,
+   "operating_income": 130387000000.0,
+   "total_assets": 206803000000.0,
+   "total_liabilities": 49510000000.0,
+   "stockholders_equity": 157293000000.0,
+   "operating_cash_flow": 102718000000.0,
+   "capital_expenditures": 6042000000.0,
+   "free_cash_flow": 96676000000.0,
+   "eps_diluted": 4.9,
+   "ebitda": 144293000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2026,
+   "report_date": "2026-01-25",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-04-26",
+    "period": "Q1",
+    "revenue": 81615000000.0,
+    "netIncome": 58321000000.0,
+    "operatingCashFlow": 50344000000.0,
+    "freeCashFlow": 48587000000.0
+   },
+   {
+    "date": "2026-01-25",
+    "period": "Q4",
+    "revenue": 68127000000.0,
+    "netIncome": 42960000000.0,
+    "operatingCashFlow": 36188000000.0,
+    "freeCashFlow": 34904000000.0
+   },
+   {
+    "date": "2025-10-26",
+    "period": "Q3",
+    "revenue": 57006000000.0,
+    "netIncome": 31910000000.0,
+    "operatingCashFlow": 23751000000.0,
+    "freeCashFlow": 22115000000.0
+   },
+   {
+    "date": "2025-07-27",
+    "period": "Q2",
+    "revenue": 46743000000.0,
+    "netIncome": 26422000000.0,
+    "operatingCashFlow": 15365000000.0,
+    "freeCashFlow": 13470000000.0
+   }
+  ]
+ },
+ "GOOGL": {
+  "ticker": "GOOGL",
+  "annual": {
+   "revenue": 402836000000.0,
+   "net_income": 132170000000.0,
+   "gross_profit": 240301000000.0,
+   "operating_income": 129039000000.0,
+   "total_assets": 595281000000.0,
+   "total_liabilities": 180016000000.0,
+   "stockholders_equity": 415265000000.0,
+   "operating_cash_flow": 164713000000.0,
+   "capital_expenditures": 91447000000.0,
+   "free_cash_flow": 73266000000.0,
+   "eps_diluted": 10.81,
+   "ebitda": 179962000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 109896000000.0,
+    "netIncome": 62578000000.0,
+    "operatingCashFlow": 45790000000.0,
+    "freeCashFlow": 10116000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 113829000000.0,
+    "netIncome": 34455000000.0,
+    "operatingCashFlow": 52402000000.0,
+    "freeCashFlow": 24551000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 102345000000.0,
+    "netIncome": 34979000000.0,
+    "operatingCashFlow": 48414000000.0,
+    "freeCashFlow": 24461000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 96428000000.0,
+    "netIncome": 28196000000.0,
+    "operatingCashFlow": 27747000000.0,
+    "freeCashFlow": 5301000000.0
+   }
+  ]
+ },
+ "AMZN": {
+  "ticker": "AMZN",
+  "annual": {
+   "revenue": 716924000000.0,
+   "net_income": 77670000000.0,
+   "gross_profit": 360510000000.0,
+   "operating_income": 79975000000.0,
+   "total_assets": 818042000000.0,
+   "total_liabilities": 406977000000.0,
+   "stockholders_equity": 411065000000.0,
+   "operating_cash_flow": 139514000000.0,
+   "capital_expenditures": 131819000000.0,
+   "free_cash_flow": 7695000000.0,
+   "eps_diluted": 7.17,
+   "ebitda": 162513000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 181519000000.0,
+    "netIncome": 30255000000.0,
+    "operatingCashFlow": 26032000000.0,
+    "freeCashFlow": -18171000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 213386000000.0,
+    "netIncome": 21192000000.0,
+    "operatingCashFlow": 54459000000.0,
+    "freeCashFlow": 14937000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 180169000000.0,
+    "netIncome": 21187000000.0,
+    "operatingCashFlow": 35525000000.0,
+    "freeCashFlow": 430000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 167702000000.0,
+    "netIncome": 18164000000.0,
+    "operatingCashFlow": 32515000000.0,
+    "freeCashFlow": 332000000.0
+   }
+  ]
+ },
+ "META": {
+  "ticker": "META",
+  "annual": {
+   "revenue": 200966000000.0,
+   "net_income": 60458000000.0,
+   "gross_profit": 164791000000.0,
+   "operating_income": 83276000000.0,
+   "total_assets": 366021000000.0,
+   "total_liabilities": 148778000000.0,
+   "stockholders_equity": 217243000000.0,
+   "operating_cash_flow": 115800000000.0,
+   "capital_expenditures": 69691000000.0,
+   "free_cash_flow": 46109000000.0,
+   "eps_diluted": 23.49,
+   "ebitda": 105638000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 56311000000.0,
+    "netIncome": 26773000000.0,
+    "operatingCashFlow": 32226000000.0,
+    "freeCashFlow": 13229000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 59893000000.0,
+    "netIncome": 22768000000.0,
+    "operatingCashFlow": 36214000000.0,
+    "freeCashFlow": 14831000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 51243000000.0,
+    "netIncome": 2709000000.0,
+    "operatingCashFlow": 29999000000.0,
+    "freeCashFlow": 11170000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 47516000000.0,
+    "netIncome": 18337000000.0,
+    "operatingCashFlow": 25561000000.0,
+    "freeCashFlow": 9023000000.0
+   }
+  ]
+ },
+ "TSLA": {
+  "ticker": "TSLA",
+  "annual": {
+   "revenue": 94827000000.0,
+   "net_income": 3794000000.0,
+   "gross_profit": 17094000000.0,
+   "operating_income": 4355000000.0,
+   "total_assets": 137806000000.0,
+   "total_liabilities": 54941000000.0,
+   "stockholders_equity": 82137000000.0,
+   "operating_cash_flow": 14747000000.0,
+   "capital_expenditures": 8527000000.0,
+   "free_cash_flow": 6220000000.0,
+   "eps_diluted": 1.08,
+   "ebitda": 10247000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 22387000000.0,
+    "netIncome": 477000000.0,
+    "operatingCashFlow": 3937000000.0,
+    "freeCashFlow": 1444000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 24901000000.0,
+    "netIncome": 840000000.0,
+    "operatingCashFlow": 3813000000.0,
+    "freeCashFlow": 1420000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 28095000000.0,
+    "netIncome": 1373000000.0,
+    "operatingCashFlow": 6238000000.0,
+    "freeCashFlow": 3990000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 22496000000.0,
+    "netIncome": 1172000000.0,
+    "operatingCashFlow": 2540000000.0,
+    "freeCashFlow": 146000000.0
+   }
+  ]
+ },
+ "AVGO": {
+  "ticker": "AVGO",
+  "annual": {
+   "revenue": 63887000000.0,
+   "net_income": 23126000000.0,
+   "gross_profit": 43294000000.0,
+   "operating_income": 25484000000.0,
+   "total_assets": 171092000000.0,
+   "total_liabilities": 89800000000.0,
+   "stockholders_equity": 81292000000.0,
+   "operating_cash_flow": 27537000000.0,
+   "capital_expenditures": 623000000.0,
+   "free_cash_flow": 26914000000.0,
+   "eps_diluted": 4.77,
+   "ebitda": 32159000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-11-02",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-05-03",
+    "period": "Q2",
+    "revenue": 22187000000.0,
+    "netIncome": 9310000000.0,
+    "operatingCashFlow": 10493000000.0,
+    "freeCashFlow": 10262000000.0
+   },
+   {
+    "date": "2026-02-01",
+    "period": "Q1",
+    "revenue": 19311000000.0,
+    "netIncome": 7349000000.0,
+    "operatingCashFlow": 8260000000.0,
+    "freeCashFlow": 8010000000.0
+   },
+   {
+    "date": "2025-11-02",
+    "period": "Q4",
+    "revenue": 18015000000.0,
+    "netIncome": 8518000000.0,
+    "operatingCashFlow": 7703000000.0,
+    "freeCashFlow": 7466000000.0
+   },
+   {
+    "date": "2025-08-03",
+    "period": "Q3",
+    "revenue": 15952000000.0,
+    "netIncome": 4140000000.0,
+    "operatingCashFlow": 7166000000.0,
+    "freeCashFlow": 7024000000.0
+   }
+  ]
+ },
+ "JPM": {
+  "ticker": "JPM",
+  "annual": {
+   "revenue": 182447000000.0,
+   "net_income": 57048000000.0,
+   "gross_profit": null,
+   "operating_income": 72595000000.0,
+   "total_assets": 4424900000000.0,
+   "total_liabilities": 4062462000000.0,
+   "stockholders_equity": 362438000000.0,
+   "operating_cash_flow": -147782000000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 20.02,
+   "ebitda": 72887000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue Net of Interest Expense",
+   "industry_class": "bank"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 49836000000.0,
+    "netIncome": 16494000000.0,
+    "operatingCashFlow": -211761000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 45798000000.0,
+    "netIncome": 13025000000.0,
+    "operatingCashFlow": 119724000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 46427000000.0,
+    "netIncome": 14393000000.0,
+    "operatingCashFlow": -45214000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 44912000000.0,
+    "netIncome": 14987000000.0,
+    "operatingCashFlow": 29547000000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "BAC": {
+  "ticker": "BAC",
+  "annual": {
+   "revenue": 113097000000.0,
+   "net_income": 30509000000.0,
+   "gross_profit": null,
+   "operating_income": 37695000000.0,
+   "total_assets": 3411738000000.0,
+   "total_liabilities": 3108495000000.0,
+   "stockholders_equity": 303243000000.0,
+   "operating_cash_flow": 12613000000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 3.81,
+   "ebitda": 40009000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "bank"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 30272000000.0,
+    "netIncome": 8584000000.0,
+    "operatingCashFlow": 41770000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 31180000000.0,
+    "netIncome": 7528000000.0,
+    "operatingCashFlow": -22945000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 28088000000.0,
+    "netIncome": 8469000000.0,
+    "operatingCashFlow": 46874000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 26463000000.0,
+    "netIncome": 7116000000.0,
+    "operatingCashFlow": -9132000000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "GS": {
+  "ticker": "GS",
+  "annual": {
+   "revenue": 58283000000.0,
+   "net_income": 17176000000.0,
+   "gross_profit": null,
+   "operating_income": 21852000000.0,
+   "total_assets": 1809320000000.0,
+   "total_liabilities": 1684348000000.0,
+   "stockholders_equity": 124972000000.0,
+   "operating_cash_flow": -45154000000.0,
+   "capital_expenditures": 2064000000.0,
+   "free_cash_flow": -47218000000.0,
+   "eps_diluted": 51.32,
+   "ebitda": 90848000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue Net of Interest Expense",
+   "industry_class": "bank"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 17227000000.0,
+    "netIncome": 5630000000.0,
+    "operatingCashFlow": -31868000000.0,
+    "freeCashFlow": -32433000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 13454000000.0,
+    "netIncome": 4617000000.0,
+    "operatingCashFlow": -16276000000.0,
+    "freeCashFlow": -16807000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 15184000000.0,
+    "netIncome": 4098000000.0,
+    "operatingCashFlow": 2680000000.0,
+    "freeCashFlow": 2122000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 14583000000.0,
+    "netIncome": 3723000000.0,
+    "operatingCashFlow": 5672000000.0,
+    "freeCashFlow": 5196000000.0
+   }
+  ]
+ },
+ "WFC": {
+  "ticker": "WFC",
+  "annual": {
+   "revenue": 83699000000.0,
+   "net_income": 21338000000.0,
+   "gross_profit": null,
+   "operating_income": 25199000000.0,
+   "total_assets": 2148631000000.0,
+   "total_liabilities": 1965593000000.0,
+   "stockholders_equity": 181117000000.0,
+   "operating_cash_flow": -19001000000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 6.26,
+   "ebitda": 26879000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue Net of Interest Expense",
+   "industry_class": "bank"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 21446000000.0,
+    "netIncome": 5253000000.0,
+    "operatingCashFlow": 9143000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 21292000000.0,
+    "netIncome": 5361000000.0,
+    "operatingCashFlow": 4121000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 21436000000.0,
+    "netIncome": 5589000000.0,
+    "operatingCashFlow": -869000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 20822000000.0,
+    "netIncome": 5494000000.0,
+    "operatingCashFlow": -11216000000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "BRK-B": {
+  "ticker": "BRK-B",
+  "annual": {
+   "revenue": 371444000000.0,
+   "net_income": 66968000000.0,
+   "gross_profit": null,
+   "operating_income": 82459000000.0,
+   "total_assets": 1222176000000.0,
+   "total_liabilities": 502473000000.0,
+   "stockholders_equity": 717419000000.0,
+   "operating_cash_flow": 45969000000.0,
+   "capital_expenditures": 20927000000.0,
+   "free_cash_flow": 25042000000.0,
+   "eps_diluted": null,
+   "ebitda": 100712000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "insurance"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 93675000000.0,
+    "netIncome": 10106000000.0,
+    "operatingCashFlow": 10438000000.0,
+    "freeCashFlow": 5452000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 94232000000.0,
+    "netIncome": 19199000000.0,
+    "operatingCashFlow": 11192000000.0,
+    "freeCashFlow": 4990000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 94972000000.0,
+    "netIncome": 30796000000.0,
+    "operatingCashFlow": 13789000000.0,
+    "freeCashFlow": 8203000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 92515000000.0,
+    "netIncome": 12370000000.0,
+    "operatingCashFlow": 10085000000.0,
+    "freeCashFlow": 5227000000.0
+   }
+  ]
+ },
+ "PGR": {
+  "ticker": "PGR",
+  "annual": {
+   "revenue": 87671000000.0,
+   "net_income": 11308000000.0,
+   "gross_profit": null,
+   "operating_income": 14223000000.0,
+   "total_assets": 123039000000.0,
+   "total_liabilities": 92716000000.0,
+   "stockholders_equity": 30323000000.0,
+   "operating_cash_flow": 17548000000.0,
+   "capital_expenditures": 348000000.0,
+   "free_cash_flow": 17200000000.0,
+   "eps_diluted": 19.23,
+   "ebitda": 14814000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "insurance"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 22188000000.0,
+    "netIncome": 2818000000.0,
+    "operatingCashFlow": 4367000000.0,
+    "freeCashFlow": 4304000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 22746000000.0,
+    "netIncome": 2951000000.0,
+    "operatingCashFlow": 3170000000.0,
+    "freeCashFlow": 3049000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 22512000000.0,
+    "netIncome": 2615000000.0,
+    "operatingCashFlow": 5195000000.0,
+    "freeCashFlow": 5129000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 22004000000.0,
+    "netIncome": 3175000000.0,
+    "operatingCashFlow": 4040000000.0,
+    "freeCashFlow": 3938000000.0
+   }
+  ]
+ },
+ "MET": {
+  "ticker": "MET",
+  "annual": {
+   "revenue": 77084000000.0,
+   "net_income": 3379000000.0,
+   "gross_profit": null,
+   "operating_income": 6137000000.0,
+   "total_assets": 745166000000.0,
+   "total_liabilities": 716245000000.0,
+   "stockholders_equity": 28398000000.0,
+   "operating_cash_flow": 17092000000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 4.71,
+   "ebitda": 5561000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "insurance"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 19074000000.0,
+    "netIncome": 1185000000.0,
+    "operatingCashFlow": 2687000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 23814000000.0,
+    "netIncome": 809000000.0,
+    "operatingCashFlow": 7076000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 17361000000.0,
+    "netIncome": 896000000.0,
+    "operatingCashFlow": 3567000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 17340000000.0,
+    "netIncome": 729000000.0,
+    "operatingCashFlow": 2187000000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "O": {
+  "ticker": "O",
+  "annual": {
+   "revenue": 5749377000.0,
+   "net_income": 1058590000.0,
+   "gross_profit": null,
+   "operating_income": 1155129000.0,
+   "total_assets": 72795612000.0,
+   "total_liabilities": 32671644000.0,
+   "stockholders_equity": 39438695000.0,
+   "operating_cash_flow": 3994754000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 1.17,
+   "ebitda": 3668136000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "reit"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 1548727000.0,
+    "netIncome": 311766000.0,
+    "operatingCashFlow": 874502000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 1487942000.0,
+    "netIncome": 296085000.0,
+    "operatingCashFlow": 1203434000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 1470552000.0,
+    "netIncome": 315771000.0,
+    "operatingCashFlow": 943135000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 1410378000.0,
+    "netIncome": 196919000.0,
+    "operatingCashFlow": 1060669000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "SPG": {
+  "ticker": "SPG",
+  "annual": {
+   "revenue": 6364505000.0,
+   "net_income": 4624275000.0,
+   "gross_profit": null,
+   "operating_income": 3175396000.0,
+   "total_assets": 40606466000.0,
+   "total_liabilities": 33901073000.0,
+   "stockholders_equity": 5208268000.0,
+   "operating_cash_flow": 4136551000.0,
+   "capital_expenditures": 934346000.0,
+   "free_cash_flow": 3202205000.0,
+   "eps_diluted": 14.17,
+   "ebitda": 7045812000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "reit"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 1757093000.0,
+    "netIncome": 479569000.0,
+    "operatingCashFlow": 833378000.0,
+    "freeCashFlow": 624982000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 1791462000.0,
+    "netIncome": 3048269000.0,
+    "operatingCashFlow": 1203741000.0,
+    "freeCashFlow": 948843000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 1601571000.0,
+    "netIncome": 606174000.0,
+    "operatingCashFlow": 890260000.0,
+    "freeCashFlow": 685037000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 1498460000.0,
+    "netIncome": 556133000.0,
+    "operatingCashFlow": 1215332000.0,
+    "freeCashFlow": 971308000.0
+   }
+  ]
+ },
+ "PLD": {
+  "ticker": "PLD",
+  "annual": {
+   "revenue": 8790127000.0,
+   "net_income": 3328231000.0,
+   "gross_profit": null,
+   "operating_income": 4357864000.0,
+   "total_assets": 98724256000.0,
+   "total_liabilities": 40970248000.0,
+   "stockholders_equity": 53193178000.0,
+   "operating_cash_flow": 5008434000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 3.56,
+   "ebitda": 7160620000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "reit"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 2297723000.0,
+    "netIncome": 981976000.0,
+    "operatingCashFlow": 1288136000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 2252712000.0,
+    "netIncome": 1399783000.0,
+    "operatingCashFlow": 1158236000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 2213881000.0,
+    "netIncome": 764266000.0,
+    "operatingCashFlow": 1447728000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 2183869000.0,
+    "netIncome": 571229000.0,
+    "operatingCashFlow": 1241717000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "NEE": {
+  "ticker": "NEE",
+  "annual": {
+   "revenue": 27412000000.0,
+   "net_income": 6835000000.0,
+   "gross_profit": null,
+   "operating_income": 8280000000.0,
+   "total_assets": 212721000000.0,
+   "total_liabilities": 146242000000.0,
+   "stockholders_equity": 54608000000.0,
+   "operating_cash_flow": 12485000000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 3.3,
+   "ebitda": 14217000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Regulated & Unregulated Revenue",
+   "industry_class": "utility"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 6701000000.0,
+    "netIncome": 2182000000.0,
+    "operatingCashFlow": 2614000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 6500000000.0,
+    "netIncome": 1535000000.0,
+    "operatingCashFlow": 2499000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 7965000000.0,
+    "netIncome": 2438000000.0,
+    "operatingCashFlow": 4028000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 6700000000.0,
+    "netIncome": 2029000000.0,
+    "operatingCashFlow": 3189000000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "DUK": {
+  "ticker": "DUK",
+  "annual": {
+   "revenue": 32237000000.0,
+   "net_income": 4968000000.0,
+   "gross_profit": null,
+   "operating_income": 8626000000.0,
+   "total_assets": 195736000000.0,
+   "total_liabilities": 142717000000.0,
+   "stockholders_equity": 51842000000.0,
+   "operating_cash_flow": 12330000000.0,
+   "capital_expenditures": 14024000000.0,
+   "free_cash_flow": -1694000000.0,
+   "eps_diluted": 6.31,
+   "ebitda": 16948000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Regulated & Unregulated Revenue",
+   "industry_class": "utility"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 9178000000.0,
+    "netIncome": 1550000000.0,
+    "operatingCashFlow": 1512000000.0,
+    "freeCashFlow": -2576000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 7938000000.0,
+    "netIncome": 1184000000.0,
+    "operatingCashFlow": 3658000000.0,
+    "freeCashFlow": -485000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 8542000000.0,
+    "netIncome": 1421000000.0,
+    "operatingCashFlow": 3632000000.0,
+    "freeCashFlow": 179000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 7508000000.0,
+    "netIncome": 984000000.0,
+    "operatingCashFlow": 2863000000.0,
+    "freeCashFlow": -417000000.0
+   }
+  ]
+ },
+ "SO": {
+  "ticker": "SO",
+  "annual": {
+   "revenue": 29553000000.0,
+   "net_income": 4341000000.0,
+   "gross_profit": null,
+   "operating_income": 7285000000.0,
+   "total_assets": 155720000000.0,
+   "total_liabilities": 116853000000.0,
+   "stockholders_equity": 36016000000.0,
+   "operating_cash_flow": 9802000000.0,
+   "capital_expenditures": 12737000000.0,
+   "free_cash_flow": -2935000000.0,
+   "eps_diluted": 3.92,
+   "ebitda": 5201000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "utility"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 8397000000.0,
+    "netIncome": 1356000000.0,
+    "operatingCashFlow": 1226000000.0,
+    "freeCashFlow": -1718000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 6981000000.0,
+    "netIncome": 416000000.0,
+    "operatingCashFlow": 2597000000.0,
+    "freeCashFlow": -1688000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 7824000000.0,
+    "netIncome": 1711000000.0,
+    "operatingCashFlow": 3774000000.0,
+    "freeCashFlow": 559000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 6973000000.0,
+    "netIncome": 880000000.0,
+    "operatingCashFlow": 2181000000.0,
+    "freeCashFlow": -619000000.0
+   }
+  ]
+ },
+ "COIN": {
+  "ticker": "COIN",
+  "annual": {
+   "revenue": 7181325000.0,
+   "net_income": 1260327000.0,
+   "gross_profit": null,
+   "operating_income": 1435441000.0,
+   "total_assets": 29671832000.0,
+   "total_liabilities": 14878774000.0,
+   "stockholders_equity": 14793058000.0,
+   "operating_cash_flow": 2426383000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 4.45,
+   "ebitda": 1710493000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "crypto"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 1412982000.0,
+    "netIncome": -394117000.0,
+    "operatingCashFlow": 182744000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 1781129000.0,
+    "netIncome": -666733000.0,
+    "operatingCashFlow": 3065151000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 1868693000.0,
+    "netIncome": 432552000.0,
+    "operatingCashFlow": -784515000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 1497208000.0,
+    "netIncome": 1428900000.0,
+    "operatingCashFlow": 328474000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "MSTR": {
+  "ticker": "MSTR",
+  "annual": {
+   "revenue": 477233000.0,
+   "net_income": -3848152000.0,
+   "gross_profit": 327816000.0,
+   "operating_income": -5444385000.0,
+   "total_assets": 61641082000.0,
+   "total_liabilities": 10598110000.0,
+   "stockholders_equity": 51042972000.0,
+   "operating_cash_flow": -67241000.0,
+   "capital_expenditures": 8212000.0,
+   "free_cash_flow": -75453000.0,
+   "eps_diluted": -15.23,
+   "ebitda": -2079865000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "crypto"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 124300000.0,
+    "netIncome": -12542670000.0,
+    "operatingCashFlow": 13989000.0,
+    "freeCashFlow": 13037000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 122988000.0,
+    "netIncome": -12436652000.0,
+    "operatingCashFlow": -21629000.0,
+    "freeCashFlow": -22213000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 128691000.0,
+    "netIncome": 2785024000.0,
+    "operatingCashFlow": -8310000.0,
+    "freeCashFlow": -11107000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 114488000.0,
+    "netIncome": 10020846000.0,
+    "operatingCashFlow": -34913000.0,
+    "freeCashFlow": -37007000.0
+   }
+  ]
+ },
+ "XOM": {
+  "ticker": "XOM",
+  "annual": {
+   "revenue": 332238000000.0,
+   "net_income": 28844000000.0,
+   "gross_profit": null,
+   "operating_income": 41268000000.0,
+   "total_assets": 448980000000.0,
+   "total_liabilities": 182354000000.0,
+   "stockholders_equity": 259386000000.0,
+   "operating_cash_flow": 51970000000.0,
+   "capital_expenditures": 28358000000.0,
+   "free_cash_flow": 23612000000.0,
+   "eps_diluted": 6.7,
+   "ebitda": 66944000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 85138000000.0,
+    "netIncome": 4183000000.0,
+    "operatingCashFlow": 8705000000.0,
+    "freeCashFlow": 2235000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 82308000000.0,
+    "netIncome": 6501000000.0,
+    "operatingCashFlow": 12679000000.0,
+    "freeCashFlow": 5229000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 85294000000.0,
+    "netIncome": 7548000000.0,
+    "operatingCashFlow": 14788000000.0,
+    "freeCashFlow": 6061000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 81506000000.0,
+    "netIncome": 7082000000.0,
+    "operatingCashFlow": 11550000000.0,
+    "freeCashFlow": 5267000000.0
+   }
+  ]
+ },
+ "CVX": {
+  "ticker": "CVX",
+  "annual": {
+   "revenue": 189031000000.0,
+   "net_income": 12299000000.0,
+   "gross_profit": 80817000000.0,
+   "operating_income": -88471000000.0,
+   "total_assets": 324012000000.0,
+   "total_liabilities": 131836000000.0,
+   "stockholders_equity": 186450000000.0,
+   "operating_cash_flow": 33939000000.0,
+   "capital_expenditures": 17347000000.0,
+   "free_cash_flow": 16592000000.0,
+   "eps_diluted": 6.63,
+   "ebitda": 40906000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 48607000000.0,
+    "netIncome": 2210000000.0,
+    "operatingCashFlow": 2514000000.0,
+    "freeCashFlow": -1549000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 46873000000.0,
+    "netIncome": 2770000000.0,
+    "operatingCashFlow": 10789000000.0,
+    "freeCashFlow": 5525000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 49726000000.0,
+    "netIncome": 3539000000.0,
+    "operatingCashFlow": 9385000000.0,
+    "freeCashFlow": 4941000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 44822000000.0,
+    "netIncome": 2490000000.0,
+    "operatingCashFlow": 8576000000.0,
+    "freeCashFlow": 4864000000.0
+   }
+  ]
+ },
+ "UNH": {
+  "ticker": "UNH",
+  "annual": {
+   "revenue": 447567000000.0,
+   "net_income": 12056000000.0,
+   "gross_profit": 396912000000.0,
+   "operating_income": 18964000000.0,
+   "total_assets": 309581000000.0,
+   "total_liabilities": 207883000000.0,
+   "stockholders_equity": 100090000000.0,
+   "operating_cash_flow": 19697000000.0,
+   "capital_expenditures": 3622000000.0,
+   "free_cash_flow": 16075000000.0,
+   "eps_diluted": 13.23,
+   "ebitda": 22309000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "insurance"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 111721000000.0,
+    "netIncome": 6280000000.0,
+    "operatingCashFlow": 8912000000.0,
+    "freeCashFlow": 8149000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 113215000000.0,
+    "netIncome": 10000000.0,
+    "operatingCashFlow": 1108000000.0,
+    "freeCashFlow": 160000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 113161000000.0,
+    "netIncome": 2348000000.0,
+    "operatingCashFlow": 5945000000.0,
+    "freeCashFlow": 5055000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 111616000000.0,
+    "netIncome": 3406000000.0,
+    "operatingCashFlow": 7188000000.0,
+    "freeCashFlow": 6302000000.0
+   }
+  ]
+ },
+ "JNJ": {
+  "ticker": "JNJ",
+  "annual": {
+   "revenue": 94193000000.0,
+   "net_income": 26804000000.0,
+   "gross_profit": 63937000000.0,
+   "operating_income": 32581000000.0,
+   "total_assets": 199210000000.0,
+   "total_liabilities": 117666000000.0,
+   "stockholders_equity": 81544000000.0,
+   "operating_cash_flow": 24530000000.0,
+   "capital_expenditures": 4832000000.0,
+   "free_cash_flow": 19698000000.0,
+   "eps_diluted": 11.03,
+   "ebitda": 40084000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-28",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-29",
+    "period": "Q1",
+    "revenue": 24062000000.0,
+    "netIncome": 5235000000.0,
+    "operatingCashFlow": 2514000000.0,
+    "freeCashFlow": 1465000000.0
+   },
+   {
+    "date": "2025-12-28",
+    "period": "Q4",
+    "revenue": 24564000000.0,
+    "netIncome": 5116000000.0,
+    "operatingCashFlow": 7309000000.0,
+    "freeCashFlow": 5472000000.0
+   },
+   {
+    "date": "2025-09-28",
+    "period": "Q3",
+    "revenue": 23993000000.0,
+    "netIncome": 5152000000.0,
+    "operatingCashFlow": 9169000000.0,
+    "freeCashFlow": 8012000000.0
+   },
+   {
+    "date": "2025-06-29",
+    "period": "Q2",
+    "revenue": 23743000000.0,
+    "netIncome": 5537000000.0,
+    "operatingCashFlow": 3878000000.0,
+    "freeCashFlow": 2835000000.0
+   }
+  ]
+ },
+ "LLY": {
+  "ticker": "LLY",
+  "annual": {
+   "revenue": 65179000000.0,
+   "net_income": 20640000000.0,
+   "gross_profit": 54127000000.0,
+   "operating_income": 25731000000.0,
+   "total_assets": 112476000000.0,
+   "total_liabilities": 85941000000.0,
+   "stockholders_equity": 26535000000.0,
+   "operating_cash_flow": 16813000000.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 22.95,
+   "ebitda": 27728000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 19799000000.0,
+    "netIncome": 7396000000.0,
+    "operatingCashFlow": 5333000000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 19292000000.0,
+    "netIncome": 6637700000.0,
+    "operatingCashFlow": 3224600000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 17600800000.0,
+    "netIncome": 5582500000.0,
+    "operatingCashFlow": 8835900000.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 15557700000.0,
+    "netIncome": 5660500000.0,
+    "operatingCashFlow": 3086900000.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "WMT": {
+  "ticker": "WMT",
+  "annual": {
+   "revenue": 713163000000.0,
+   "net_income": 21893000000.0,
+   "gross_profit": 177768000000.0,
+   "operating_income": 29825000000.0,
+   "total_assets": 284668000000.0,
+   "total_liabilities": 178781000000.0,
+   "stockholders_equity": 99617000000.0,
+   "operating_cash_flow": 41565000000.0,
+   "capital_expenditures": 26642000000.0,
+   "free_cash_flow": 14923000000.0,
+   "eps_diluted": 2.73,
+   "ebitda": null
+  },
+  "annual_meta": {
+   "fiscal_year": 2026,
+   "report_date": "2026-01-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-04-30",
+    "period": "Q1",
+    "revenue": 177751000000.0,
+    "netIncome": 5330000000.0,
+    "operatingCashFlow": 4738000000.0,
+    "freeCashFlow": -1946000000.0
+   },
+   {
+    "date": "2026-01-31",
+    "period": "Q4",
+    "revenue": 190656000000.0,
+    "netIncome": 4237000000.0,
+    "operatingCashFlow": 14113000000.0,
+    "freeCashFlow": 6098000000.0
+   },
+   {
+    "date": "2025-10-31",
+    "period": "Q3",
+    "revenue": 179496000000.0,
+    "netIncome": 6143000000.0,
+    "operatingCashFlow": 9100000000.0,
+    "freeCashFlow": 1882000000.0
+   },
+   {
+    "date": "2025-07-31",
+    "period": "Q2",
+    "revenue": 177402000000.0,
+    "netIncome": 7026000000.0,
+    "operatingCashFlow": 12941000000.0,
+    "freeCashFlow": 6518000000.0
+   }
+  ]
+ },
+ "COST": {
+  "ticker": "COST",
+  "annual": {
+   "revenue": 275235000000.0,
+   "net_income": 8099000000.0,
+   "gross_profit": 35349000000.0,
+   "operating_income": 10383000000.0,
+   "total_assets": 77099000000.0,
+   "total_liabilities": 47935000000.0,
+   "stockholders_equity": 29164000000.0,
+   "operating_cash_flow": 13335000000.0,
+   "capital_expenditures": 5498000000.0,
+   "free_cash_flow": 7837000000.0,
+   "eps_diluted": 18.21,
+   "ebitda": 13398000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-08-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-05-10",
+    "period": "Q3",
+    "revenue": 70527000000.0,
+    "netIncome": 2192000000.0,
+    "operatingCashFlow": 3449000000.0,
+    "freeCashFlow": 2036000000.0
+   },
+   {
+    "date": "2026-02-15",
+    "period": "Q2",
+    "revenue": 69597000000.0,
+    "netIncome": 2035000000.0,
+    "operatingCashFlow": 2996000000.0,
+    "freeCashFlow": 1707000000.0
+   },
+   {
+    "date": "2025-11-23",
+    "period": "Q1",
+    "revenue": 67307000000.0,
+    "netIncome": 2001000000.0,
+    "operatingCashFlow": 4688000000.0,
+    "freeCashFlow": 3162000000.0
+   },
+   {
+    "date": "2025-05-11",
+    "period": "Q3",
+    "revenue": 63205000000.0,
+    "netIncome": 1903000000.0,
+    "operatingCashFlow": 3460000000.0,
+    "freeCashFlow": 2329000000.0
+   }
+  ]
+ },
+ "HD": {
+  "ticker": "HD",
+  "annual": {
+   "revenue": 164683000000.0,
+   "net_income": 14156000000.0,
+   "gross_profit": 54865000000.0,
+   "operating_income": 20890000000.0,
+   "total_assets": 105095000000.0,
+   "total_liabilities": 92282000000.0,
+   "stockholders_equity": 12813000000.0,
+   "operating_cash_flow": 16325000000.0,
+   "capital_expenditures": 3679000000.0,
+   "free_cash_flow": 12646000000.0,
+   "eps_diluted": 14.23,
+   "ebitda": 22116000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2026-02-01",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-05-03",
+    "period": "Q1",
+    "revenue": 41765000000.0,
+    "netIncome": 3289000000.0,
+    "operatingCashFlow": 6032000000.0,
+    "freeCashFlow": 5188000000.0
+   },
+   {
+    "date": "2025-11-02",
+    "period": "Q3",
+    "revenue": 41352000000.0,
+    "netIncome": 3601000000.0,
+    "operatingCashFlow": 4010000000.0,
+    "freeCashFlow": 3112000000.0
+   },
+   {
+    "date": "2025-08-03",
+    "period": "Q2",
+    "revenue": 45277000000.0,
+    "netIncome": 4551000000.0,
+    "operatingCashFlow": 4643000000.0,
+    "freeCashFlow": 3726000000.0
+   },
+   {
+    "date": "2025-05-04",
+    "period": "Q1",
+    "revenue": 39856000000.0,
+    "netIncome": 3433000000.0,
+    "operatingCashFlow": 4325000000.0,
+    "freeCashFlow": 3519000000.0
+   }
+  ]
+ },
+ "CAT": {
+  "ticker": "CAT",
+  "annual": {
+   "revenue": 67589000000.0,
+   "net_income": 8884000000.0,
+   "gross_profit": 22837000000.0,
+   "operating_income": 11151000000.0,
+   "total_assets": 98585000000.0,
+   "total_liabilities": 77267000000.0,
+   "stockholders_equity": 21318000000.0,
+   "operating_cash_flow": 11739000000.0,
+   "capital_expenditures": 2821000000.0,
+   "free_cash_flow": 8918000000.0,
+   "eps_diluted": 18.81,
+   "ebitda": 13914000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 17415000000.0,
+    "netIncome": 2549000000.0,
+    "operatingCashFlow": 1870000000.0,
+    "freeCashFlow": 1142000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 19133000000.0,
+    "netIncome": 2402000000.0,
+    "operatingCashFlow": 3591000000.0,
+    "freeCashFlow": 2693000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 17638000000.0,
+    "netIncome": 2300000000.0,
+    "operatingCashFlow": 3737000000.0,
+    "freeCashFlow": 3079000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 16569000000.0,
+    "netIncome": 2179000000.0,
+    "operatingCashFlow": 3122000000.0,
+    "freeCashFlow": 2567000000.0
+   }
+  ]
+ },
+ "BA": {
+  "ticker": "BA",
+  "annual": {
+   "revenue": 89463000000.0,
+   "net_income": 2235000000.0,
+   "gross_profit": 4289000000.0,
+   "operating_income": 4281000000.0,
+   "total_assets": 168235000000.0,
+   "total_liabilities": 162778000000.0,
+   "stockholders_equity": 5454000000.0,
+   "operating_cash_flow": 1065000000.0,
+   "capital_expenditures": 2942000000.0,
+   "free_cash_flow": -1877000000.0,
+   "eps_diluted": 2.48,
+   "ebitda": 4585000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 22217000000.0,
+    "netIncome": -4000000.0,
+    "operatingCashFlow": -179000000.0,
+    "freeCashFlow": -1454000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 23948000000.0,
+    "netIncome": 8220000000.0,
+    "operatingCashFlow": 1331000000.0,
+    "freeCashFlow": 375000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 23270000000.0,
+    "netIncome": -5337000000.0,
+    "operatingCashFlow": 1123000000.0,
+    "freeCashFlow": 238000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 22749000000.0,
+    "netIncome": -611000000.0,
+    "operatingCashFlow": 227000000.0,
+    "freeCashFlow": -200000000.0
+   }
+  ]
+ },
+ "GE": {
+  "ticker": "GE",
+  "annual": {
+   "revenue": 45855000000.0,
+   "net_income": 8704000000.0,
+   "gross_profit": null,
+   "operating_income": 10000000000.0,
+   "total_assets": 130169000000.0,
+   "total_liabilities": 111271000000.0,
+   "stockholders_equity": 18677000000.0,
+   "operating_cash_flow": 8537000000.0,
+   "capital_expenditures": 1273000000.0,
+   "free_cash_flow": 7264000000.0,
+   "eps_diluted": 8.14,
+   "ebitda": 10466000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 12392000000.0,
+    "netIncome": 1904000000.0,
+    "operatingCashFlow": 1823000000.0,
+    "freeCashFlow": 1492000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 12717000000.0,
+    "netIncome": 2541000000.0,
+    "operatingCashFlow": 2281000000.0,
+    "freeCashFlow": 1850000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 12181000000.0,
+    "netIncome": 2157000000.0,
+    "operatingCashFlow": 2501000000.0,
+    "freeCashFlow": 2194000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 11022000000.0,
+    "netIncome": 2028000000.0,
+    "operatingCashFlow": 2246000000.0,
+    "freeCashFlow": 1919000000.0
+   }
+  ]
+ },
+ "ASML": {
+  "ticker": "ASML",
+  "annual": {
+   "revenue": 37728020114.1,
+   "net_income": 11098059419.8,
+   "gross_profit": 19931557586.0,
+   "operating_income": 13052178983.8,
+   "total_assets": 58400225972.2,
+   "total_liabilities": 35749762784.799995,
+   "stockholders_equity": 22650463187.399998,
+   "operating_cash_flow": 14619516844.5,
+   "capital_expenditures": 1817377391.2,
+   "free_cash_flow": 12802139453.3,
+   "eps_diluted": 28.53799907,
+   "ebitda": 14608198657.9
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-04-23",
+    "period": "Q4",
+    "revenue": 37728020114.1,
+    "netIncome": 11098059419.8,
+    "operatingCashFlow": 14619516844.5,
+    "freeCashFlow": 12802139453.3
+   },
+   {
+    "date": "2026-03-29",
+    "period": "Q4",
+    "revenue": 37728020114.1,
+    "netIncome": 11098059419.8,
+    "operatingCashFlow": 14619516844.5,
+    "freeCashFlow": 12802139453.3
+   },
+   {
+    "date": "2026-03-09",
+    "period": "Q4",
+    "revenue": 37728020114.1,
+    "netIncome": 11098059419.8,
+    "operatingCashFlow": 14619516844.5,
+    "freeCashFlow": 12802139453.3
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 37728020114.1,
+    "netIncome": 11098059419.8,
+    "operatingCashFlow": 14619516844.5,
+    "freeCashFlow": 12802139453.3
+   }
+  ]
+ },
+ "SAP": {
+  "ticker": "SAP",
+  "annual": {
+   "revenue": 42500945600.0,
+   "net_income": 8460921942.0,
+   "gross_profit": 30967944438.0,
+   "operating_income": 11106836789.0,
+   "total_assets": 81262269954.0,
+   "total_liabilities": 29205541096.0,
+   "stockholders_equity": 52055573941.0,
+   "operating_cash_flow": 10574420052.0,
+   "capital_expenditures": null,
+   "free_cash_flow": null,
+   "eps_diluted": 7.044993699999999,
+   "ebitda": null
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-05-08",
+    "period": "Q4",
+    "revenue": 42500945600.0,
+    "netIncome": 8460921942.0,
+    "operatingCashFlow": 10574420052.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2026-04-28",
+    "period": "Q4",
+    "revenue": 42500945600.0,
+    "netIncome": 8460921942.0,
+    "operatingCashFlow": 10574420052.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2026-04-21",
+    "period": "Q4",
+    "revenue": 42500945600.0,
+    "netIncome": 8460921942.0,
+    "operatingCashFlow": 10574420052.0,
+    "freeCashFlow": null
+   },
+   {
+    "date": "2026-03-06",
+    "period": "Q4",
+    "revenue": 42500945600.0,
+    "netIncome": 8460921942.0,
+    "operatingCashFlow": 10574420052.0,
+    "freeCashFlow": null
+   }
+  ]
+ },
+ "TSM": {
+  "ticker": "TSM",
+  "annual": {
+   "revenue": 91651147628.2,
+   "net_income": 36654151817.4,
+   "gross_profit": 51436781097.6,
+   "operating_income": 41864130298.0,
+   "total_assets": 211901420990.2,
+   "total_liabilities": 76394006504.6,
+   "stockholders_equity": 135507414485.6,
+   "operating_cash_flow": 57827724048.6,
+   "capital_expenditures": 30272901829.0,
+   "free_cash_flow": 27554822219.6,
+   "eps_diluted": 1.41452022,
+   "ebitda": null
+  },
+  "annual_meta": {
+   "fiscal_year": 2024,
+   "report_date": "2024-12-31",
+   "revenue_source": "Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2021-06-30",
+    "period": "Q",
+    "revenue": 23260431296.4,
+    "netIncome": 8776007071.4,
+    "operatingCashFlow": 13149471163.2,
+    "freeCashFlow": 8087496.4
+   }
+  ]
+ },
+ "SHOP": {
+  "ticker": "SHOP",
+  "annual": {
+   "revenue": 11556000000.0,
+   "net_income": 1231000000.0,
+   "gross_profit": 5555000000.0,
+   "operating_income": 1468000000.0,
+   "total_assets": 15189000000.0,
+   "total_liabilities": 1716000000.0,
+   "stockholders_equity": 13473000000.0,
+   "operating_cash_flow": 2033000000.0,
+   "capital_expenditures": 26000000.0,
+   "free_cash_flow": 2007000000.0,
+   "eps_diluted": 0.94,
+   "ebitda": 1871000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-12-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-03-31",
+    "period": "Q1",
+    "revenue": 3170000000.0,
+    "netIncome": -581000000.0,
+    "operatingCashFlow": 481000000.0,
+    "freeCashFlow": 476000000.0
+   },
+   {
+    "date": "2025-12-31",
+    "period": "Q4",
+    "revenue": 3672000000.0,
+    "netIncome": 743000000.0,
+    "operatingCashFlow": 725000000.0,
+    "freeCashFlow": 715000000.0
+   },
+   {
+    "date": "2025-09-30",
+    "period": "Q3",
+    "revenue": 2844000000.0,
+    "netIncome": 264000000.0,
+    "operatingCashFlow": 513000000.0,
+    "freeCashFlow": 507000000.0
+   },
+   {
+    "date": "2025-06-30",
+    "period": "Q2",
+    "revenue": 2680000000.0,
+    "netIncome": 906000000.0,
+    "operatingCashFlow": 428000000.0,
+    "freeCashFlow": 422000000.0
+   }
+  ]
+ },
+ "ORCL": {
+  "ticker": "ORCL",
+  "annual": {
+   "revenue": 57399000000.0,
+   "net_income": 12443000000.0,
+   "gross_profit": null,
+   "operating_income": 17678000000.0,
+   "total_assets": 168361000000.0,
+   "total_liabilities": 147392000000.0,
+   "stockholders_equity": 20451000000.0,
+   "operating_cash_flow": 20821000000.0,
+   "capital_expenditures": 21215000000.0,
+   "free_cash_flow": -394000000.0,
+   "eps_diluted": 4.34,
+   "ebitda": 23912000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2025-05-31",
+   "revenue_source": "Total Revenue",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-02-28",
+    "period": "Q3",
+    "revenue": 17190000000.0,
+    "netIncome": 3721000000.0,
+    "operatingCashFlow": 7151000000.0,
+    "freeCashFlow": -11484000000.0
+   },
+   {
+    "date": "2025-11-30",
+    "period": "Q2",
+    "revenue": 16057000000.0,
+    "netIncome": 6135000000.0,
+    "operatingCashFlow": 2066000000.0,
+    "freeCashFlow": -9967000000.0
+   },
+   {
+    "date": "2025-08-31",
+    "period": "Q1",
+    "revenue": 14926000000.0,
+    "netIncome": 2927000000.0,
+    "operatingCashFlow": 8140000000.0,
+    "freeCashFlow": -362000000.0
+   },
+   {
+    "date": "2025-02-28",
+    "period": "Q3",
+    "revenue": 14130000000.0,
+    "netIncome": 2936000000.0,
+    "operatingCashFlow": 5933000000.0,
+    "freeCashFlow": 71000000.0
+   }
+  ]
+ },
+ "CRM": {
+  "ticker": "CRM",
+  "annual": {
+   "revenue": 41525000000.0,
+   "net_income": 7457000000.0,
+   "gross_profit": 32255000000.0,
+   "operating_income": 8331000000.0,
+   "total_assets": 112305000000.0,
+   "total_liabilities": 53163000000.0,
+   "stockholders_equity": 59142000000.0,
+   "operating_cash_flow": 14996000000.0,
+   "capital_expenditures": 594000000.0,
+   "free_cash_flow": 14402000000.0,
+   "eps_diluted": 7.8,
+   "ebitda": 11044000000.0
+  },
+  "annual_meta": {
+   "fiscal_year": 2025,
+   "report_date": "2026-01-31",
+   "revenue_source": "Revenue from Contract with Customer",
+   "industry_class": "standard"
+  },
+  "quarters": [
+   {
+    "date": "2026-04-30",
+    "period": "Q1",
+    "revenue": 11133000000.0,
+    "netIncome": 2107000000.0,
+    "operatingCashFlow": 6701000000.0,
+    "freeCashFlow": 6556000000.0
+   },
+   {
+    "date": "2025-10-31",
+    "period": "Q3",
+    "revenue": 10259000000.0,
+    "netIncome": 2086000000.0,
+    "operatingCashFlow": 2316000000.0,
+    "freeCashFlow": 2177000000.0
+   },
+   {
+    "date": "2025-07-31",
+    "period": "Q2",
+    "revenue": 10236000000.0,
+    "netIncome": 1887000000.0,
+    "operatingCashFlow": 740000000.0,
+    "freeCashFlow": 605000000.0
+   },
+   {
+    "date": "2025-04-30",
+    "period": "Q1",
+    "revenue": 9829000000.0,
+    "netIncome": 1541000000.0,
+    "operatingCashFlow": 6476000000.0,
+    "freeCashFlow": 6297000000.0
+   }
+  ]
+ }
+}
