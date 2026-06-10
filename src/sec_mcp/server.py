@@ -832,36 +832,46 @@ def diff_filing_section(ticker: str, section: str, year1: int, year2: int) -> di
         
         mapped_section = section_map.get(section.lower(), section)
         
-        # Get filings for both years
-        filings1 = list_filings(ticker, form="10-K", limit=5)
-        filings2 = list_filings(ticker, form="10-K", limit=5)
-        
-        # Find the filings closest to each year
-        text1 = None
-        text2 = None
-        
-        for filing in filings1:
-            filing_year = int(filing.get("filing_date", "")[:4])
-            if filing_year == year1:
-                text1 = get_filing_content(ticker, filing.get("accession_number"), mapped_section)
-                break
-        
-        for filing in filings2:
-            filing_year = int(filing.get("filing_date", "")[:4])
-            if filing_year == year2:
-                text2 = get_filing_content(ticker, filing.get("accession_number"), mapped_section)
-                break
-        
+        # One filing list covers both years (FilingMetadata objects, fiscal
+        # year keyed off the report period end, not the filing date)
+        from sec_mcp.sec_client import get_sec_client
+        filings = get_sec_client().get_periodic_filings_smart(
+            ticker, form_type="10-K", limit=15)
+
+        def _section_for(year: int) -> str | None:
+            for f in filings:
+                basis = f.report_date or f.filing_date or ""
+                if basis[:4].isdigit() and int(basis[:4]) == year:
+                    return get_filing_content(ticker, f.accession_number, mapped_section)
+            return None
+
+        text1 = _section_for(year1)
+        text2 = _section_for(year2)
+
         if not text1 or not text2:
             return {"error": f"Could not retrieve section '{section}' for both years"}
-        
-        # Try to use Claude to summarize the changes
+
+        # Claude-powered change summary (optional — skipped without API key)
         summary = None
         try:
-            from sec_mcp.narrator import get_narrator
-            narrator = get_narrator()
-            if narrator:
-                summary = narrator.explain_section_change(section, text1, text2)
+            import anthropic
+
+            from sec_mcp.config import get_config
+            cfg = get_config()
+            if cfg.anthropic_api_key:
+                client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
+                resp = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=800,
+                    messages=[{"role": "user", "content": (
+                        f"Compare the '{section}' section of {ticker}'s {year1} vs "
+                        f"{year2} 10-K. Summarize the material CHANGES (added risks, "
+                        f"removed language, shifted emphasis) in <=8 bullets.\n\n"
+                        f"--- {year1} ---\n{text1[:12000]}\n\n"
+                        f"--- {year2} ---\n{text2[:12000]}"
+                    )}],
+                )
+                summary = resp.content[0].text
         except Exception:
             # Fall back to no Claude summary
             pass

@@ -12,9 +12,8 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from sec_mcp.chat_app import SECTOR_UNIVERSE, _TICKER_TO_SECTOR
+from sec_mcp.chat_app import SECTOR_UNIVERSE
 
 log = logging.getLogger(__name__)
 
@@ -24,19 +23,36 @@ def get_available_sectors() -> list[str]:
     return sorted(SECTOR_UNIVERSE.keys())
 
 
+_count_cache: tuple[float, int] | None = None
+
+
 def get_cached_ticker_count() -> int:
-    """Count how many tickers have cached data in Supabase."""
+    """Distinct tickers with cached financials — ONE Supabase query.
+
+    The previous version issued one query per universe ticker (400+
+    sequential HTTP round-trips) from inside async endpoints, blocking the
+    event loop for 30-60s and timing out /api/cache/stats and
+    /api/screener/sectors. Result is memoised for 5 minutes.
+    """
+    global _count_cache
+    import time
+
+    if _count_cache and time.time() - _count_cache[0] < 300:
+        return _count_cache[1]
+
     from sec_mcp import supabase_cache
 
     if not supabase_cache.is_available():
         return 0
-
-    count = 0
-    for tickers in SECTOR_UNIVERSE.values():
-        for ticker in tickers:
-            cached = supabase_cache.get_cached(ticker, "financials")
-            if cached and isinstance(cached, dict) and cached.get("metrics"):
-                count += 1
+    try:
+        client = supabase_cache._get_client()
+        res = (client.table("financial_cache").select("ticker")
+               .eq("data_type", "financials").limit(5000).execute())
+        count = len({r["ticker"] for r in (res.data or [])})
+    except Exception as exc:
+        log.debug("cached ticker count failed: %s", exc)
+        return 0
+    _count_cache = (time.time(), count)
     return count
 
 

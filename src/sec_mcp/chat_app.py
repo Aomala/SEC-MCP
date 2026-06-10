@@ -1283,11 +1283,24 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
     if cached:
         return cached
 
-    # 1. PRIMARY: XBRL segment data from SEC EDGAR (authoritative source)
+    # 1. PRIMARY: dimensional XBRL from the filing itself (companyfacts
+    # strips dimensions, so this is the only authoritative segment source)
     try:
-        data = _curData if (_curData and (_curData.get("ticker_or_cik") or "").upper() == tk) else None
-        if not data:
-            data = extract_financials(tk, include_segments=True)
+        from sec_mcp.graph.segments import get_dimensional_segments
+        dims = get_dimensional_segments(tk)
+        if dims and len(dims.get("geographic_segments") or []) >= 2:
+            result = {"ticker": tk,
+                      "geographic_segments": dims["geographic_segments"],
+                      "source": "sec_xbrl_dimensions"}
+            supabase_cache.set_cached(tk, "geo_segments", result, period)
+            return result
+    except Exception as exc:
+        log.warning("dimensional geo extraction failed for %s: %s", tk, exc)
+
+    # 1b. companyfacts-derived segment concepts (works for filers that tag
+    # geography as separate concepts rather than dimensions)
+    try:
+        data = extract_financials(tk, include_segments=True)
         if data:
             geo = (data.get("segments") or {}).get("geographic_segments", [])
             if len(geo) >= 2:
@@ -1354,11 +1367,24 @@ async def get_segments(ticker: str, period: str = "annual"):
     if cached:
         return cached
 
-    # 1. PRIMARY: XBRL segment data from SEC EDGAR
+    # 1. PRIMARY: dimensional XBRL from the filing itself (companyfacts
+    # strips dimensions — this is the only authoritative segment source;
+    # the old text-scrape fallback served income-statement rows as
+    # "segments" for filers like MSFT)
     try:
-        data = _curData if (_curData and (_curData.get("ticker_or_cik") or "").upper() == tk) else None
-        if not data:
-            data = extract_financials(tk, include_segments=True)
+        from sec_mcp.graph.segments import get_dimensional_segments
+        dims = get_dimensional_segments(tk)
+        if dims and len(dims.get("segments") or []) >= 2:
+            result = {"ticker": tk, "segments": dims["segments"],
+                      "source": "sec_xbrl_dimensions"}
+            supabase_cache.set_cached(tk, "product_segments", result, period)
+            return result
+    except Exception as exc:
+        log.warning("dimensional segment extraction failed for %s: %s", tk, exc)
+
+    # 1b. companyfacts-derived segment concepts
+    try:
+        data = extract_financials(tk, include_segments=True)
         if data:
             segs = (data.get("segments") or {}).get("revenue_segments", [])
             if len(segs) >= 2:
