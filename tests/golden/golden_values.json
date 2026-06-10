@@ -1,0 +1,471 @@
+{
+  "_meta": {
+    "built": "2026-06-09",
+    "source": "EDGAR companyfacts API, hand-pinned tags per company",
+    "note": "values in reporting currency; quarters are standalone 3-month"
+  },
+  "companies": {
+    "AAPL": {
+      "cik": 320193,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities",
+        "capital_expenditures": "PaymentsToAcquirePropertyPlantAndEquipment"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 383285000000.0,
+          "_period_end": "2023-09-30",
+          "net_income": 96995000000.0,
+          "total_assets": 352583000000.0,
+          "total_liabilities": 290437000000.0,
+          "stockholders_equity": 62146000000.0,
+          "operating_cash_flow": 110543000000.0,
+          "capital_expenditures": 10959000000.0
+        },
+        "2024": {
+          "revenue": 391035000000.0,
+          "_period_end": "2024-09-28",
+          "net_income": 93736000000.0,
+          "total_assets": 364980000000.0,
+          "total_liabilities": 308030000000.0,
+          "stockholders_equity": 56950000000.0,
+          "operating_cash_flow": 118254000000.0,
+          "capital_expenditures": 9447000000.0
+        }
+      },
+      "quarters_fy2024": {
+        "revenue": [
+          {
+            "period_end": "2023-12-30",
+            "value": 119575000000.0,
+            "quarter": "Q1"
+          },
+          {
+            "period_end": "2024-03-30",
+            "value": 90753000000.0,
+            "quarter": "Q2"
+          },
+          {
+            "period_end": "2024-06-29",
+            "value": 85777000000.0,
+            "quarter": "Q3"
+          },
+          {
+            "quarter": "Q4",
+            "period_end": "2024-09-28",
+            "value": 94930000000.0,
+            "derived": true
+          }
+        ],
+        "net_income": [
+          {
+            "period_end": "2023-12-30",
+            "value": 33916000000.0,
+            "quarter": "Q1"
+          },
+          {
+            "period_end": "2024-03-30",
+            "value": 23636000000.0,
+            "quarter": "Q2"
+          },
+          {
+            "period_end": "2024-06-29",
+            "value": 21448000000.0,
+            "quarter": "Q3"
+          },
+          {
+            "quarter": "Q4",
+            "period_end": "2024-09-28",
+            "value": 14736000000.0,
+            "derived": true
+          }
+        ]
+      }
+    },
+    "MSFT": {
+      "cik": 789019,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities",
+        "capital_expenditures": "PaymentsToAcquirePropertyPlantAndEquipment"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 211915000000.0,
+          "_period_end": "2023-06-30",
+          "net_income": 72361000000.0,
+          "total_assets": 411976000000.0,
+          "total_liabilities": 205753000000.0,
+          "stockholders_equity": 206223000000.0,
+          "operating_cash_flow": 87582000000.0,
+          "capital_expenditures": 28107000000.0
+        },
+        "2024": {
+          "revenue": 245122000000.0,
+          "_period_end": "2024-06-30",
+          "net_income": 88136000000.0,
+          "total_assets": 512163000000.0,
+          "total_liabilities": 243686000000.0,
+          "stockholders_equity": 268477000000.0,
+          "operating_cash_flow": 118548000000.0,
+          "capital_expenditures": 44477000000.0
+        }
+      },
+      "quarters_fy2024": {
+        "revenue": [
+          {
+            "period_end": "2023-09-30",
+            "value": 56517000000.0,
+            "quarter": "Q1"
+          },
+          {
+            "period_end": "2023-12-31",
+            "value": 62020000000.0,
+            "quarter": "Q2"
+          },
+          {
+            "period_end": "2024-03-31",
+            "value": 61858000000.0,
+            "quarter": "Q3"
+          },
+          {
+            "quarter": "Q4",
+            "period_end": "2024-06-30",
+            "value": 64727000000.0,
+            "derived": true
+          }
+        ],
+        "net_income": [
+          {
+            "period_end": "2023-09-30",
+            "value": 22291000000.0,
+            "quarter": "Q1"
+          },
+          {
+            "period_end": "2023-12-31",
+            "value": 21870000000.0,
+            "quarter": "Q2"
+          },
+          {
+            "period_end": "2024-03-31",
+            "value": 21939000000.0,
+            "quarter": "Q3"
+          },
+          {
+            "quarter": "Q4",
+            "period_end": "2024-06-30",
+            "value": 22036000000.0,
+            "derived": true
+          }
+        ]
+      }
+    },
+    "JPM": {
+      "cik": 19617,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "Revenues",
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 158104000000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 49552000000.0,
+          "total_assets": 3875393000000.0,
+          "total_liabilities": 3547515000000.0,
+          "stockholders_equity": 327878000000.0,
+          "operating_cash_flow": 12974000000.0
+        },
+        "2024": {
+          "revenue": 177556000000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 58471000000.0,
+          "total_assets": 4002814000000.0,
+          "total_liabilities": 3658056000000.0,
+          "stockholders_equity": 344758000000.0,
+          "operating_cash_flow": -42012000000.0
+        }
+      },
+      "quarters_fy2024": {
+        "revenue": [],
+        "net_income": [
+          {
+            "period_end": "2024-03-31",
+            "value": 13419000000.0,
+            "quarter": "Q1"
+          },
+          {
+            "period_end": "2024-06-30",
+            "value": 18149000000.0,
+            "quarter": "Q2"
+          },
+          {
+            "period_end": "2024-09-30",
+            "value": 12898000000.0,
+            "quarter": "Q3"
+          },
+          {
+            "quarter": "Q4",
+            "period_end": "2024-12-31",
+            "value": 14005000000.0,
+            "derived": true
+          }
+        ]
+      }
+    },
+    "BRK-B": {
+      "cik": 1067983,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "Revenues",
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 364482000000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 96223000000.0,
+          "total_assets": 1069978000000.0,
+          "total_liabilities": 499208000000.0,
+          "stockholders_equity": 561273000000.0,
+          "operating_cash_flow": 49196000000.0
+        },
+        "2024": {
+          "revenue": 371433000000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 88995000000.0,
+          "total_assets": 1153881000000.0,
+          "total_liabilities": 502226000000.0,
+          "stockholders_equity": 649368000000.0,
+          "operating_cash_flow": 30592000000.0
+        }
+      }
+    },
+    "O": {
+      "cik": 726728,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "Revenues",
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 4078993000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 872309000.0,
+          "total_assets": 57779357000.0,
+          "total_liabilities": 24672388000.0,
+          "stockholders_equity": 32941467000.0,
+          "operating_cash_flow": 2958769000.0
+        },
+        "2024": {
+          "revenue": 5271142000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 860772000.0,
+          "total_assets": 68835039000.0,
+          "total_liabilities": 29783353000.0,
+          "stockholders_equity": 38840738000.0,
+          "operating_cash_flow": 3573276000.0
+        }
+      }
+    },
+    "SPG": {
+      "cik": 1063761,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "Revenues",
+        "net_income": "NetIncomeLossAvailableToCommonStockholdersBasic",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 5658836000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 2279789000.0,
+          "total_assets": 34283495000.0,
+          "total_liabilities": 30595897000.0,
+          "stockholders_equity": 3022834000.0,
+          "operating_cash_flow": 3930793000.0
+        },
+        "2024": {
+          "revenue": 5963798000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 2367559000.0,
+          "total_assets": 32405691000.0,
+          "total_liabilities": 28806239000.0,
+          "stockholders_equity": 2941925000.0,
+          "operating_cash_flow": 3814655000.0
+        }
+      }
+    },
+    "NEE": {
+      "cik": 753308,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": [
+          "RegulatedAndUnregulatedOperatingRevenue",
+          "RevenueFromContractWithCustomerIncludingAssessedTax",
+          "Revenues"
+        ],
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 28114000000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 7310000000.0,
+          "total_assets": 177489000000.0,
+          "total_liabilities": 118465000000.0,
+          "stockholders_equity": 47468000000.0,
+          "operating_cash_flow": 11301000000.0
+        },
+        "2024": {
+          "revenue": 24753000000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 6946000000.0,
+          "total_assets": 190144000000.0,
+          "total_liabilities": 129283000000.0,
+          "stockholders_equity": 50101000000.0,
+          "operating_cash_flow": 13260000000.0
+        }
+      }
+    },
+    "COIN": {
+      "cik": 1679788,
+      "currency": "USD",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "Revenues",
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 3108383000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 94871000.0,
+          "total_assets": 206982953000.0,
+          "total_liabilities": 200701304000.0,
+          "stockholders_equity": 6281649000.0,
+          "operating_cash_flow": 922951000.0
+        },
+        "2024": {
+          "revenue": 6564028000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 2579066000.0,
+          "total_assets": 22541951000.0,
+          "total_liabilities": 12265109000.0,
+          "stockholders_equity": 10276842000.0,
+          "operating_cash_flow": 2556844000.0
+        }
+      }
+    },
+    "ASML": {
+      "cik": 937966,
+      "currency": "EUR",
+      "taxonomy": "us-gaap",
+      "tags": {
+        "revenue": "RevenueFromContractWithCustomerExcludingAssessedTax",
+        "net_income": "NetIncomeLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "StockholdersEquity",
+        "operating_cash_flow": "NetCashProvidedByUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 27558500000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 7839000000.0,
+          "total_assets": 39957500000.0,
+          "total_liabilities": 26505100000.0,
+          "stockholders_equity": 13452400000.0,
+          "operating_cash_flow": 5443400000.0
+        },
+        "2024": {
+          "revenue": 28262900000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 7571600000.0,
+          "total_assets": 48589600000.0,
+          "total_liabilities": 30112800000.0,
+          "stockholders_equity": 18476800000.0,
+          "operating_cash_flow": 11166200000.0
+        }
+      }
+    },
+    "SAP": {
+      "cik": 1000184,
+      "currency": "EUR",
+      "taxonomy": "ifrs-full",
+      "tags": {
+        "revenue": "Revenue",
+        "net_income": "ProfitLoss",
+        "total_assets": "Assets",
+        "total_liabilities": "Liabilities",
+        "stockholders_equity": "Equity",
+        "operating_cash_flow": "CashFlowsFromUsedInOperatingActivities"
+      },
+      "annual": {
+        "2023": {
+          "revenue": 31207000000.0,
+          "_period_end": "2023-12-31",
+          "net_income": 5964000000.0,
+          "total_assets": 68335000000.0,
+          "total_liabilities": 24928000000.0,
+          "stockholders_equity": 43406000000.0,
+          "operating_cash_flow": 6332000000.0
+        },
+        "2024": {
+          "revenue": 34176000000.0,
+          "_period_end": "2024-12-31",
+          "net_income": 3150000000.0,
+          "total_assets": 74122000000.0,
+          "total_liabilities": 28314000000.0,
+          "stockholders_equity": 45808000000.0,
+          "operating_cash_flow": 5220000000.0
+        }
+      }
+    }
+  }
+}

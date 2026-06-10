@@ -231,6 +231,10 @@ class ConceptEntry(NamedTuple):
     xbrl_concept: str       # tag name (without us-gaap: prefix)
     display_name: str       # human label
     aggregate: bool = False # True = add to running total instead of replace
+    # Opt-in to Pass-2 substring matching in the resolver. Off by default:
+    # "Revenues" contains-matches "DeferredRevenues", "CostOfRevenues", and
+    # every guidance/segment variant — fuzzy matching is how wrong tags leak.
+    allow_fuzzy: bool = False
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -459,14 +463,19 @@ RD_EXPENSE: list[ConceptEntry] = [
 # ═══════════════════════════════════════════════════════════════════════════
 
 NET_INCOME: list[ConceptEntry] = [
+    # Headline net income = attributable to the PARENT's shareholders.
+    # us-gaap:NetIncomeLoss is parent-share by definition; the attributable
+    # variants come next for filers (REITs, partnerships) with material NCI
+    # that skip NetIncomeLoss. ProfitLoss (consolidated, INCLUDING NCI) is a
+    # last resort only — for SPG it overstates headline NI by ~15%.
     ConceptEntry("NetIncomeLoss", "Net Income (Loss)"),
-    ConceptEntry("ProfitLoss", "Profit (Loss)"),
-    ConceptEntry("NetIncome", "Net Income"),
     ConceptEntry("NetIncomeAttributableToParent", "Net Income Attributable to Parent"),
     ConceptEntry("NetIncomeLossAttributableToParent",
                  "Net Income (Loss) Attributable to Parent"),
     ConceptEntry("NetIncomeLossAvailableToCommonStockholdersBasic",
                  "Net Income Available to Common (Basic)"),
+    ConceptEntry("NetIncome", "Net Income"),
+    ConceptEntry("ProfitLoss", "Profit (Loss)"),
     ConceptEntry("IncomeLossFromContinuingOperations",
                  "Income from Continuing Operations"),
     ConceptEntry("ComprehensiveIncomeNetOfTax",
@@ -623,10 +632,11 @@ CURRENT_ASSETS: list[ConceptEntry] = [
 
 TOTAL_LIABILITIES: list[ConceptEntry] = [
     ConceptEntry("Liabilities", "Total Liabilities"),
-    ConceptEntry("LiabilitiesAndStockholdersEquity", "Liabilities + Equity (for derivation)"),
     ConceptEntry("TotalLiabilities", "Total Liabilities (alt tag)"),
-    # IFRS
-    ConceptEntry("NoncurrentLiabilities", "Noncurrent Liabilities"),
+    # LiabilitiesAndStockholdersEquity deliberately EXCLUDED: filers without
+    # a "Total liabilities" subtotal (common for utilities) would get L+E
+    # served as liabilities. extract_financials derives A − E − NCI instead.
+    # NoncurrentLiabilities likewise excluded — it's a subtotal, not a total.
 ]
 
 CURRENT_LIABILITIES: list[ConceptEntry] = [
@@ -648,6 +658,16 @@ STOCKHOLDERS_EQUITY: list[ConceptEntry] = [
     # IFRS
     ConceptEntry("EquityAttributableToOwnersOfParent", "IFRS Equity Attributable to Parent"),
     ConceptEntry("EquityAttributableToParent", "IFRS Equity to Parent (alt)"),
+]
+
+# Noncontrolling (minority) interests — needed for the A = L + E_parent + NCI
+# identity; without it the balance-sheet check "repairs" correct parent equity.
+MINORITY_INTEREST: list[ConceptEntry] = [
+    ConceptEntry("MinorityInterest", "Noncontrolling Interest"),
+    ConceptEntry("RedeemableNoncontrollingInterestEquityCarryingAmount",
+                 "Redeemable NCI"),
+    # IFRS
+    ConceptEntry("NoncontrollingInterests", "IFRS Noncontrolling Interests"),
 ]
 
 TOTAL_EQUITY: list[ConceptEntry] = [
@@ -1338,6 +1358,7 @@ CONCEPT_MAP: dict[str, list[ConceptEntry]] = {
     "current_liabilities": CURRENT_LIABILITIES,
     "stockholders_equity": STOCKHOLDERS_EQUITY,
     "total_equity": TOTAL_EQUITY,
+    "minority_interest": MINORITY_INTEREST,
     "long_term_debt": LONG_TERM_DEBT,
     "short_term_debt": SHORT_TERM_DEBT,
     "cash_and_equivalents": CASH_AND_EQUIVALENTS,

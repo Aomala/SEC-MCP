@@ -15,10 +15,9 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 import threading
-from datetime import datetime, timezone
-from typing import Any, Optional
+import time
+from typing import Any
 
 import pandas as pd
 import requests
@@ -51,6 +50,8 @@ MIN_REQUEST_INTERVAL = 1.0 / MAX_REQUESTS_PER_SECOND
 TICKERS_CACHE_TTL = 1800    # 30 minutes for ticker→CIK mapping
 FACTS_CACHE_TTL = 300       # 5 minutes for XBRL company facts
 SUBMISSIONS_CACHE_TTL = 120  # 2 minutes for submissions/filings list
+SUBMISSIONS_PAGE_TTL = 86400  # 24h — older submissions pages are historical
+MAX_SUBMISSION_PAGES = 6     # pagination depth for heavy filers (~6k filings)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -132,6 +133,9 @@ class SECClient:
         self._tickers_cache: _CacheEntry | None = None
         self._facts_cache: dict[str, _CacheEntry] = {}
         self._submissions_cache: dict[str, _CacheEntry] = {}
+        # Older submissions pages are historical and effectively immutable —
+        # cached separately with a long TTL (see get_filings pagination).
+        self._submissions_page_cache: dict[str, _CacheEntry] = {}
 
     # ── Rate-limited HTTP request ─────────────────────────────────────
 
@@ -477,20 +481,50 @@ class SECClient:
         if not recent:
             return []
 
-        # Build list of filings from columnar data
-        accessions = recent.get("accessionNumber", [])
-        forms = recent.get("form", [])
-        dates = recent.get("filingDate", [])
-        descriptions = recent.get("primaryDocDescription", [])
-        primary_docs = recent.get("primaryDocument", [])
-        report_dates = recent.get("reportDate", [])
-
         results: list[FilingMetadata] = []
-        for i in range(len(accessions)):
-            form = forms[i] if i < len(forms) else ""
+        self._collect_filings_columnar(recent, form_type, limit, results)
 
-            # Filter by form type if specified
+        # The `recent` window holds the 1,000 most recent filings — for heavy
+        # filers (banks file thousands of docs/year) that's only a few months
+        # and may contain a single 10-K. Older filings live in paging files
+        # listed under filings.files; fetch them (newest range first) until we
+        # have enough matches.
+        if len(results) < limit:
+            pages = sorted(
+                data.get("filings", {}).get("files", []) or [],
+                key=lambda p: p.get("filingTo", ""), reverse=True,
+            )
+            for page in pages[:MAX_SUBMISSION_PAGES]:
+                if len(results) >= limit:
+                    break
+                page_data = self._get_submissions_page(page.get("name", ""))
+                if page_data:
+                    self._collect_filings_columnar(page_data, form_type, limit, results)
+
+        return results
+
+    def _collect_filings_columnar(
+        self,
+        columnar: dict,
+        form_type: str | None,
+        limit: int,
+        results: list[FilingMetadata],
+    ) -> None:
+        """Append FilingMetadata rows from a columnar submissions block."""
+        accessions = columnar.get("accessionNumber", [])
+        forms = columnar.get("form", [])
+        dates = columnar.get("filingDate", [])
+        descriptions = columnar.get("primaryDocDescription", [])
+        report_dates = columnar.get("reportDate", [])
+        seen = {r.accession_number for r in results}
+
+        for i in range(len(accessions)):
+            if len(results) >= limit:
+                return
+            form = forms[i] if i < len(forms) else ""
             if form_type and form != form_type:
+                continue
+            if accessions[i] in seen:
                 continue
 
             desc = descriptions[i] if i < len(descriptions) else None
@@ -505,10 +539,25 @@ class SECClient:
                 report_date=report_dates[i] if i < len(report_dates) else "",
             ))
 
-            if len(results) >= limit:
-                break
+    def _get_submissions_page(self, name: str) -> dict:
+        """Fetch one older-submissions paging file (CIK…-submissions-NNN.json).
 
-        return results
+        These cover historical date ranges and effectively never change, so
+        they're cached for 24h. Returns the columnar dict (same shape as
+        filings.recent) or {} on error.
+        """
+        if not name:
+            return {}
+        cached = self._submissions_page_cache.get(name)
+        if cached and not cached.expired(SUBMISSIONS_PAGE_TTL):
+            return cached.data
+        try:
+            data = self._request_json(f"{DATA_BASE}/submissions/{name}")
+        except Exception as exc:
+            log.warning("Submissions page fetch failed (%s): %s", name, exc)
+            return {}
+        self._submissions_page_cache[name] = _CacheEntry(data)
+        return data
 
     def get_filings_smart(
         self,
@@ -704,6 +753,85 @@ class SECClient:
         if accession is not None:
             df = df[df["accn"] == accession]
         return df
+
+    # ── Periodic filing index (derived from companyfacts) ─────────────
+
+    def get_periodic_filings(
+        self,
+        ticker_or_cik: str,
+        form_type: str = "10-K",
+        limit: int = 12,
+    ) -> list[FilingMetadata]:
+        """List 10-K/10-Q/20-F/6-K filings derived from XBRL companyfacts.
+
+        The submissions `recent` window only covers the last 1,000 filings —
+        a few months for heavy filers (JPM files ~25k docs/year), so paging
+        through submissions files to find historical 10-Ks costs dozens of
+        requests. companyfacts (already fetched for extraction) carries
+        (accn, form, filed, period end) for every fact ever reported, so the
+        full periodic-filing history comes from data already in hand.
+
+        report_date = the latest fact period-end in the filing (the fiscal
+        period end). Amendments (e.g. 10-K/A) are separate accessions and are
+        included when their form matches exactly.
+        """
+        try:
+            df = self.get_facts_dataframe(ticker_or_cik)
+        except Exception as exc:
+            log.warning("get_periodic_filings facts fetch failed for %s: %s",
+                        ticker_or_cik, exc)
+            return []
+        if df is None or df.empty or "accn" not in df.columns or "form" not in df.columns:
+            return []
+
+        sub = df[df["form"] == form_type]
+        # dei cover-page facts (shares outstanding etc.) are dated near the
+        # FILING date, not the period end — including them overshoots the
+        # report_date past the fiscal end (bit IFRS filers whose frames carry
+        # every taxonomy).
+        if "taxonomy" in sub.columns:
+            non_dei = sub[sub["taxonomy"] != "dei"]
+            if not non_dei.empty:
+                sub = non_dei
+        # A report period can never end after its filing date — forward-dated
+        # facts (subsequent events, post-period share counts) must not define
+        # the report_date.
+        if "filed" in sub.columns:
+            bounded = sub[sub["end"].notna() & sub["filed"].notna()
+                          & (sub["end"] <= sub["filed"])]
+            if not bounded.empty:
+                sub = bounded
+        if sub.empty:
+            return []
+
+        results: list[FilingMetadata] = []
+        grouped = sub.groupby("accn").agg(
+            report=("end", "max"), filed=("filed", "min"))
+        for accn, row in grouped.iterrows():
+            report = row["report"]
+            filed = row["filed"]
+            results.append(FilingMetadata(
+                accession_number=str(accn),
+                form_type=form_type,
+                filing_date=str(filed.date()) if pd.notna(filed) else "",
+                report_date=str(report.date()) if pd.notna(report) else "",
+            ))
+        results.sort(key=lambda f: f.report_date or "", reverse=True)
+        return results[:limit]
+
+    def get_periodic_filings_smart(
+        self,
+        ticker_or_cik: str,
+        form_type: str = "10-K",
+        limit: int = 12,
+    ) -> list[FilingMetadata]:
+        """get_periodic_filings with FPI form fallback (10-K→20-F, 10-Q→6-K),
+        then a final fallback to the submissions-based list."""
+        for ft in get_form_alternatives(form_type):
+            results = self.get_periodic_filings(ticker_or_cik, form_type=ft, limit=limit)
+            if results:
+                return results
+        return self.get_filings_smart(ticker_or_cik, form_type=form_type, limit=limit)
 
     # ── Single concept history ────────────────────────────────────────
 

@@ -39,16 +39,16 @@ import pandas as pd
 
 from sec_mcp import disk_cache
 from sec_mcp.config import get_config
+from sec_mcp.facts.periods import PeriodType, annotate_periods, dedupe_facts
 from sec_mcp.sec_client import get_sec_client
 from sec_mcp.xbrl_mappings import (
     ABSTRACT_COLUMNS,
     CONCEPT_MAP,
-    ConceptEntry,
     DIMENSION_COLUMNS,
-    EBITDA_COMPONENTS,
-    IndustryClass,
     LEVEL_COLUMNS,
     MAX_ACCEPTABLE_LEVEL,
+    ConceptEntry,
+    IndustryClass,
     detect_industry_class,
     get_revenue_concepts,
     is_custom_net_revenue,
@@ -108,8 +108,10 @@ def _find_filing_accession(
     or None if no matching filing found.
     """
     client = get_sec_client()
-    # Use smart filing search with automatic FPI fallback (20-F for 10-K, 6-K for 10-Q)
-    filings = client.get_filings_smart(ticker_or_cik, form_type=form_type, limit=40)
+    # Periodic-filing index derived from companyfacts (full history, even for
+    # heavy filers whose submissions `recent` window only spans months), with
+    # automatic FPI fallback (20-F for 10-K, 6-K for 10-Q).
+    filings = client.get_periodic_filings_smart(ticker_or_cik, form_type=form_type, limit=40)
 
     if not filings:
         return None
@@ -207,6 +209,16 @@ def _apply_quality_filters(df: pd.DataFrame) -> pd.DataFrame:
             filtered = filtered[mask]
             break
 
+    # --- Exclude dimension/text remnants by concept name ---
+    # companyfacts strips dimensional facts, but custom taxonomies can still
+    # surface Axis/Member concepts, and TextBlock facts are narrative HTML.
+    concept_col = _find_column(filtered, ("concept", "Concept", "tag", "Tag"))
+    if concept_col is not None:
+        names = filtered[concept_col].astype(str)
+        bad = (names.str.endswith("Axis") | names.str.endswith("Member")
+               | names.str.contains("TextBlock", na=False))
+        filtered = filtered[~bad]
+
     # --- Prefer rows with level <= MAX_ACCEPTABLE_LEVEL ---
     for col in LEVEL_COLUMNS:
         if col in filtered.columns:
@@ -258,18 +270,107 @@ def _resolve_metric(
     duration_pref: str | None = None,
     target_fp: str | None = None,
     target_fy: int | None = None,
+    is_revenue: bool = False,
+    canonical_key: str | None = None,
+    ticker_or_cik: str | None = None,
+    accession: str | None = None,
+) -> ResolvedMetric:
+    """Dispatcher: graph resolver (per the GRAPH_RESOLVER flag) with the
+    legacy 4-pass resolver as the always-available fallback.
+
+    Modes (config.graph_resolver):
+      off    — legacy only (default)
+      shadow — run both, SERVE legacy, log disagreements for adjudication
+      on     — serve graph result when it resolves; legacy otherwise
+    """
+    mode = "off"
+    if canonical_key and accession and ticker_or_cik:
+        try:
+            mode = (get_config().graph_resolver or "off").lower()
+        except Exception:
+            mode = "off"
+
+    graph_result: ResolvedMetric | None = None
+    if mode in ("shadow", "on"):
+        try:
+            from sec_mcp.graph import get_graph_resolver
+            graph_result = get_graph_resolver().resolve(
+                facts_df, canonical_key,
+                ticker_or_cik=ticker_or_cik, accession=accession,
+                industry=industry, period_index=period_index,
+                duration_pref=duration_pref,
+                target_fp=target_fp, target_fy=target_fy,
+            )
+        except Exception as exc:
+            log.warning("graph resolver failed for %s/%s: %s",
+                        ticker_or_cik, canonical_key, exc)
+
+    if mode == "on" and graph_result is not None:
+        return graph_result
+
+    legacy = _resolve_metric_legacy(
+        facts_df, concepts, period_index=period_index, industry=industry,
+        prefer_quarterly=prefer_quarterly, duration_pref=duration_pref,
+        target_fp=target_fp, target_fy=target_fy, is_revenue=is_revenue,
+    )
+
+    if mode == "shadow" and graph_result is not None:
+        _log_resolver_diff(ticker_or_cik, accession, canonical_key,
+                           legacy, graph_result)
+    return legacy
+
+
+def _log_resolver_diff(ticker, accession, key, legacy, graph) -> None:
+    """Record legacy-vs-graph disagreements (shadow mode adjudication)."""
+    lv, gv = legacy.value, graph.value
+    if lv is not None and gv is not None and lv != 0:
+        rel = abs(lv - gv) / max(abs(lv), 1e-9)
+        if rel < 0.001:
+            return  # agreement
+    elif lv is None and gv is None:
+        return
+    else:
+        rel = None
+    log.warning("RESOLVER_DIFF %s %s %s: legacy=%s (%s) graph=%s (%s) rel=%s",
+                ticker, accession, key, lv, legacy.source, gv, graph.source,
+                f"{rel:.2%}" if rel is not None else "n/a")
+    try:
+        from sec_mcp.supabase_cache import _get_client
+        client = _get_client()
+        if client is not None:
+            client.table("resolver_diffs").insert({
+                "ticker": str(ticker), "accession": accession,
+                "canonical_key": key, "legacy_value": lv, "graph_value": gv,
+                "legacy_source": legacy.source, "graph_source": graph.source,
+                "rel_diff": rel,
+            }).execute()
+    except Exception:
+        pass  # diff logging must never break extraction
+
+
+def _resolve_metric_legacy(
+    facts_df: pd.DataFrame | None,
+    concepts: list[ConceptEntry],
+    *,
+    period_index: int = 0,
+    industry: IndustryClass = IndustryClass.STANDARD,
+    prefer_quarterly: bool = False,
+    duration_pref: str | None = None,
+    target_fp: str | None = None,
+    target_fy: int | None = None,
+    is_revenue: bool = False,
 ) -> ResolvedMetric:
     """Resolve a metric from a facts DataFrame using ordered concept list.
 
     Resolution order (4-pass):
       1. Exact match on non-aggregate us-gaap concepts (highest confidence)
-      2. Contains match on non-aggregate concepts (broader)
-      3. Custom extension pattern match (bank: NetRevenue patterns)
-      4. Aggregate fallback (sum of components)
+      2. Contains match on non-aggregate concepts (opt-in via allow_fuzzy)
+      3. Custom extension pattern match (revenue resolution only)
+      4. Aggregate fallback (sum of components, duration-targeted)
 
     duration_pref:
-      "quarterly" — prefer 3-month durations (for 10-Q flow metrics)
-      "annual"    — prefer 12-month durations (for 10-K flow metrics)
+      "quarterly" — YTD-through-quarter durations (for 10-Q flow metrics)
+      "annual"    — ~12-month durations (for 10-K flow metrics)
       None        — no filtering (for instant/balance-sheet items)
 
     prefer_quarterly (legacy): equivalent to duration_pref="quarterly"
@@ -299,9 +400,12 @@ def _resolve_metric(
         if val is not None:
             return ResolvedMetric(val, entry.display_name, confidence=0.99, method="exact")
 
-    # --- Pass 2: Non-aggregate contains match (broader) ---
+    # --- Pass 2: Non-aggregate contains match (opt-in only) ---
+    # Substring matching is how guidance/segment/wrong tags leak in (e.g.
+    # "Revenues" contains-matches "DeferredRevenues"). Entries must opt in
+    # via ConceptEntry.allow_fuzzy.
     for entry in concepts:
-        if entry.aggregate:
+        if entry.aggregate or not entry.allow_fuzzy:
             continue
         is_instant = entry.xbrl_concept in _INSTANT_CONCEPTS
         dp = duration_pref if not is_instant else None
@@ -314,18 +418,24 @@ def _resolve_metric(
             return ResolvedMetric(val, entry.display_name, confidence=0.90, method="contains")
 
     # --- Pass 3: Custom extension patterns (banks, large filers) ---
-    if industry == IndustryClass.BANK:
-        val, src = _resolve_custom_extension(
-            clean_df, is_custom_net_revenue, "Custom Net Revenue", period_index
-        )
-        if val is not None:
-            return ResolvedMetric(val, src, confidence=0.85, method="custom_ext")
-    else:
-        val, src = _resolve_custom_extension(
-            clean_df, is_custom_revenue, "Custom Revenue", period_index
-        )
-        if val is not None:
-            return ResolvedMetric(val, src, confidence=0.80, method="custom_ext")
+    # Revenue-shaped patterns ONLY apply when we're resolving revenue;
+    # without the gate a missing metric (e.g. deferred_revenue) could be
+    # silently filled with the filer's custom *revenue* value.
+    if is_revenue:
+        if industry == IndustryClass.BANK:
+            val, src = _resolve_custom_extension(
+                clean_df, is_custom_net_revenue, "Custom Net Revenue", period_index,
+                duration_pref=duration_pref, target_fp=target_fp, target_fy=target_fy,
+            )
+            if val is not None:
+                return ResolvedMetric(val, src, confidence=0.85, method="custom_ext")
+        else:
+            val, src = _resolve_custom_extension(
+                clean_df, is_custom_revenue, "Custom Revenue", period_index,
+                duration_pref=duration_pref, target_fp=target_fp, target_fy=target_fy,
+            )
+            if val is not None:
+                return ResolvedMetric(val, src, confidence=0.80, method="custom_ext")
 
     # --- Pass 4: Aggregate fallback ---
     total = 0.0
@@ -334,10 +444,15 @@ def _resolve_metric(
     for entry in concepts:
         if not entry.aggregate:
             continue
-        # For aggregates, try exact first, then contains
-        val = _lookup_fact(clean_df, entry.xbrl_concept, period_index, match_mode="exact")
-        if val is None:
-            val = _lookup_fact(clean_df, entry.xbrl_concept, period_index, match_mode="contains")
+        # Exact match only, with the same duration targeting as Pass 1 —
+        # summing components from mismatched periods is worse than missing.
+        is_instant = entry.xbrl_concept in _INSTANT_CONCEPTS
+        dp = duration_pref if not is_instant else None
+        tfp = target_fp if not is_instant else None
+        tfy = target_fy if not is_instant else None
+        val = _lookup_fact(clean_df, entry.xbrl_concept, period_index,
+                           match_mode="exact", duration_pref=dp,
+                           target_fp=tfp, target_fy=tfy)
         if val is not None:
             total += val
             matched_any = True
@@ -351,31 +466,49 @@ def _resolve_metric(
     return ResolvedMetric(None, None)
 
 
+_CUSTOM_EXT_BLOCKLIST = ("guidance", "forecast", "estimated", "expected",
+                         "projected", "outlook")
+
+
 def _resolve_custom_extension(
     facts_df: pd.DataFrame,
     pattern_fn,
     label_prefix: str,
     period_index: int,
+    *,
+    duration_pref: str | None = None,
+    target_fp: str | None = None,
+    target_fy: int | None = None,
 ) -> tuple[float | None, str | None]:
-    """Scan all concepts in the DataFrame for custom extension matches."""
+    """Resolve a value from custom-extension concepts matching `pattern_fn`.
+
+    Candidate concepts are collected first, then each is resolved through
+    `_lookup_fact` with full duration/period targeting — the legacy version
+    returned the first matching ROW, i.e. a value from an arbitrary period.
+    When several custom concepts match, the largest absolute value wins
+    (a total is at least as large as any of its components).
+    """
     concept_col = _find_column(facts_df, ("concept", "Concept", "tag", "Tag"))
-    value_col = _find_column(facts_df, ("value", "Value", "val"))
-    if concept_col is None or value_col is None:
+    if concept_col is None:
         return None, None
 
-    for _, row in facts_df.iterrows():
-        concept_name = str(row[concept_col])
-        if pattern_fn(concept_name):
-            # Skip guidance/forecast/estimate concepts
-            concept_lo = concept_name.lower()
-            if any(kw in concept_lo for kw in ("guidance", "forecast", "estimated",
-                                                 "expected", "projected", "outlook")):
-                continue
-            val = _safe(row[value_col])
-            if val is not None:
-                return val, f"{label_prefix} ({concept_name})"
+    candidates = [
+        str(c) for c in facts_df[concept_col].dropna().unique()
+        if pattern_fn(str(c))
+        and not any(kw in str(c).lower() for kw in _CUSTOM_EXT_BLOCKLIST)
+    ]
 
-    return None, None
+    best_val: float | None = None
+    best_src: str | None = None
+    for name in candidates:
+        val = _lookup_fact(facts_df, name, period_index,
+                           match_mode="exact", duration_pref=duration_pref,
+                           target_fp=target_fp, target_fy=target_fy)
+        if val is not None and (best_val is None or abs(val) > abs(best_val)):
+            best_val = val
+            best_src = f"{label_prefix} ({name})"
+
+    return best_val, best_src
 
 
 def _lookup_fact(
@@ -434,6 +567,12 @@ def _lookup_fact(
     if matches.empty:
         return None
 
+    # Collapse duplicate reports of the same (concept, unit, start, end) —
+    # companyfacts repeats a fact once per filing that reported it (original,
+    # comparative, amendment); the latest `filed` value is the current truth.
+    # Without this, period_index walks an arbitrary mix of duplicates.
+    matches = dedupe_facts(matches)
+
     # Sort by period (newest first) — companyfacts has 'end' column
     end_col = None
     for pcol in ("end", "period", "Period", "endDate"):
@@ -445,21 +584,74 @@ def _lookup_fact(
                 log.debug("Sort by %s failed: %s", pcol, exc)
             break
 
-    # Duration-aware filtering for flow metrics
-    # SEC companyfacts reports both quarterly and annual/YTD values
-    # with the same end date but different start dates.
-    # Balance sheet items are instant (no start date) — unaffected.
+    # Duration-aware filtering for flow metrics. A fact's period comes from
+    # its own start/end dates — NEVER fy/fp, which describe the filing that
+    # reported it (a 10-K stamps its comparative-year facts with the same
+    # fy/fp, so fp filtering collapses years).
     if duration_pref and end_col and "start" in matches.columns:
-        matches = _filter_by_duration(
-            matches, end_col, prefer=duration_pref,
-            target_fp=target_fp, target_fy=target_fy,
-        )
+        if duration_pref == "standalone_q":
+            matches = _filter_by_duration(
+                matches, end_col, prefer=duration_pref,
+                target_fp=target_fp, target_fy=target_fy,
+            )
+        else:
+            matches = _filter_by_period_type(matches, end_col, duration_pref)
 
     if period_index >= len(matches):
         return None
 
     raw = matches.iloc[period_index][value_col]
     return _safe(raw)
+
+
+def _filter_by_period_type(
+    df: pd.DataFrame,
+    end_col: str,
+    prefer: str,
+) -> pd.DataFrame:
+    """Keep flow rows whose duration class matches the preferred period.
+
+    prefer="annual"    → ~12-month durations (FY band, incl. 52/53-week years)
+    prefer="quarterly" → the YTD-through-quarter duration per period end
+                         (Q1 = 3mo, Q2 = 6mo YTD, Q3 = 9mo YTD)
+
+    "quarterly" deliberately returns YTD, not the standalone 3-month tag:
+    income statements carry both durations but cash flows are YTD-only, and
+    the in-memory decumulation downstream subtracts the prior quarter from
+    EVERY flow metric — that arithmetic is only correct when income and cash
+    flow share the same YTD basis. (extract_financials flags these rows
+    is_ytd so nothing YTD ever masquerades as standalone.)
+
+    Instant rows (no start) pass through untouched. If the preferred class is
+    absent (stub periods), falls back to the closest available duration per
+    period-end instead of returning nothing.
+    """
+    work = annotate_periods(df)
+    instant_mask = work["_ptype"] == PeriodType.INSTANT.value
+    instants = work[instant_mask]
+    flows = work[~instant_mask]
+    if flows.empty:
+        return df
+
+    if prefer == "annual":
+        kept = flows[flows["_ptype"] == PeriodType.YEAR.value]
+        if kept.empty:
+            # Transition periods / stubs: longest duration per period end
+            idx = flows.groupby(end_col)["_dur_days"].idxmax()
+            kept = flows.loc[idx]
+    else:  # quarterly — YTD-through-quarter per period end
+        sub = flows[flows["_dur_days"] <= 295]  # exclude full-year rows
+        if sub.empty:
+            sub = flows
+        idx = sub.groupby(end_col)["_dur_days"].idxmax()
+        kept = sub.loc[idx]
+
+    result = pd.concat([instants, kept])
+    try:
+        result = result.sort_values(end_col, ascending=False)
+    except Exception as exc:
+        log.debug("Sort by %s failed: %s", end_col, exc)
+    return result.drop(columns=["_ptype", "_dur_days"], errors="ignore")
 
 
 # Balance sheet concepts are point-in-time, not flow — no duration filtering needed
@@ -501,7 +693,7 @@ _INSTANT_CONCEPTS = {
     "CashAndCashEquivalents",
     "NoncurrentPortionOfNoncurrentBorrowings", "LongTermBorrowings",
     "CurrentPortionOfNoncurrentBorrowings", "CurrentBorrowings",
-    "Cash", "Equity",
+    "Cash",
 }
 
 
@@ -2062,7 +2254,7 @@ def _decumulate_cash_flow(
         if not cur_acc or not cm:
             return
         client = get_sec_client()
-        filings = client.get_filings_smart(ticker_or_cik, form_type="10-Q", limit=8)
+        filings = client.get_periodic_filings_smart(ticker_or_cik, form_type="10-Q", limit=8)
         accs = [f.accession_number for f in (filings or [])]
         if cur_acc not in accs:
             return
@@ -2183,21 +2375,37 @@ def extract_financials(
             "filing_date": "",
         }
         try:
-            # Search by form_type first (faster for prolific filers like MS)
-            for ft_search in [form_type, "10-K", "20-F", "10-Q", "6-K", None]:
-                found = False
-                search_filings = client.get_filings(
-                    ticker_or_cik, form_type=ft_search, limit=50
-                )
-                for f in search_filings:
+            # The facts-derived periodic index covers the FULL filing history;
+            # the submissions `recent` window only spans months for heavy
+            # filers, which left older accessions with report_date="" (and
+            # garbage period labels downstream).
+            found = False
+            for ft_search in ["10-K", "10-Q", "20-F", "6-K"]:
+                for f in client.get_periodic_filings(
+                        ticker_or_cik, form_type=ft_search, limit=80):
                     if f.accession_number == accession:
                         filing_meta["filing_date"] = f.filing_date
                         filing_meta["form_type"] = f.form_type
-                        filing_meta["report_date"] = getattr(f, "report_date", "")
+                        filing_meta["report_date"] = f.report_date
                         found = True
                         break
                 if found:
                     break
+            if not found:
+                # Non-periodic form (8-K etc.) — fall back to submissions
+                for ft_search in [form_type, None]:
+                    search_filings = client.get_filings(
+                        ticker_or_cik, form_type=ft_search, limit=50
+                    )
+                    for f in search_filings:
+                        if f.accession_number == accession:
+                            filing_meta["filing_date"] = f.filing_date
+                            filing_meta["form_type"] = f.form_type
+                            filing_meta["report_date"] = getattr(f, "report_date", "")
+                            found = True
+                            break
+                    if found:
+                        break
         except Exception as exc:
             log.warning("Filing metadata lookup failed for %s: %s", ticker_or_cik, exc)
 
@@ -2257,10 +2465,16 @@ def extract_financials(
 
     # ── Check disk cache ─────────────────────────────────────────────
     # Key by accession + standalone flag so 3-month and YTD quarterly results
-    # never collide in the cache.
+    # never collide in the cache. Graph-resolver-on results get their own key
+    # — values can legitimately differ from legacy and must not cross-pollute.
     cache_acc = (filing_meta or {}).get("accession_number", "")
     if cache_acc and standalone_quarter:
         cache_acc = f"{cache_acc}#sq"
+    try:
+        if cache_acc and (get_config().graph_resolver or "off").lower() == "on":
+            cache_acc = f"{cache_acc}#g"
+    except Exception:
+        pass
     if filing_meta and cache_acc:
         cached = disk_cache.get(ticker_or_cik, cache_acc)
         if cached and "data" in cached:
@@ -2396,7 +2610,9 @@ def extract_financials(
     resolved = _resolve_metric(
         facts_df, rev_concepts, period_index=period_index,
         industry=industry, duration_pref=dur_pref,
-        target_fp=target_fp, target_fy=target_fy,
+        target_fp=target_fp, target_fy=target_fy, is_revenue=True,
+        canonical_key="revenue", ticker_or_cik=ticker_or_cik,
+        accession=accession,
     )
     metrics["revenue"] = resolved.value
     sourced["revenue"] = resolved.source
@@ -2408,6 +2624,8 @@ def extract_financials(
             facts_df, concepts, period_index=period_index,
             industry=industry, duration_pref=dur_pref,
             target_fp=target_fp, target_fy=target_fy,
+            canonical_key=metric_name, ticker_or_cik=ticker_or_cik,
+            accession=accession,
         )
         metrics[metric_name] = resolved.value
         sourced[metric_name] = resolved.source
@@ -2467,6 +2685,19 @@ def extract_financials(
             metrics["operating_income"] = gp_val - abs(opex_val)
             sourced["operating_income"] = "Computed: Gross Profit - OpEx"
             confidence["operating_income"] = 0.70
+
+    # Total liabilities = Assets − Equity − NCI (when no Liabilities subtotal
+    # is tagged — utilities often jump straight to "capitalization and
+    # liabilities"; serving LiabilitiesAndStockholdersEquity here was the old
+    # failure mode)
+    if metrics.get("total_liabilities") is None:
+        ta_v = metrics.get("total_assets")
+        eq_v = metrics.get("stockholders_equity")
+        if ta_v is not None and eq_v is not None:
+            nci_v = metrics.get("minority_interest") or 0
+            metrics["total_liabilities"] = ta_v - eq_v - nci_v
+            sourced["total_liabilities"] = "Computed: Assets − Equity − NCI"
+            confidence["total_liabilities"] = 0.80
 
     # Net debt
     ltd = metrics.get("long_term_debt")
@@ -2570,7 +2801,7 @@ def extract_financials(
             confidence["revenue"] = 0.80
 
     # ── Currency detection & conversion to USD ─────────────────────
-    from sec_mcp.core.fx import detect_currency, convert_metrics_to_usd
+    from sec_mcp.core.fx import convert_metrics_to_usd, detect_currency
     reporting_currency = detect_currency(facts_df)
     result["reporting_currency"] = reporting_currency
     if reporting_currency != "USD":
@@ -2601,7 +2832,7 @@ def extract_financials(
     try:
         prev_rev = _resolve_metric(
             facts_df, rev_concepts, period_index=yoy_idx,
-            industry=industry, duration_pref=dur_pref,
+            industry=industry, duration_pref=dur_pref, is_revenue=True,
         )
         prior_metrics["revenue"] = prev_rev.value
         for metric_name, concepts in CONCEPT_MAP.items():
@@ -2624,7 +2855,7 @@ def extract_financials(
         try:
             q_rev = _resolve_metric(
                 facts_df, rev_concepts, period_index=qoq_idx,
-                industry=industry, duration_pref=dur_pref,
+                industry=industry, duration_pref=dur_pref, is_revenue=True,
             )
             qoq_metrics["revenue"] = q_rev.value
             for metric_name, concepts in CONCEPT_MAP.items():
@@ -2707,6 +2938,13 @@ def extract_financials(
             disk_cache.put(ticker_or_cik, cache_acc, result, summary)
         except Exception as exc:
             log.warning("Disk cache write failed for %s: %s", ticker_or_cik, exc)
+
+    # ── Audit trail: record resolved metrics (best-effort, never blocks) ──
+    try:
+        from sec_mcp.facts.ingest import record_observations
+        record_observations(result)
+    except Exception as exc:
+        log.debug("observation write-through skipped: %s", exc)
 
     return result
 
@@ -2857,10 +3095,15 @@ def _validate(
                 ),
             })
 
-    # Rule 2: Accounting equation: A = L + E (within 5% tolerance)
-    # If it doesn't balance, try to auto-repair from the raw XBRL data
+    # Rule 2: Accounting equation: A = L + E_parent + NCI (within 5%)
+    # stockholders_equity is deliberately PARENT-ONLY; consolidated balance
+    # sheets only tie once noncontrolling interests are added back. Without
+    # the NCI term the "repair" below overwrites a correct parent equity with
+    # Assets − Liabilities (parent + NCI + temp equity) — for NEE FY2024
+    # that inflated equity from $50.1B to $60.9B.
     if ta is not None and tl is not None and eq is not None:
-        expected = tl + eq
+        nci = m.get("minority_interest") or 0
+        expected = tl + eq + nci
         diff_pct = abs(ta - expected) / ta if ta != 0 else 0
         if diff_pct > 0.05:
             # ── Auto-repair: try alternative concept resolutions ──
@@ -2872,7 +3115,7 @@ def _validate(
                 ta = m.get("total_assets")
                 tl = m.get("total_liabilities")
                 eq = m.get("stockholders_equity")
-                new_expected = (tl or 0) + (eq or 0)
+                new_expected = (tl or 0) + (eq or 0) + (m.get("minority_interest") or 0)
                 new_diff = abs((ta or 0) - new_expected) / (ta or 1)
                 if new_diff <= 0.05:
                     warnings.append({
@@ -2970,6 +3213,36 @@ def _validate(
                 "message": (
                     f"Net margin is {margin:.0%} — outside normal range. "
                     f"Verify revenue ({_fmt(rev)}) and net income ({_fmt(ni)}) tags."
+                ),
+            })
+
+    # Rule 9 (FAC identity): GrossProfit = Revenue − CostOfRevenue
+    gp = m.get("gross_profit")
+    cor = m.get("cost_of_revenue")
+    if None not in (gp, rev, cor) and rev:
+        expected_gp = rev - abs(cor)
+        if abs(gp - expected_gp) / max(abs(rev), 1) > 0.02:
+            warnings.append({
+                "rule": "gross_profit_identity",
+                "severity": "warning",
+                "message": (
+                    f"GrossProfit ({_fmt(gp)}) != Revenue − CostOfRevenue "
+                    f"({_fmt(expected_gp)}) — one of the three tags is off."
+                ),
+            })
+
+    # Rule 10 (FAC identity): NetIncome = IncomeBeforeTax − IncomeTaxExpense
+    ibt = m.get("income_before_tax")
+    tax = m.get("income_tax_expense")
+    if None not in (ni, ibt, tax) and ibt:
+        expected_ni = ibt - tax
+        if abs(ni - expected_ni) / max(abs(ibt), 1) > 0.05:
+            warnings.append({
+                "rule": "pretax_tax_tie",
+                "severity": "info",
+                "message": (
+                    f"NetIncome ({_fmt(ni)}) != IncomeBeforeTax − Tax "
+                    f"({_fmt(expected_ni)}) — NCI/discontinued ops or a wrong tag."
                 ),
             })
 
@@ -3169,7 +3442,16 @@ def sec_to_fmp_statements(result: dict) -> dict:
     cik = result.get("cik")
     fd = fi.get("filing_date", "")
     base = {"date": date, "symbol": sym, "reportedCurrency": ccy, "cik": cik,
-            "filingDate": fd, "acceptedDate": fd, "fiscalYear": fy, "period": period}
+            "filingDate": fd, "acceptedDate": fd, "fiscalYear": fy, "period": period,
+            # Additive provenance block — existing FMP consumers ignore it.
+            "_meta": {
+                "quality": result.get("quality"),
+                "isYtd": bool(result.get("is_ytd")),
+                "accession": fi.get("accession_number"),
+                "confidence": result.get("confidence_scores") or {},
+                "sources": result.get("metrics_sourced") or {},
+                "validation": result.get("validation") or [],
+            }}
 
     def neg(v):
         return -abs(v) if v is not None else None
@@ -3238,38 +3520,120 @@ def _quarter_rank(result: dict) -> int | None:
     return _FP_RANK.get(fp[0].upper()) if fp else None
 
 
+def _recompute_derived_quarter_metrics(cm: dict) -> None:
+    """Re-derive FCF and EPS after quarter metrics change basis."""
+    ocf, capex = cm.get("operating_cash_flow"), cm.get("capital_expenditures")
+    if ocf is not None and capex is not None:
+        cm["free_cash_flow"] = ocf - abs(capex)
+    ni, sh = cm.get("net_income"), cm.get("shares_outstanding")
+    if ni is not None and sh:
+        cm["eps_basic"] = round(ni / sh, 2)
+        cm["eps_diluted"] = round(ni / sh, 2)
+
+
 def _decumulate_quarters_inmemory(results: list[dict]) -> list[dict]:
     """Turn a list of per-quarter YTD extractions into standalone 3-month
     quarters using the adjacent quarter already in hand (Q2=H1-Q1, Q3=9M-H1).
     No re-extraction — pure arithmetic — so it's ~free vs re-fetching filings.
+
+    Honesty rules (each row gets a machine-readable `quality` flag):
+      - Q1 / already-standalone rows pass through       → "standalone"
+      - YTD row with its neighbour in hand, subtracted   → "standalone_decumulated"
+      - YTD row whose neighbour is MISSING stays YTD and
+        keeps is_ytd=True                                → "ytd_fallback"
+    The YTD snapshots are taken before any mutation, so decumulation order
+    can never subtract an already-decumulated neighbour.
     """
-    by_key: dict[tuple, dict] = {}
+    # Snapshot every row's pre-mutation YTD metrics first
+    ytd_snapshot: dict[tuple, dict] = {}
     for r in results:
         fy, rk = r.get("fiscal_year"), _quarter_rank(r)
         if isinstance(fy, int) and rk:
-            by_key[(fy, rk)] = r
+            ytd_snapshot[(fy, rk)] = dict(r.get("metrics") or {})
+
     for r in results:
         fy, rk = r.get("fiscal_year"), _quarter_rank(r)
         cm = r.get("metrics") or {}
-        if isinstance(fy, int) and rk and rk > 1:
-            prior = by_key.get((fy, rk - 1))
-            pm = (prior or {}).get("metrics") or {}
-            if pm:
-                for k in _FLOW_DECUM_METRICS:
-                    cv, pv = cm.get(k), pm.get(k)
-                    if cv is not None and pv is not None:
-                        cm[k] = cv - pv
-                ocf, capex = cm.get("operating_cash_flow"), cm.get("capital_expenditures")
-                if ocf is not None and capex is not None:
-                    cm["free_cash_flow"] = ocf - abs(capex)
-                ni, sh = cm.get("net_income"), cm.get("shares_outstanding")
-                if ni is not None and sh:
-                    cm["eps_basic"] = round(ni / sh, 2)
-                    cm["eps_diluted"] = round(ni / sh, 2)
-        # Q1 YTD already equals the standalone quarter.
-        r["is_ytd"] = False
-        if rk:
+        if not (isinstance(fy, int) and rk and cm):
+            r["quality"] = "unknown_period"
+            continue
+
+        if rk == 1 or not r.get("is_ytd"):
+            # Q1 YTD already equals the standalone quarter
+            r["is_ytd"] = False
             r["quarter_label"] = f"Q{min(rk, 4)} (Standalone)"
+            r["quality"] = "standalone"
+            continue
+
+        pm = ytd_snapshot.get((fy, rk - 1))
+        if not pm:
+            # No decumulation neighbour — value stays YTD; say so instead of
+            # relabelling it "Standalone" (the legacy behaviour).
+            r["is_ytd"] = True
+            r["quality"] = "ytd_fallback"
+            continue
+
+        for k in _FLOW_DECUM_METRICS:
+            cv, pv = cm.get(k), pm.get(k)
+            if cv is not None and pv is not None:
+                cm[k] = cv - pv
+        _recompute_derived_quarter_metrics(cm)
+        r["is_ytd"] = False
+        r["quarter_label"] = f"Q{min(rk, 4)} (Standalone)"
+        r["quality"] = "standalone_decumulated"
+    return results
+
+
+def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
+    """Append synthesized Q4 rows: Q4 = FY − (Q1+Q2+Q3) for flow metrics.
+
+    Q4 has no 10-Q filing, so quarterly histories built from 10-Qs have a
+    hole at every fiscal year end. For each fiscal year with three standalone
+    quarters in hand, extract the 10-K (cheap — companyfacts is already
+    cached) and derive the fourth. Balance-sheet (instant) metrics come from
+    the 10-K directly: the FY-end snapshot IS the Q4-end snapshot.
+    """
+    by_fy: dict[int, dict[int, dict]] = {}
+    for r in results:
+        fy, rk = r.get("fiscal_year"), _quarter_rank(r)
+        if isinstance(fy, int) and rk and r.get("quality", "").startswith("standalone"):
+            by_fy.setdefault(fy, {})[rk] = r
+
+    for fy, ranks in sorted(by_fy.items(), reverse=True):
+        if not ({1, 2, 3} <= set(ranks)) or 4 in ranks:
+            continue
+        try:
+            annual = extract_financials(ticker, year=fy, form_type="10-K")
+        except Exception as exc:
+            log.debug("Q4 synthesis: annual extract failed for %s FY%s: %s",
+                      ticker, fy, exc)
+            continue
+        if not annual or annual.get("error") or annual.get("fiscal_year") != fy:
+            continue
+        am = annual.get("metrics") or {}
+        if not am:
+            continue
+
+        q4m = dict(am)  # instants (balance sheet) carry over from the 10-K
+        for k in _FLOW_DECUM_METRICS:
+            fyv = am.get(k)
+            qs = [ (ranks[i].get("metrics") or {}).get(k) for i in (1, 2, 3) ]
+            q4m[k] = fyv - sum(qs) if fyv is not None and None not in qs else None
+        _recompute_derived_quarter_metrics(q4m)
+        if q4m.get("revenue") is None:
+            continue
+
+        q4 = {**annual,
+              "metrics": q4m,
+              "period_type": "quarterly",
+              "quarter_label": "Q4 (Synthesized)",
+              "is_ytd": False,
+              "quality": "q4_synthesized",
+              "ratios": _compute_ratios(q4m)}
+        results.append(q4)
+
+    results.sort(key=lambda r: (r.get("filing_info") or {}).get("report_date") or "",
+                 reverse=True)
     return results
 
 
@@ -3288,7 +3652,7 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
     fetch_n = want + 1 if is_q else want
     try:
         client = get_sec_client()
-        filings = client.get_filings_smart(tk, form_type=form, limit=max(fetch_n, 12)) or []
+        filings = client.get_periodic_filings_smart(tk, form_type=form, limit=max(fetch_n, 12)) or []
         accs: list[str] = []
         seen: set[str] = set()
         for f in filings:
@@ -3314,6 +3678,7 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
         results.sort(key=lambda r: (r.get("filing_info") or {}).get("report_date") or "", reverse=True)
         if is_q:
             results = _decumulate_quarters_inmemory(results)
+            results = _synthesize_q4(tk, results)
         results = results[:want]
 
         income, balance, cashflow = [], [], []
