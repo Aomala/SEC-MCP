@@ -2497,8 +2497,19 @@ def extract_financials(
     if filing_meta and cache_acc:
         cached = disk_cache.get(ticker_or_cik, cache_acc)
         if cached and "data" in cached:
-            log.info("Disk cache hit for %s / %s", ticker_or_cik, cache_acc)
-            return cached["data"]
+            data = cached["data"]
+            # A slim cached result (no statements/segments) must NOT satisfy a
+            # request that asked for them — the cache key doesn't encode these
+            # flags, so verify the payload actually covers what was requested.
+            wants_more = (
+                (include_statements and not data.get("income_statement"))
+                or (include_segments and not data.get("segments"))
+            )
+            if not wants_more:
+                log.info("Disk cache hit for %s / %s", ticker_or_cik, cache_acc)
+                return data
+            log.info("Disk cache hit for %s / %s is slim (statements=%s segments=%s requested) — re-extracting",
+                     ticker_or_cik, cache_acc, include_statements, include_segments)
 
     # ── Get XBRL facts ────────────────────────────────────────────────
     # Use companyfacts API — gets ALL facts for this company, then filter.

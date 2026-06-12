@@ -24,7 +24,17 @@ python test_tools.py financials AAPL 2024
 
 ```
 src/sec_mcp/
-├── server.py              # MCP tool definitions (17 tools) — MAIN ENTRY POINT
+├── server.py              # MCP v2 surface (exactly 9 tools) — MAIN ENTRY POINT
+├── server_legacy.py       # pre-2026-06 22-tool surface (kept importable, not served)
+├── surface/               # v2 tool implementations + response contract
+│   ├── meta.py            #   {source, asOf, cacheHit, latencyMs} meta + {error, code, hint} errors
+│   ├── session.py         #   market session + EDGAR-business-hours TTLs (mock _now() in tests)
+│   ├── company_search.py  #   search_companies (filters: sector/cap/exchange/country/ipo/sp500)
+│   ├── filings.py         #   get_filings (EFTS full-text) + get_filing_section (8-K item_X)
+│   ├── fundamentals.py    #   get_fundamentals (TTM, cross-check, chartSeries, segments) + compare
+│   ├── quotes.py          #   get_quote (session-aware TTL, never silently stale)
+│   ├── ownership.py       #   get_insider_activity (Form 4) + get_ownership (13F + 13D/G)
+│   └── screen.py          #   composable screener (valuation/growth/quality/events)
 ├── config.py              # Pydantic settings from .env
 ├── models.py              # Pydantic data models
 │
@@ -51,7 +61,9 @@ src/sec_mcp/
 
 - **sec_client.py** is the canonical SEC API client. All EDGAR HTTP calls go through here. Rate-limited to 8 req/sec, with in-memory caching (tickers 30min, facts 5min, submissions 2min).
 - **financials.py** handles all XBRL data extraction. Uses a 4-pass concept resolution strategy: exact match → contains match → custom extension → aggregate fallback. Industry-aware (bank, insurance, REIT, utility, standard, crypto).
-- **server.py** only defines MCP tool handlers — no business logic here.
+- **server.py** only defines MCP tool handlers — no business logic here. Every v2 tool is wrapped by `surface.meta.tool_guard`: responses always carry a meta block, failures are always `{error, code, hint}` (never raw tracebacks), and a closed market is NEVER an error (quotes label `session: "closed"`).
+- **Form 4 gotcha**: EDGAR's `primaryDocument` for Form 4s is the XSL-render path (`xslF345X06/form4.xml` = HTML); `insider_tracker.py` strips the `xsl…/` prefix to get raw XML. Don't "simplify" that away.
+- **Segments**: companyfacts strips XBRL dimensions — authoritative segment data comes from `graph/segments.get_dimensional_segments` (per-filing), FMP as fallback.
 - **db.py** is optional. The entire app works without MongoDB.
 - **nlp/** models are excluded from the Docker image. NLP tools are unavailable in Railway production.
 
@@ -97,6 +109,8 @@ src/sec_mcp/
 
 ```bash
 pytest                          # all tests
+pytest tests/test_surface.py -m "not integration"  # v2 surface: clock + validation (offline)
+pytest tests/test_surface.py -m integration        # v2 surface: live 5-ticker panel + Sunday-3am sim
 pytest -m "not slow"            # skip NLP model tests
 pytest -m "not integration"     # skip tests needing SEC network
 ruff check src/ tests/          # lint

@@ -384,6 +384,12 @@ def get_insider_transactions(ticker: str, limit: int = 20) -> list[dict]:
         if not primary_doc:
             continue
 
+        # EDGAR lists Form 4 primary docs behind an XSL-render path
+        # ("xslF345X06/form4.xml") which serves HTML. The raw XML is the
+        # same filename at the accession root — strip the xsl prefix.
+        if "/" in primary_doc and primary_doc.split("/", 1)[0].lower().startswith("xsl"):
+            primary_doc = primary_doc.split("/", 1)[1]
+
         # Fetch the Form 4 XML document
         doc_url = f"{SEC_BASE}/Archives/edgar/data/{cik_raw}/{acc_clean}/{primary_doc}"
         xml_content = _cached_get(
