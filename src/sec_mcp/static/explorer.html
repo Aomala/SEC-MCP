@@ -8,7 +8,7 @@
 <style>
   :root {
     --bg: #0b0d10; --panel: #12151a; --line: #1f242c;
-    --text: #e8eaed; --dim: #8a919c; --accent: #5b9cf6;
+    --text: #e8eaed; --dim: #8a919c; --accent: #4f82f3;
     --green: #34c08b; --red: #e5634c; --gold: #d9a441;
   }
   * { box-sizing: border-box; margin: 0; }
@@ -72,7 +72,7 @@
 const $ = id => document.getElementById(id);
 const charts = {};
 const state = { concepts: null, stmt: "income" };
-const PALETTE = ["#5b9cf6", "#34c08b", "#e5634c", "#d9a441", "#9b7ef0"];
+const PALETTE = ["#4f82f3", "#34c08b", "#e5634c", "#d9a441", "#9b7ef0"];
 
 function chart(id) {
   if (!charts[id]) charts[id] = echarts.init($(id), null, { renderer: "canvas" });

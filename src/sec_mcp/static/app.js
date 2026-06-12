@@ -71,18 +71,20 @@ let _fmpHistory = null;       // cached FMP history data
 let _searchTimeout = null;
 
 /** Chart color palette (dark theme optimized) */
+// Chart palette — follows the TECH NOIR tokens (deep sapphire family).
+// Kept as JS constants because Chart.js needs literal color strings.
 const CHART_COLORS = {
-  brand: '#6366f1',
-  brandBg: 'rgba(99,102,241,0.15)',
-  success: '#10b981',
-  successBg: 'rgba(16,185,129,0.1)',
-  info: '#3b82f6',
-  infoBg: 'rgba(59,130,246,0.1)',
-  danger: '#ef4444',
-  warning: '#f59e0b',
-  text: '#94a3b8',
-  grid: 'rgba(148,163,184,0.08)',
-  palette: ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899'],
+  brand: '#4f82f3',
+  brandBg: 'rgba(79,130,243,0.15)',
+  success: '#4ade80',
+  successBg: 'rgba(74,222,128,0.1)',
+  info: '#82a8f7',
+  infoBg: 'rgba(130,168,247,0.1)',
+  danger: '#f87171',
+  warning: '#fbbf24',
+  text: '#98a1b0',
+  grid: 'rgba(165,184,212,0.08)',
+  palette: ['#4f82f3', '#4ade80', '#fbbf24', '#f87171', '#82a8f7', '#2554c7', '#e879f9'],
 };
 
 // ========================================
@@ -166,13 +168,40 @@ function acceptTos() {
 // DATE RANGE (controls SEC XBRL chart period display)
 // ========================================
 
+/**
+ * The selected timeframe as a {fromYear, toYear} window (null = unbounded).
+ * Single source for every range consumer: charts, the 10-K/Q explorer's
+ * filings table, and the period dropdown.
+ */
+function rangeWindow() {
+  const thisYear = new Date().getFullYear();
+  if (_chartRange === -1) {
+    // Custom from/to year inputs
+    const from = parseInt(document.getElementById('range-from')?.value);
+    const to = parseInt(document.getElementById('range-to')?.value);
+    if (from && to) return { fromYear: from, toYear: to };
+  }
+  if (_chartRange && _chartRange > 0) {
+    return { fromYear: thisYear - _chartRange + 1, toYear: thisYear };
+  }
+  return null; // "All"
+}
+
+/** Push the active range into every consumer (charts + explorer views). */
+function applyRangeEverywhere() {
+  if (!_curData) return;
+  renderRevenueChart(_curData);
+  // The 10-K/Q explorer follows the same window: filings table + period picker.
+  loadFilingsTable();
+  populatePeriodDropdown();
+}
+
 function setDateRange(years) {
   _chartRange = years;
   document.querySelectorAll('.range-presets .range-btn').forEach(b => {
     b.classList.toggle('active', parseInt(b.dataset.range) === years);
   });
-  // Re-render the XBRL revenue chart with the current data
-  if (_curData) renderRevenueChart(_curData);
+  applyRangeEverywhere();
 }
 
 function setChartPeriod(period) {
@@ -189,7 +218,7 @@ function applyCustomRange() {
   if (from && to && parseInt(from) <= parseInt(to)) {
     _chartRange = -1; // custom
     document.querySelectorAll('.range-presets .range-btn').forEach(b => b.classList.remove('active'));
-    if (_curData) renderRevenueChart(_curData);
+    applyRangeEverywhere();
   }
 }
 
@@ -213,6 +242,12 @@ function loadFmpFootnote() {
       renderFootnote(j);
       // Re-render revenue chart with multi-year FMP data
       if (_curData) renderRevenueChart(_curData);
+      // Re-render KPI cards: sparklines need the multi-period history
+      if (_curData) {
+        renderKPIs(_curData.metrics || {}, _curData.ratios || {},
+                   _curData.prior_metrics || {}, _curData._crossCheck);
+        if (window.lucide) lucide.createIcons();
+      }
     })
     .catch(() => { el.style.display = 'none'; });
 }
@@ -1479,6 +1514,82 @@ const KPI_TOOLTIPS = {
   'Interest Coverage': 'Operating income / interest expense. Higher = more ability to service debt.',
 };
 
+
+/**
+ * KPI label → {metric key, FMP history statement+field} for sparklines and
+ * provenance lookups. Keyed by display label so the 13 buildKpiCard call
+ * sites stay untouched.
+ */
+const KPI_META = {
+  'Revenue':           { key: 'revenue',             stmt: 'income',   field: 'revenue' },
+  'Net Income':        { key: 'net_income',          stmt: 'income',   field: 'netIncome' },
+  'Operating Income':  { key: 'operating_income',    stmt: 'income',   field: 'operatingIncome' },
+  'EBITDA':            { key: 'ebitda',              stmt: 'income',   field: 'ebitda' },
+  'Free Cash Flow':    { key: 'free_cash_flow',      stmt: 'cashflow', field: 'freeCashFlow' },
+  'Gross Margin':      { key: 'gross_profit',        stmt: 'income',   field: 'grossProfit' },
+  'EPS':               { key: 'eps_diluted',         stmt: 'income',   field: 'epsDiluted' },
+  'Total Assets':      { key: 'total_assets',        stmt: 'balance',  field: 'totalAssets' },
+  'Working Capital':   { key: 'current_assets',      stmt: 'balance',  field: 'totalCurrentAssets' },
+  'Net Debt':          { key: 'net_debt',            stmt: 'balance',  field: 'netDebt' },
+  'D/E Ratio':         { key: 'total_liabilities',   stmt: 'balance',  field: 'totalDebt' },
+};
+
+/**
+ * Inline SVG sparkline from _fmpHistory for one KPI label.
+ * Oldest→newest left→right, stroke = brand, endpoint dot. Returns '' when
+ * history isn't loaded yet or has <3 usable points (no fake trends).
+ */
+function kpiSparkline(label) {
+  const meta = KPI_META[label];
+  if (!meta || !_fmpHistory) return '';
+  const rows = (_fmpHistory[meta.stmt] || []).slice(0, 8);   // newest-first
+  const vals = rows.map(r => r[meta.field]).filter(v => v != null && isFinite(v));
+  if (vals.length < 3) return '';
+  const pts = vals.slice().reverse();                        // oldest→newest
+  const min = Math.min(...pts), max = Math.max(...pts);
+  const range = max - min || 1;
+  const W = 96, H = 22, PAD = 2;
+  const step = (W - PAD * 2) / (pts.length - 1);
+  const xy = pts.map((v, i) => [
+    (PAD + i * step).toFixed(1),
+    (H - PAD - ((v - min) / range) * (H - PAD * 2)).toFixed(1),
+  ]);
+  const poly = xy.map(p => p.join(',')).join(' ');
+  const last = xy[xy.length - 1];
+  return (
+    '<svg class="kpi-spark" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" aria-hidden="true">' +
+    '<polyline points="' + poly + '" fill="none" stroke="var(--brand)" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/>' +
+    '<circle cx="' + last[0] + '" cy="' + last[1] + '" r="2" fill="var(--brand)"/>' +
+    '</svg>'
+  );
+}
+
+/**
+ * Rich provenance tooltip body for a KPI: the engine answer to "which XBRL
+ * tag, which filing, what confidence" — rendered at the point of reading
+ * instead of the buried confidence card.
+ */
+function kpiProvenanceTip(label, verified) {
+  const meta = KPI_META[label];
+  const d = _curData || {};
+  const lines = ['<div class="tip-title">' + esc(KPI_TOOLTIPS[label] || label) + '</div>'];
+  if (meta) {
+    const src = (d.metrics_sourced || {})[meta.key];
+    const conf = (d.confidence_scores || {})[meta.key];
+    if (src) lines.push('<div class="tip-row"><span>Source tag</span><code>' + esc(String(src)) + '</code></div>');
+    if (conf != null && conf > 0) {
+      const cls = conf >= 0.85 ? 'high' : conf >= 0.6 ? 'medium' : 'low';
+      lines.push('<div class="tip-row"><span>Confidence</span><b class="tip-conf ' + cls + '">' + Math.round(conf * 100) + '%</b></div>');
+    }
+  }
+  const fi = d.filing_info || {};
+  if (fi.form_type) {
+    lines.push('<div class="tip-row"><span>Filing</span><b>' + esc(fi.form_type) + ' · ' + esc(fi.filing_date || '') + '</b></div>');
+  }
+  if (verified === true) lines.push('<div class="tip-row"><span>Cross-check</span><b class="tip-conf high">Polygon ✓</b></div>');
+  return '<div class="kpi-tip">' + lines.join('') + '</div>';
+}
+
 /**
  * Build a single KPI card HTML.
  */
@@ -1514,10 +1625,15 @@ function buildKpiCard(label, value, change, icon, color, index, verified, period
   if (verified === true) cardTip += ' [Polygon verified]';
   else if (verified === false) cardTip += ' [Unverified]';
 
+  // Trend sparkline (multi-period history) + rich provenance tooltip —
+  // replaces the lossy native title attribute.
+  const spark = kpiSparkline(label);
+  const tip = kpiProvenanceTip(label, verified);
   return (
-    '<div class="kpi-card animate-in" title="' + esc(cardTip) + '" style="animation-delay:' +
+    '<div class="kpi-card animate-in" style="animation-delay:' +
     index * 0.05 +
     's">' +
+    tip +
     '<div class="kpi-top">' +
     '<div class="kpi-icon ' +
     color +
@@ -1529,6 +1645,7 @@ function buildKpiCard(label, value, change, icon, color, index, verified, period
     '<div class="kpi-value">' +
     value +
     '</div>' +
+    (spark || '') +
     '<div class="kpi-label">' +
     label +
     '</div>' +
@@ -1851,6 +1968,22 @@ function renderRevenueChart(d) {
           borderRadius: 6,
           order: 4,
         },
+        {
+          // Net margin trend on its own % axis — profitability direction at
+          // a glance without a separate chart.
+          label: 'Net Margin %',
+          type: 'line',
+          data: revenue.map((rev, i) => (rev > 0 && netIncome[i] != null) ? +((netIncome[i] / rev) * 100).toFixed(1) : null),
+          borderColor: CHART_COLORS.warning,
+          backgroundColor: 'transparent',
+          borderWidth: 1.5,
+          pointRadius: 2,
+          pointBackgroundColor: CHART_COLORS.warning,
+          tension: 0.35,
+          yAxisID: 'y1',
+          order: 1,
+          datalabels: { display: false },
+        },
       ],
     },
     options: {
@@ -1885,6 +2018,13 @@ function renderRevenueChart(d) {
       },
       scales: {
         ...defaults.scales,
+        y1: {
+          // % axis for the margin line — right side, no grid (keeps noir calm)
+          position: 'right',
+          grid: { display: false },
+          ticks: { color: CHART_COLORS.warning, font: { size: 10 }, callback: (v) => v + '%' },
+          suggestedMin: 0,
+        },
         y: {
           ...defaults.scales.y,
           ticks: {
@@ -2041,10 +2181,11 @@ function renderSegmentChart(d) {
   ctx.style.display = 'block';
 
   // Premium color palette — distinct, readable, ordered by contrast
+  // Segment palette anchored on the sapphire family, then warm/cool spread.
   const PIE_COLORS = [
-    '#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
-    '#06b6d4', '#ec4899', '#14b8a6', '#f97316', '#a855f7',
-    '#22d3ee', '#fb923c',
+    '#4f82f3', '#4ade80', '#fbbf24', '#f87171', '#82a8f7',
+    '#2dd4bf', '#e879f9', '#2554c7', '#fb923c', '#a78bfa',
+    '#38bdf8', '#f472b6',
   ];
 
   const total = segments.reduce((sum, s) => sum + (s.value || 0), 0);
@@ -2502,7 +2643,7 @@ function renderStatementPreview(d) {
  */
 async function fetchAvail(tk) {
   try {
-    const r = await fetch(API_BASE + '/api/filings/' + encodeURIComponent(tk));
+    const r = await fetch(API_BASE + '/api/filings/' + encodeURIComponent(tk) + '?limit=80');
     if (!r.ok) throw new Error('Filings API error: ' + r.status);
     
     const j = await r.json();
@@ -2532,6 +2673,14 @@ function populatePeriodDropdown() {
   const formFilter = formSel ? formSel.value : '';
   
   let filtered = _avail;
+  // Period picker follows the selected timeframe too.
+  const win = rangeWindow();
+  if (win) {
+    filtered = filtered.filter(f => {
+      const y = parseInt((f.filing_date || '').slice(0, 4));
+      return y >= win.fromYear && y <= win.toYear;
+    });
+  }
   if (formFilter) {
     // Map primary forms to alternatives (e.g., 10-K includes 20-F for FPI)
     const altMap = {
@@ -2765,6 +2914,57 @@ function renderFilingText(j) {
  * Prefers the richer statement arrays from backend if available,
  * falls back to top-level metrics.
  */
+
+/**
+ * Statement-row label → FMP-shaped history field, per statement type.
+ * Lets the statements grid pull up to 4 OLDER periods for each line from
+ * the cached full-depth history (only labels listed here get history cells;
+ * everything else shows — for older periods).
+ */
+const STMT_FMP_FIELDS = {
+  income: [
+    [/^(total )?revenue/i, 'revenue'], [/cost of (revenue|goods)/i, 'costOfRevenue'],
+    [/gross profit/i, 'grossProfit'], [/research/i, 'researchAndDevelopmentExpenses'],
+    [/selling.*general|sg&a/i, 'sellingGeneralAndAdministrativeExpenses'],
+    [/^operating expenses/i, 'operatingExpenses'], [/^operating income/i, 'operatingIncome'],
+    [/interest expense/i, 'interestExpense'],
+    // Order matters: "Income ... before Income Taxes" CONTAINS "income tax",
+    // so the pre-tax pattern must win first and the tax pattern must be
+    // anchored to tax-expense shaped labels only.
+    [/(before (provision for )?income tax|pre-?tax|income before tax)/i, 'incomeBeforeTax'],
+    [/^(provision for )?income tax(es)? (expense|provision|benefit)?/i, 'incomeTaxExpense'],
+    [/^net income/i, 'netIncome'],
+    [/eps/i, 'epsDiluted'], [/shares outstanding/i, 'weightedAverageShsOut'],
+    [/ebitda/i, 'ebitda'], [/depreciation/i, 'depreciationAndAmortization'],
+  ],
+  balance: [
+    [/cash (&|and) equivalents/i, 'cashAndCashEquivalents'], [/receivable/i, 'netReceivables'],
+    [/inventor/i, 'inventory'], [/^(total )?current assets/i, 'totalCurrentAssets'],
+    [/property.*equipment|pp&e/i, 'propertyPlantEquipmentNet'], [/goodwill/i, 'goodwill'],
+    [/^total assets/i, 'totalAssets'], [/accounts payable/i, 'accountPayables'],
+    [/short-?term debt/i, 'shortTermDebt'], [/^(total )?current liabilities/i, 'totalCurrentLiabilities'],
+    [/long-?term debt/i, 'longTermDebt'], [/^total liabilities/i, 'totalLiabilities'],
+    [/stockholders.*equity/i, 'totalStockholdersEquity'], [/retained earnings/i, 'retainedEarnings'],
+    [/deferred revenue/i, 'deferredRevenue'],
+  ],
+  cashflow: [
+    [/^net income/i, 'netIncome'], [/depreciation/i, 'depreciationAndAmortization'],
+    [/stock-?based comp/i, 'stockBasedCompensation'], [/operating cash flow/i, 'operatingCashFlow'],
+    [/capital expenditure/i, 'capitalExpenditure'], [/free cash flow/i, 'freeCashFlow'],
+    [/dividends/i, 'commonDividendsPaid'], [/repurchase/i, 'commonStockRepurchased'],
+    [/investing cash flow/i, 'netCashProvidedByInvestingActivities'],
+    [/financing cash flow/i, 'netCashProvidedByFinancingActivities'],
+  ],
+};
+
+/** Find the FMP field for a statement row label (null when unmapped). */
+function stmtFmpField(type, label) {
+  for (const [re, field] of (STMT_FMP_FIELDS[type] || [])) {
+    if (re.test(label)) return field;
+  }
+  return null;
+}
+
 function renderFullStatement(type) {
   if (!_curData) return;
 
@@ -2777,6 +2977,16 @@ function renderFullStatement(type) {
   const sub = document.getElementById('full-stmt-sub');
   const tbody = document.getElementById('full-stmt-tbody');
   if (!tbody) return;
+
+  // Reset header to the 4-col default — the multi-period branch rebuilds it.
+  const theadReset = document.querySelector('#full-stmt-table thead tr');
+  if (theadReset) {
+    theadReset.innerHTML =
+      '<th>Line Item</th>' +
+      '<th class="right" id="full-stmt-th-cur">Current</th>' +
+      '<th class="right" id="full-stmt-th-prior">Prior</th>' +
+      '<th class="right">Δ YoY</th>';
+  }
 
   if (sub) {
     sub.textContent = (_curData.company_name || _tk || '') + ' · ' + (_curData.filing_info?.form_type || '') + ' ' + (_curData.filing_info?.filing_date || '');
@@ -2823,11 +3033,38 @@ function renderFullStatement(type) {
       return fmtN(val);
     }
 
+    // ── Multi-period grid (annual views): up to 4 OLDER periods from the
+    // cached full-depth history, after the as-filed current/prior columns.
+    // Quarterly views keep 2 columns (history is annual-period here).
+    const isAnnualView = (_curData.period_type || 'annual') !== 'quarterly';
+    const histRows = (isAnnualView && _fmpHistory && _fmpHistory[type]) ? _fmpHistory[type] : [];
+    // Skip history rows that duplicate the as-filed current/prior columns.
+    const older = histRows.slice(2, 6); // periods 3..6 newest-first
+    const olderLabels = older.map(r => {
+      const q = (r._meta && r._meta.quality) || '';
+      const mark = (q === 'q4_synthesized' || q === 'ytd_fallback') ? '°' : '';
+      return (r.period === 'FY' ? 'FY' + r.fiscalYear : (r.period + '-' + r.fiscalYear)) + mark;
+    });
+
+    // Rewrite the header row to match the column count.
+    const theadRow = document.querySelector('#full-stmt-table thead tr');
+    if (theadRow) {
+      const thCur = document.getElementById('full-stmt-th-cur');
+      const thPr = document.getElementById('full-stmt-th-prior');
+      theadRow.innerHTML =
+        '<th>Line Item</th>' +
+        '<th class="right" id="full-stmt-th-cur">' + esc(thCur ? thCur.textContent : 'Current') + '</th>' +
+        '<th class="right" id="full-stmt-th-prior">' + esc(thPr ? thPr.textContent : 'Prior') + '</th>' +
+        olderLabels.map(l => '<th class="right th-hist">' + esc(l) + '</th>').join('') +
+        '<th class="right">Δ YoY</th>';
+    }
+    const nCols = 4 + olderLabels.length;
+
     let h = '';
     for (const row of stmtData) {
       // Section divider (e.g. "FFO Reconciliation" for REITs) — full-width header row
       if (row.is_section) {
-        h += '<tr><td colspan="4" style="background:rgba(99,102,241,0.10);padding:8px 12px;font-weight:600;font-style:italic;color:var(--text-primary)">' + esc(row.label) + '</td></tr>';
+        h += '<tr class="stmt-section"><td colspan="' + nCols + '">' + esc(row.label) + '</td></tr>';
         continue;
       }
       if (row.value == null && row.prior_value == null) continue;
@@ -2838,17 +3075,38 @@ function renderFullStatement(type) {
         ? '<span class="' + (change >= 0 ? 'positive' : 'negative') + '">' + (change >= 0 ? '+' : '') +
           (row.fmt === 'pct' ? change.toFixed(1) + ' pp' : change.toFixed(1) + '%') + '</span>'
         : '—';
-      // Honor backend `bold` flag, then fall back to label-based heuristics
-      const isBold = row.bold === true || /^(total|net income|revenue|gross profit|operating income|free cash flow|stockholders|ffo|pre-tax|income before)/i.test(row.label);
-      const boldStyle = isBold ? ' style="font-weight:600;color:var(--text-primary)"' : '';
-      h += '<tr>' +
-        '<td class="stmt-label"' + boldStyle + '>' + esc(row.label) + '</td>' +
+
+      // ── Delineation: aggregates (subtotals) vs components ──────────────
+      // Aggregate = backend bold flag or subtotal-shaped label. Aggregates get
+      // a hairline top rule + semibold; components indent beneath them. This
+      // makes "which lines SUM into which" readable at a glance — and the
+      // row tooltip exposes the exact XBRL tag the number was pulled from,
+      // which is the ground truth for tagging questions.
+      const isAgg = row.bold === true || /^(total|net income|revenue$|total revenue|gross profit|operating income|free cash flow|stockholders|ffo|pre-tax|income before)/i.test(row.label);
+      const rowCls = isAgg ? 'stmt-total' : 'stmt-component';
+      const tagTip = row.concept ? ' title="XBRL tag: ' + esc(String(row.concept)) + '"' : '';
+
+      // Older-period cells from the history grid (— when the label is unmapped).
+      const field = stmtFmpField(type, row.label);
+      const olderCells = older.map(r => {
+        let v = field ? r[field] : null;
+        if (v != null && /capitalExpenditure|commonDividendsPaid|commonStockRepurchased/.test(field || '')) v = Math.abs(v);
+        return '<td class="stmt-value stmt-hist">' + rowFmt(v, row.fmt) + '</td>';
+      }).join('');
+
+      h += '<tr class="' + rowCls + '"' + tagTip + '>' +
+        '<td class="stmt-label">' + esc(row.label) + (row.concept ? '<span class="stmt-tag">' + esc(String(row.concept)) + '</span>' : '') + '</td>' +
         '<td class="stmt-value">' + rowFmt(row.value, row.fmt) + '</td>' +
         '<td class="stmt-value">' + rowFmt(row.prior_value, row.fmt) + '</td>' +
+        olderCells +
         '<td class="stmt-change">' + changeHtml + '</td>' +
         '</tr>';
     }
-    if (!h) h = '<tr><td colspan="4" class="text-center text-muted">No data in statement</td></tr>';
+    if (!h) h = '<tr><td colspan="' + nCols + '" class="text-center text-muted">No data in statement</td></tr>';
+    // Derived-period legend, only when a ° column is present.
+    if (olderLabels.some(l => l.endsWith('°'))) {
+      h += '<tr class="stmt-legend"><td colspan="' + nCols + '">° derived period (e.g. Q4 = FY − ΣQ1-3) or YTD fallback</td></tr>';
+    }
     tbody.innerHTML = h;
     return;
   }
@@ -3279,13 +3537,24 @@ async function loadFilingsTable() {
   tbody.innerHTML = '<tr><td colspan="4" class="text-center"><div class="spinner" style="margin:8px auto"></div></td></tr>';
 
   try {
-    const r = await fetch(API_BASE + '/api/filings/' + encodeURIComponent(_tk));
+    // Deep fetch (≤80 periodic filings ≈ 13+ years) so 10Y/All ranges populate.
+    const r = await fetch(API_BASE + '/api/filings/' + encodeURIComponent(_tk) + '?limit=80');
     if (!r.ok) throw new Error('API error: ' + r.status);
     const j = await r.json();
-    const filings = j.filings || [];
+    let filings = j.filings || [];
+
+    // Honor the dashboard's timeframe: only filings inside the window.
+    const win = rangeWindow();
+    if (win) {
+      filings = filings.filter(f => {
+        const y = parseInt((f.filing_date || '').slice(0, 4));
+        return y >= win.fromYear && y <= win.toYear;
+      });
+      if (sub) sub.textContent = _tk + ' — SEC filings ' + win.fromYear + '–' + win.toYear;
+    }
 
     if (!filings.length) {
-      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No filings found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">No filings in the selected range</td></tr>';
       return;
     }
 

@@ -1076,9 +1076,14 @@ async def list_available_filings(ticker: str, limit: int = 24):
     """
     from sec_mcp.sec_client import get_sec_client
     client = get_sec_client()
-    # Try US annual, then FPI annual; same for quarterly
-    filings_k = client.get_filings_smart(ticker, form_type="10-K", limit=12)
-    filings_q = client.get_filings_smart(ticker, form_type="10-Q", limit=16)
+    # Facts-derived periodic index (full history — the submissions `recent`
+    # window only spans months for heavy filers), honoring the caller's limit
+    # so the explorer's 10Y/All ranges actually have filings to show.
+    limit = max(4, min(int(limit), 120))
+    k_lim = max(12, limit // 3)            # annuals: 1/3 of the budget, >=12
+    q_lim = max(16, limit - k_lim)         # quarterlies: the rest, >=16
+    filings_k = client.get_periodic_filings_smart(ticker, form_type="10-K", limit=k_lim)
+    filings_q = client.get_periodic_filings_smart(ticker, form_type="10-Q", limit=q_lim)
     # Get CIK for SEC EDGAR URLs
     cik = ""
     try:

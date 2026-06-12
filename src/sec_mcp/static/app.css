@@ -2,7 +2,7 @@
  * Fineas.ai V2 — SEC Financial Intelligence Platform
  * Premium dark-first fintech UI · Linear/Bloomberg aesthetic
  *
- * Theme: TECH NOIR — near-black ink (#050608) + phosphor cyan (#6cc8f2)
+ * Theme: TECH NOIR — near-black ink (#050608) + deep sapphire (#4f82f3)
  * Typography: Schibsted Grotesk (UI), Spline Sans Mono (numbers/data)
  * Layout: 3-column (sidebar 240px | main flex | chat 380px)
  */
@@ -12,7 +12,7 @@
    ═══════════════════════════════════════════════════════════════ */
 
 /* ── TECH NOIR ──────────────────────────────────────────────────
-   Near-black ink, hairline structure, ONE phosphor-cyan accent.
+   Near-black ink, hairline structure, ONE deep-sapphire accent.
    Depth comes from shadow, never glow — the data is the light.   */
 :root {
   /* Backgrounds — true noir, barely-separated planes */
@@ -20,7 +20,7 @@
   --bg-secondary: #0a0c10;
   --bg-tertiary: #12151b;
   --bg-elevated: #0d1015;
-  --bg-hover: rgba(108, 200, 242, 0.05);
+  --bg-hover: rgba(79, 130, 243, 0.05);
 
   /* Text — cool paper-white on ink */
   --text-primary: #e8ebf0;
@@ -32,12 +32,12 @@
   --border: rgba(165, 184, 212, 0.10);
   --border-light: rgba(165, 184, 212, 0.05);
 
-  /* Brand — phosphor cyan, the single light source */
-  --brand: #6cc8f2;
-  --brand-light: #a3ddfb;
-  --brand-dark: #3aa5d8;
-  --brand-bg: rgba(108, 200, 242, 0.08);
-  --brand-bg-strong: rgba(108, 200, 242, 0.16);
+  /* Brand — deep sapphire, the single light source */
+  --brand: #4f82f3;
+  --brand-light: #82a8f7;
+  --brand-dark: #2554c7;
+  --brand-bg: rgba(79, 130, 243, 0.08);
+  --brand-bg-strong: rgba(79, 130, 243, 0.16);
 
   /* Semantic — desaturated to sit inside the noir palette */
   --success: #4ade80;
@@ -46,8 +46,8 @@
   --danger-bg: rgba(248, 113, 113, 0.08);
   --warning: #fbbf24;
   --warning-bg: rgba(251, 191, 36, 0.08);
-  --info: #6cc8f2;
-  --info-bg: rgba(108, 200, 242, 0.08);
+  --info: #4f82f3;
+  --info-bg: rgba(79, 130, 243, 0.08);
 
   /* Effects — shadow for depth; glows retired */
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.45);
@@ -83,22 +83,22 @@
   --bg-secondary: #ffffff;
   --bg-tertiary: #efefec;
   --bg-elevated: #ffffff;
-  --bg-hover: rgba(14, 116, 144, 0.05);
+  --bg-hover: rgba(29, 78, 216, 0.05);
   --text-primary: #14181d;
   --text-secondary: #4d565f;
   --text-tertiary: #8a929b;
   --text-muted: #c2c8ce;
   --border: rgba(20, 24, 29, 0.10);
   --border-light: rgba(20, 24, 29, 0.05);
-  --brand: #0e7490;
-  --brand-light: #0891b2;
-  --brand-dark: #155e75;
-  --brand-bg: rgba(14, 116, 144, 0.06);
-  --brand-bg-strong: rgba(14, 116, 144, 0.12);
+  --brand: #1d4ed8;
+  --brand-light: #3b82f6;
+  --brand-dark: #1e40af;
+  --brand-bg: rgba(29, 78, 216, 0.06);
+  --brand-bg-strong: rgba(29, 78, 216, 0.12);
   --success-bg: rgba(22, 163, 74, 0.07);
   --danger-bg: rgba(220, 38, 38, 0.07);
   --warning-bg: rgba(217, 119, 6, 0.07);
-  --info-bg: rgba(14, 116, 144, 0.06);
+  --info-bg: rgba(29, 78, 216, 0.06);
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
   --shadow: 0 4px 16px rgba(0,0,0,0.08);
   --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
@@ -207,7 +207,7 @@ a:hover { color: var(--brand); }
   align-items: center;
   justify-content: center;
   color: white;
-  box-shadow: 0 2px 12px rgba(108, 200, 242, 0.35), 0 0 20px rgba(108, 200, 242, 0.15);
+  box-shadow: 0 2px 12px rgba(79, 130, 243, 0.35), 0 0 20px rgba(79, 130, 243, 0.15);
 }
 
 .brand-icon svg { width: 18px; height: 18px; }
@@ -272,7 +272,7 @@ a:hover { color: var(--brand); }
   background: var(--brand-bg);
   color: var(--brand);
   font-weight: 600;
-  border-color: rgba(108, 200, 242, 0.15);
+  border-color: rgba(79, 130, 243, 0.15);
   box-shadow: inset 3px 0 0 var(--brand);
 }
 
@@ -498,7 +498,7 @@ a:hover { color: var(--brand); }
 }
 
 .search-bar:focus-within {
-  border-color: rgba(108, 200, 242, 0.4);
+  border-color: rgba(79, 130, 243, 0.4);
   box-shadow: 0 0 0 3px var(--brand-bg), var(--glow);
   background: rgba(10, 15, 30, 0.8);
 }
@@ -594,7 +594,7 @@ a:hover { color: var(--brand); }
   gap: 10px;
   padding: 6px 14px;
   background: var(--brand-bg);
-  border: 1px solid rgba(108, 200, 242, 0.15);
+  border: 1px solid rgba(79, 130, 243, 0.15);
   border-radius: 20px;
   flex-shrink: 0;
 }
@@ -676,7 +676,7 @@ a:hover { color: var(--brand); }
 
 .icon-btn svg, .icon-btn i { width: 18px; height: 18px; }
 .icon-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border); }
-.icon-btn.active { background: var(--brand-bg); color: var(--brand); border-color: rgba(108, 200, 242, 0.2); }
+.icon-btn.active { background: var(--brand-bg); color: var(--brand); border-color: rgba(79, 130, 243, 0.2); }
 
 .icon-btn.has-badge::after {
   content: '';
@@ -777,7 +777,7 @@ a:hover { color: var(--brand); }
   font-family: var(--font-sans);
   font-size: 11.5px;
   cursor: pointer;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%236cc8f2' d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%234f82f3' d='M8 11L3 6h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 8px center;
   background-size: 12px;
@@ -812,7 +812,7 @@ a:hover { color: var(--brand); }
   width: 72px;
   height: 72px;
   background: linear-gradient(135deg, var(--brand-bg) 0%, var(--brand-bg-strong) 100%);
-  border: 1px solid rgba(108, 200, 242, 0.15);
+  border: 1px solid rgba(79, 130, 243, 0.15);
   border-radius: 18px;
   display: flex;
   align-items: center;
@@ -865,10 +865,10 @@ a:hover { color: var(--brand); }
 
 .pill:hover {
   background: var(--brand-bg);
-  border-color: rgba(108, 200, 242, 0.25);
+  border-color: rgba(79, 130, 243, 0.25);
   color: var(--brand-light);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(108, 200, 242, 0.15), var(--glow);
+  box-shadow: 0 4px 12px rgba(79, 130, 243, 0.15), var(--glow);
 }
 
 .welcome-note {
@@ -954,7 +954,7 @@ a:hover { color: var(--brand); }
   inset: 0;
   border-radius: var(--radius);
   padding: 1px;
-  background: linear-gradient(135deg, rgba(108, 200, 242, 0.1) 0%, transparent 50%, rgba(108, 200, 242, 0.05) 100%);
+  background: linear-gradient(135deg, rgba(79, 130, 243, 0.1) 0%, transparent 50%, rgba(79, 130, 243, 0.05) 100%);
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
   mask-composite: exclude;
@@ -976,7 +976,7 @@ a:hover { color: var(--brand); }
 }
 
 .kpi-card:hover {
-  border-color: rgba(108, 200, 242, 0.12);
+  border-color: rgba(79, 130, 243, 0.12);
   box-shadow: var(--shadow), var(--inner-glow);
   transform: translateY(-2px);
 }
@@ -1085,7 +1085,7 @@ a:hover { color: var(--brand); }
 }
 
 .chart-card:hover {
-  border-color: rgba(108, 200, 242, 0.12);
+  border-color: rgba(79, 130, 243, 0.12);
   box-shadow: var(--inner-glow), var(--shadow);
 }
 .chart-card.wide { /* handled by parent grid */ }
@@ -1251,7 +1251,7 @@ a:hover { color: var(--brand); }
 
 .data-table tbody tr:nth-child(even) { background: rgba(148, 163, 184, 0.02); }
 .data-table tbody tr:last-child td { border-bottom: none; }
-.data-table tbody tr:hover { background: rgba(108, 200, 242, 0.06); }
+.data-table tbody tr:hover { background: rgba(79, 130, 243, 0.06); }
 .data-table tbody tr:hover td { color: var(--text-primary); }
 
 /* Statement rows */
@@ -1418,7 +1418,7 @@ a:hover { color: var(--brand); }
 .source-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; letter-spacing: 0.3px; }
 .source-badge svg, .source-badge i { width: 10px; height: 10px; }
 .source-sec { background: rgba(16,185,129,0.12); color: #10b981; }
-.source-verified { background: rgba(99,102,241,0.12); color: #a3ddfb; }
+.source-verified { background: rgba(99,102,241,0.12); color: #82a8f7; }
 .source-web { background: rgba(245,158,11,0.12); color: #f59e0b; }
 .source-unverified { background: rgba(148,163,184,0.08); color: #64748b; }
 .kpi-source-badges { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
@@ -1792,7 +1792,7 @@ a:hover { color: var(--brand); }
   background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
   color: white;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(108, 200, 242, 0.25);
+  box-shadow: 0 2px 8px rgba(79, 130, 243, 0.25);
 }
 
 .msg-assistant .msg-bubble, .msg-ai .msg-bubble {
@@ -1963,12 +1963,12 @@ a:hover { color: var(--brand); }
 
 .chip:hover {
   background: var(--brand-bg);
-  border-color: rgba(108, 200, 242, 0.2);
+  border-color: rgba(79, 130, 243, 0.2);
   color: var(--brand);
 }
 
 .chip.highlight {
-  border-color: rgba(108, 200, 242, 0.25);
+  border-color: rgba(79, 130, 243, 0.25);
   color: var(--brand);
 }
 
@@ -1997,7 +1997,7 @@ a:hover { color: var(--brand); }
 }
 
 .chat-input input::placeholder { color: var(--text-tertiary); }
-.chat-input input:focus { border-color: rgba(108, 200, 242, 0.4); box-shadow: 0 0 0 3px var(--brand-bg), var(--glow); }
+.chat-input input:focus { border-color: rgba(79, 130, 243, 0.4); box-shadow: 0 0 0 3px var(--brand-bg), var(--glow); }
 
 .send-btn {
   padding: 8px 18px;
@@ -2011,11 +2011,11 @@ a:hover { color: var(--brand); }
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(108, 200, 242, 0.3);
+  box-shadow: 0 2px 8px rgba(79, 130, 243, 0.3);
 }
 
-.send-btn:hover { background: linear-gradient(135deg, var(--brand-light) 0%, var(--brand) 100%); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(108, 200, 242, 0.4); }
-.send-btn:active { transform: translateY(0); box-shadow: 0 1px 4px rgba(108, 200, 242, 0.3); }
+.send-btn:hover { background: linear-gradient(135deg, var(--brand-light) 0%, var(--brand) 100%); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79, 130, 243, 0.4); }
+.send-btn:active { transform: translateY(0); box-shadow: 0 1px 4px rgba(79, 130, 243, 0.3); }
 
 /* ═══════════════════════════════════════════════════════════════
    MODAL
@@ -2462,8 +2462,8 @@ a:hover { color: var(--brand); }
 }
 
 @keyframes floatGlow {
-  0%, 100% { box-shadow: 0 0 20px rgba(108, 200, 242, 0.15), 0 0 40px rgba(108, 200, 242, 0.05); }
-  50% { box-shadow: 0 0 30px rgba(108, 200, 242, 0.25), 0 0 60px rgba(108, 200, 242, 0.1); transform: translateY(-2px); }
+  0%, 100% { box-shadow: 0 0 20px rgba(79, 130, 243, 0.15), 0 0 40px rgba(79, 130, 243, 0.05); }
+  50% { box-shadow: 0 0 30px rgba(79, 130, 243, 0.25), 0 0 60px rgba(79, 130, 243, 0.1); transform: translateY(-2px); }
 }
 
 @keyframes shimmer {
@@ -3095,7 +3095,7 @@ a:hover { color: var(--brand); }
 
 .tos-check:has(input:checked) {
   border-color: var(--brand);
-  background: rgba(108, 200, 242, 0.05);
+  background: rgba(79, 130, 243, 0.05);
 }
 
 .tos-check input[type="checkbox"] {
@@ -3122,7 +3122,7 @@ a:hover { color: var(--brand); }
 .tos-accept:hover:not(:disabled) {
   background: var(--brand-light);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(108, 200, 242, 0.4);
+  box-shadow: 0 4px 12px rgba(79, 130, 243, 0.4);
 }
 
 .tos-accept:disabled {
@@ -3392,3 +3392,158 @@ html:not([data-theme="light"]) [class*="price"] {
   animation: caret-blink 1s steps(2) infinite;
 }
 @keyframes caret-blink { 50% { opacity: 0; } }
+
+/* ═══════════════════════════════════════════════════════════════
+   KPI SPARKLINES + PROVENANCE TOOLTIPS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Trend line under the value — quiet, full card width */
+.kpi-spark {
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin: 4px 0 2px;
+}
+
+/* Rich tooltip: hidden until card hover; sits above the card */
+.kpi-card { position: relative; }
+.kpi-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(4px);
+  min-width: 220px;
+  max-width: 280px;
+  padding: 10px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast), transform var(--t-fast);
+  z-index: 50;
+}
+.kpi-card:hover .kpi-tip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.tip-title {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+.tip-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  padding: 2px 0;
+}
+.tip-row code {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--brand);
+  background: var(--brand-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tip-row b { color: var(--text-primary); font-weight: 600; }
+.tip-conf.high { color: var(--success); }
+.tip-conf.medium { color: var(--warning); }
+.tip-conf.low { color: var(--danger); }
+
+/* ═══════════════════════════════════════════════════════════════
+   STATEMENTS GRID — aggregate/component delineation, tag exposure,
+   compact columns, multi-period history cells
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Compact columns: label hugs its numbers instead of spanning the panel */
+#full-stmt-table { width: auto; min-width: 0; }
+#full-stmt-table th:first-child,
+#full-stmt-table td.stmt-label {
+  max-width: 250px;
+  width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  position: sticky;        /* label column stays put under horizontal scroll */
+  left: 0;
+  background: var(--bg-secondary);
+  z-index: 2;
+}
+#full-stmt-table th.right,
+#full-stmt-table td.stmt-value,
+#full-stmt-table td.stmt-change {
+  width: 96px;
+  min-width: 84px;
+  padding-left: 8px;
+  padding-right: 10px;
+}
+
+/* AGGREGATES (subtotals/totals): hairline rule above + semibold — the eye
+   reads the summation structure without any extra chrome */
+#full-stmt-table tr.stmt-total td {
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+  color: var(--text-primary);
+  background: rgba(79, 130, 243, 0.03);
+}
+
+/* COMPONENTS: indented under their aggregate with a faint left tick */
+#full-stmt-table tr.stmt-component td.stmt-label {
+  padding-left: 26px;
+  color: var(--text-secondary);
+}
+#full-stmt-table tr.stmt-component td.stmt-label::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  width: 6px;
+  height: 1px;
+  background: var(--border);
+}
+
+/* Section dividers (e.g. FFO reconciliation) */
+#full-stmt-table tr.stmt-section td {
+  background: var(--brand-bg);
+  padding: 8px 12px;
+  font-weight: 600;
+  font-style: italic;
+  color: var(--text-primary);
+}
+
+/* XBRL tag chip: hidden until the row is hovered — the tagging ground truth
+   at the point of reading, invisible the rest of the time */
+.stmt-tag {
+  display: none;
+  margin-left: 8px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--brand);
+  background: var(--brand-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  vertical-align: 1px;
+}
+#full-stmt-table tr:hover .stmt-tag { display: inline-block; }
+
+/* Older-period history cells: slightly dimmed so the as-filed pair leads */
+#full-stmt-table td.stmt-hist { color: var(--text-tertiary); }
+#full-stmt-table th.th-hist { color: var(--text-muted); }
+
+/* Derived-period legend row */
+#full-stmt-table tr.stmt-legend td {
+  font-size: 10px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-light);
+  padding: 6px 12px;
+}
