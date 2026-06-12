@@ -1005,36 +1005,87 @@ async function sendCb() {
       ctx._filing_sections = _bgSections;
     }
 
-    // Send to /api/chatbot
+    // Send to /api/chatbot-stream (SSE) — tokens render as they arrive.
+    // Falls back to the blocking /api/chatbot on any streaming failure.
     const body = {
       message: msg,
       ticker: _tk || '',
       context: ctx,
       history: _chatHistory.slice(-6), // Last 6 messages for context
     };
-    
-    const r = await fetch(API_BASE + '/api/chatbot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    
-    if (!r.ok) throw new Error('Chat API error: ' + r.status);
-    
-    const j = await r.json();
-    
-    // Remove typing indicator
-    removeChatLoading();
-    
-    // Build answer with citations
-    let answer = j.answer || 'No response.';
-    if (j.citations && j.citations.length) {
-      const cites = j.citations.map((c) => esc(c.source)).join(', ');
-      answer += '\n\n_Sources: ' + cites + '_';
+
+    let answer = '';
+    try {
+      const r = await fetch(API_BASE + '/api/chatbot-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok || !r.body) throw new Error('stream HTTP ' + r.status);
+
+      // Swap the typing dots for a live-rendering assistant bubble.
+      removeChatLoading();
+      const liveDiv = addStreamingMessage();
+
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let cites = [];
+      let lastPaint = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (!line.startsWith('data: ')) continue;
+          const payload = line.slice(6);
+          if (payload === '[DONE]') continue;
+          let evt;
+          try { evt = JSON.parse(payload); } catch { continue; }
+          if (evt.token) {
+            answer += evt.token;
+            // Repaint at most every 80ms — markdown re-render is cheap but
+            // not free; this keeps long answers at 60fps.
+            const now = Date.now();
+            if (now - lastPaint > 80) {
+              updateStreamingMessage(liveDiv, answer);
+              lastPaint = now;
+            }
+          } else if (evt.citations) {
+            cites = evt.citations;
+          } else if (evt.error) {
+            throw new Error(evt.error);
+          }
+        }
+      }
+      if (cites.length) {
+        answer += '\n\n_Sources: ' + cites.map((c) => esc(c.source)).join(', ') + '_';
+      }
+      if (!answer) throw new Error('empty stream');
+      updateStreamingMessage(liveDiv, answer, true); // final paint (tables etc.)
+    } catch (streamErr) {
+      // Streaming failed — log it and fall back to the blocking endpoint so
+      // the user still gets an answer (never a silent dead bubble).
+      console.warn('[Chat] stream failed, falling back:', streamErr);
+      removeStreamingMessage();
+      const r = await fetch(API_BASE + '/api/chatbot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error('Chat API error: ' + r.status);
+      const j = await r.json();
+      removeChatLoading();
+      answer = j.answer || 'No response.';
+      if (j.citations && j.citations.length) {
+        const cites = j.citations.map((c) => esc(c.source)).join(', ');
+        answer += '\n\n_Sources: ' + cites + '_';
+      }
+      addChatMessage('assistant', answer);
     }
-    
-    // Add assistant response
-    addChatMessage('assistant', answer);
     
     // Update history
     _chatHistory.push({ role: 'user', content: msg });
@@ -1100,6 +1151,51 @@ function newChat() {
 /**
  * Add a message to the chat panel.
  */
+
+/**
+ * Streaming bubble: created once, repainted as tokens arrive.
+ */
+function addStreamingMessage() {
+  const container = document.getElementById('chat-messages');
+  if (!container) return null;
+  const welcome = document.getElementById('chat-welcome');
+  if (welcome) welcome.style.display = 'none';
+  const div = document.createElement('div');
+  div.className = 'msg msg-assistant msg-streaming';
+  div.innerHTML = '<div class="msg-bubble"><span class="stream-caret"></span></div>';
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+  return div;
+}
+
+/**
+ * Repaint the streaming bubble with accumulated markdown. The final paint
+ * (done=true) also applies table wrapping and drops the caret.
+ */
+function updateStreamingMessage(div, text, done) {
+  if (!div) return;
+  const bubble = div.querySelector('.msg-bubble');
+  if (!bubble) return;
+  bubble.innerHTML = md(text) + (done ? '' : '<span class="stream-caret"></span>');
+  if (done) {
+    div.classList.remove('msg-streaming');
+    div.querySelectorAll('table').forEach(t => {
+      t.classList.add('data-table');
+      const wrap = document.createElement('div');
+      wrap.className = 'table-wrap';
+      t.parentNode.insertBefore(wrap, t);
+      wrap.appendChild(t);
+    });
+  }
+  const container = document.getElementById('chat-messages');
+  if (container) container.scrollTop = container.scrollHeight;
+}
+
+/** Remove a half-painted streaming bubble (stream fallback path). */
+function removeStreamingMessage() {
+  document.querySelectorAll('.msg-streaming').forEach(el => el.remove());
+}
+
 function addChatMessage(role, text) {
   const container = document.getElementById('chat-messages');
   if (!container) return;

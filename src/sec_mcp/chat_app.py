@@ -15,6 +15,7 @@ Open: http://localhost:{PORT}  (default 8877)
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -1554,6 +1555,194 @@ async def cache_clear(ticker: str | None = None):
     return {"cleared": count, "ticker": ticker}
 
 
+
+def _assemble_chatbot_prompt(req: "ChatbotRequest") -> tuple[str, list, list, bool]:
+    """Shared prompt assembly for /api/chatbot and /api/chatbot-stream.
+
+    Returns (system, messages, citations, has_data). Extracted verbatim from
+    chatbot_qa so the streaming endpoint can never drift from the blocking one.
+    """
+    context_parts: list[str] = []
+    ctx = req.context
+    if req.ticker:
+        context_parts.append(f"Ticker: {req.ticker}")
+    if ctx:
+        if ctx.get("company_name"):
+            context_parts.append(f"Company: {ctx['company_name']}")
+        fi = ctx.get("filing_info", {})
+        if fi:
+            context_parts.append(
+                f"Filing: {fi.get('form_type', '?')} filed {fi.get('filing_date', '?')}"
+            )
+            context_parts.append(f"Period type: {ctx.get('period_type', '?')}")
+        metrics = ctx.get("metrics", {})
+        if metrics:
+            context_parts.append("\nKEY METRICS:")
+            for k, v in metrics.items():
+                if v is not None:
+                    context_parts.append(f"  {k}: {v}")
+        ratios = ctx.get("ratios", {})
+        if ratios:
+            context_parts.append("\nFINANCIAL RATIOS:")
+            for k, v in ratios.items():
+                if v is not None:
+                    context_parts.append(f"  {k}: {v}")
+        pm = ctx.get("prior_metrics", {})
+        if pm:
+            context_parts.append(
+                f"\nPRIOR PERIOD ({ctx.get('yoy_label', 'vs Prior')}):"
+            )
+            for k, v in pm.items():
+                if v is not None:
+                    context_parts.append(f"  {k}: {v}")
+        segs = ctx.get("segments", {})
+        if segs:
+            for seg_type in ("revenue_segments", "geographic_segments"):
+                seg_list = segs.get(seg_type, [])
+                if seg_list:
+                    context_parts.append(f"\n{seg_type.upper().replace('_', ' ')}:")
+                    for s in seg_list:
+                        context_parts.append(
+                            f"  {s.get('segment', '?')}: {s.get('value')}"
+                        )
+        val = ctx.get("validation", [])
+        if val:
+            context_parts.append("\nDATA WARNINGS:")
+            for w in val:
+                context_parts.append(
+                    f"  [{w.get('severity')}] {w.get('message')}"
+                )
+
+        # Include filing text sections (MD&A, Risk Factors, etc.) from frontend cache
+        filing_sections = ctx.get("_filing_sections", {})
+        if filing_sections:
+            for sec_name, sec_text in filing_sections.items():
+                if sec_text and len(sec_text) > 100:
+                    context_parts.append(f"\n{sec_name.upper()} SECTION:")
+                    context_parts.append(sec_text[:8000])
+
+        # Include statement data for richer context
+        for stmt_key in ("income_statement", "balance_sheet", "cash_flow_statement"):
+            stmt = ctx.get(stmt_key, [])
+            if stmt:
+                context_parts.append(f"\n{stmt_key.upper().replace('_', ' ')}:")
+                for row in stmt[:30]:
+                    label = row.get("label", "")
+                    vals = {k: v for k, v in row.items()
+                            if k not in ("label", "concept", "standard_concept", "level",
+                                         "is_abstract", "is_total", "abstract", "units", "decimals")
+                            and v is not None}
+                    if vals:
+                        context_parts.append(f"  {label}: {vals}")
+
+    # Enrich with Perplexity real-time search for news/current data queries
+    _realtime_keywords = ("news", "recent", "latest", "today", "analyst", "price target",
+                          "upgrade", "downgrade", "earnings", "guidance", "forecast",
+                          "compare to", "vs market", "industry average", "verify", "validate")
+    if any(kw in req.message.lower() for kw in _realtime_keywords):
+        try:
+            from sec_mcp.perplexity_client import search, is_available as pplx_avail
+            if pplx_avail():
+                pplx = search(req.message, ticker=req.ticker or None)
+                if pplx and pplx.get("content"):
+                    context_parts.append("\nREAL-TIME WEB SEARCH RESULTS (via Perplexity):")
+                    context_parts.append(pplx["content"][:4000])
+                    if pplx.get("citations"):
+                        context_parts.append("\nSources: " + ", ".join(pplx["citations"][:5]))
+        except Exception as exc:
+            log.debug("Perplexity enrichment failed: %s", exc)
+
+    # Fallback: fetch data if no context provided
+    if not context_parts and req.ticker:
+        try:
+            data = extract_financials(
+                req.ticker, include_statements=True, include_segments=True,
+            )
+            if data:
+                context_parts.append(f"Company: {data.get('company_name', req.ticker)}")
+                for k, v in data.get("metrics", {}).items():
+                    if v is not None:
+                        context_parts.append(f"  {k}: {v}")
+        except Exception as exc:
+            log.debug("Financial context fetch failed for chatbot: %s", exc)
+
+    context_text = "\n".join(context_parts) if context_parts else ""
+    has_data = bool(context_parts)
+
+    if has_data:
+        system_intro = (
+            "You are a senior financial analyst AI assistant embedded in an SEC filings dashboard. "
+            "You have DIRECT ACCESS to the company's financial data currently displayed on the user's screen. "
+            "This data comes from real SEC EDGAR XBRL filings — it is authoritative.\n\n"
+        )
+    else:
+        system_intro = (
+            "You are a senior financial analyst AI assistant. No company data is currently loaded. "
+            "Answer general finance questions clearly with examples. If the user asks about a specific "
+            "company, suggest they search for it using the search bar above. "
+            "You can explain: financial concepts, how to read SEC filings, XBRL data, valuation metrics, "
+            "accounting terms, market analysis frameworks, and investment strategies.\n\n"
+        )
+
+    system = (
+        system_intro +
+        "ADAPTIVE RESPONSE STYLE — match depth to the question:\n"
+        "- Simple factual questions (\"what's revenue?\") → 1-2 sentences with the number and source.\n"
+        "- Analytical questions (\"how are margins trending?\") → 2-3 paragraphs with bullets.\n"
+        "- Deep-dive requests (\"executive summary\", \"analyze\") → full structured breakdown with ## headers.\n\n"
+        "FORMAT — Your response is rendered as full Markdown (GFM). Use rich formatting:\n"
+        "- **Bold** for key numbers, terms, and company names.\n"
+        "- Use `## Headers` and `### Subheaders` to organize longer responses.\n"
+        "- Use bullet points (`- item`) for lists of 3+ items.\n"
+        "- Use **Markdown tables** for side-by-side comparisons or multi-metric summaries:\n"
+        "  ```\n"
+        "  | Metric | Current | Prior | Change |\n"
+        "  |--------|---------|-------|--------|\n"
+        "  | Revenue | $100B | $90B | +11.1% |\n"
+        "  ```\n"
+        "- Reference specific numbers (format: **$1.23B**, **$456M**, **12.3%**).\n"
+        "- Start with a direct answer on the first line — no preamble.\n"
+        "- NEVER use emojis. This is a professional financial tool for institutional investors.\n"
+        "- Cite the filing source (e.g., 'per the 10-K filed 2024-11-01').\n"
+        "- Compare to prior periods when data is available — calculate % changes.\n"
+        "- If data is missing, say exactly what's missing and suggest how to get it.\n\n"
+        "SOURCE ATTRIBUTION — always tag where data comes from:\n"
+        "- Prefix SEC-sourced numbers with [SEC EDGAR] inline.\n"
+        "- Prefix web-sourced context with [Web Search] inline.\n"
+        "- Prefix cross-validated data (SEC matched by Polygon) with [Verified ✓] inline.\n"
+        "- Keep these tags inline with the data, not as separate sections.\n\n"
+        "FOR DEEP ANALYSIS:\n"
+        "- Use ## headers to organize sections.\n"
+        "- Provide actionable insights: 'This suggests...', 'Key risk:...'.\n"
+        "- End with a suggested follow-up question.\n"
+        "- For exec summaries, organize by: Overview, Strengths, Risks, Outlook.\n"
+    )
+
+    # Build messages with conversation history for multi-turn context
+    messages = []
+    # Include recent history (last 6 turns to stay within token budget)
+    for turn in (req.history or [])[-6:]:
+        role = turn.get("role", "user")
+        content = turn.get("content", "")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": content})
+
+    # Current message with full data context
+    user_msg = (
+        (f"FINANCIAL DATA ON SCREEN:\n{context_text}\n\n" if has_data else "") +
+        f"USER QUESTION: {req.message}"
+    )
+    messages.append({"role": "user", "content": user_msg})
+
+    citations = []
+    fi = (ctx or {}).get("filing_info", {})
+    if fi and fi.get("form_type"):
+        citations.append({
+            "source": f"{fi.get('form_type', '?')} filed {fi.get('filing_date', '?')}",
+            "accession": fi.get("accession_number"),
+        })
+    return system, messages, citations, has_data
+
 @app.post("/api/chatbot")
 async def chatbot_qa(req: ChatbotRequest) -> dict:
     """Right-panel chatbot — answers questions using on-screen data as context.
@@ -1569,181 +1758,10 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
                 "citations": [],
             }
 
-        context_parts: list[str] = []
-        ctx = req.context
-        if req.ticker:
-            context_parts.append(f"Ticker: {req.ticker}")
-        if ctx:
-            if ctx.get("company_name"):
-                context_parts.append(f"Company: {ctx['company_name']}")
-            fi = ctx.get("filing_info", {})
-            if fi:
-                context_parts.append(
-                    f"Filing: {fi.get('form_type', '?')} filed {fi.get('filing_date', '?')}"
-                )
-                context_parts.append(f"Period type: {ctx.get('period_type', '?')}")
-            metrics = ctx.get("metrics", {})
-            if metrics:
-                context_parts.append("\nKEY METRICS:")
-                for k, v in metrics.items():
-                    if v is not None:
-                        context_parts.append(f"  {k}: {v}")
-            ratios = ctx.get("ratios", {})
-            if ratios:
-                context_parts.append("\nFINANCIAL RATIOS:")
-                for k, v in ratios.items():
-                    if v is not None:
-                        context_parts.append(f"  {k}: {v}")
-            pm = ctx.get("prior_metrics", {})
-            if pm:
-                context_parts.append(
-                    f"\nPRIOR PERIOD ({ctx.get('yoy_label', 'vs Prior')}):"
-                )
-                for k, v in pm.items():
-                    if v is not None:
-                        context_parts.append(f"  {k}: {v}")
-            segs = ctx.get("segments", {})
-            if segs:
-                for seg_type in ("revenue_segments", "geographic_segments"):
-                    seg_list = segs.get(seg_type, [])
-                    if seg_list:
-                        context_parts.append(f"\n{seg_type.upper().replace('_', ' ')}:")
-                        for s in seg_list:
-                            context_parts.append(
-                                f"  {s.get('segment', '?')}: {s.get('value')}"
-                            )
-            val = ctx.get("validation", [])
-            if val:
-                context_parts.append("\nDATA WARNINGS:")
-                for w in val:
-                    context_parts.append(
-                        f"  [{w.get('severity')}] {w.get('message')}"
-                    )
-
-            # Include filing text sections (MD&A, Risk Factors, etc.) from frontend cache
-            filing_sections = ctx.get("_filing_sections", {})
-            if filing_sections:
-                for sec_name, sec_text in filing_sections.items():
-                    if sec_text and len(sec_text) > 100:
-                        context_parts.append(f"\n{sec_name.upper()} SECTION:")
-                        context_parts.append(sec_text[:8000])
-
-            # Include statement data for richer context
-            for stmt_key in ("income_statement", "balance_sheet", "cash_flow_statement"):
-                stmt = ctx.get(stmt_key, [])
-                if stmt:
-                    context_parts.append(f"\n{stmt_key.upper().replace('_', ' ')}:")
-                    for row in stmt[:30]:
-                        label = row.get("label", "")
-                        vals = {k: v for k, v in row.items()
-                                if k not in ("label", "concept", "standard_concept", "level",
-                                             "is_abstract", "is_total", "abstract", "units", "decimals")
-                                and v is not None}
-                        if vals:
-                            context_parts.append(f"  {label}: {vals}")
-
-        # Enrich with Perplexity real-time search for news/current data queries
-        _realtime_keywords = ("news", "recent", "latest", "today", "analyst", "price target",
-                              "upgrade", "downgrade", "earnings", "guidance", "forecast",
-                              "compare to", "vs market", "industry average", "verify", "validate")
-        if any(kw in req.message.lower() for kw in _realtime_keywords):
-            try:
-                from sec_mcp.perplexity_client import search, is_available as pplx_avail
-                if pplx_avail():
-                    pplx = search(req.message, ticker=req.ticker or None)
-                    if pplx and pplx.get("content"):
-                        context_parts.append("\nREAL-TIME WEB SEARCH RESULTS (via Perplexity):")
-                        context_parts.append(pplx["content"][:4000])
-                        if pplx.get("citations"):
-                            context_parts.append("\nSources: " + ", ".join(pplx["citations"][:5]))
-            except Exception as exc:
-                log.debug("Perplexity enrichment failed: %s", exc)
-
-        # Fallback: fetch data if no context provided
-        if not context_parts and req.ticker:
-            try:
-                data = extract_financials(
-                    req.ticker, include_statements=True, include_segments=True,
-                )
-                if data:
-                    context_parts.append(f"Company: {data.get('company_name', req.ticker)}")
-                    for k, v in data.get("metrics", {}).items():
-                        if v is not None:
-                            context_parts.append(f"  {k}: {v}")
-            except Exception as exc:
-                log.debug("Financial context fetch failed for chatbot: %s", exc)
-
-        context_text = "\n".join(context_parts) if context_parts else ""
-        has_data = bool(context_parts)
+        system, messages, citations, _has_data = _assemble_chatbot_prompt(req)
 
         import anthropic
         client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-
-        if has_data:
-            system_intro = (
-                "You are a senior financial analyst AI assistant embedded in an SEC filings dashboard. "
-                "You have DIRECT ACCESS to the company's financial data currently displayed on the user's screen. "
-                "This data comes from real SEC EDGAR XBRL filings — it is authoritative.\n\n"
-            )
-        else:
-            system_intro = (
-                "You are a senior financial analyst AI assistant. No company data is currently loaded. "
-                "Answer general finance questions clearly with examples. If the user asks about a specific "
-                "company, suggest they search for it using the search bar above. "
-                "You can explain: financial concepts, how to read SEC filings, XBRL data, valuation metrics, "
-                "accounting terms, market analysis frameworks, and investment strategies.\n\n"
-            )
-
-        system = (
-            system_intro +
-            "ADAPTIVE RESPONSE STYLE — match depth to the question:\n"
-            "- Simple factual questions (\"what's revenue?\") → 1-2 sentences with the number and source.\n"
-            "- Analytical questions (\"how are margins trending?\") → 2-3 paragraphs with bullets.\n"
-            "- Deep-dive requests (\"executive summary\", \"analyze\") → full structured breakdown with ## headers.\n\n"
-            "FORMAT — Your response is rendered as full Markdown (GFM). Use rich formatting:\n"
-            "- **Bold** for key numbers, terms, and company names.\n"
-            "- Use `## Headers` and `### Subheaders` to organize longer responses.\n"
-            "- Use bullet points (`- item`) for lists of 3+ items.\n"
-            "- Use **Markdown tables** for side-by-side comparisons or multi-metric summaries:\n"
-            "  ```\n"
-            "  | Metric | Current | Prior | Change |\n"
-            "  |--------|---------|-------|--------|\n"
-            "  | Revenue | $100B | $90B | +11.1% |\n"
-            "  ```\n"
-            "- Reference specific numbers (format: **$1.23B**, **$456M**, **12.3%**).\n"
-            "- Start with a direct answer on the first line — no preamble.\n"
-            "- NEVER use emojis. This is a professional financial tool for institutional investors.\n"
-            "- Cite the filing source (e.g., 'per the 10-K filed 2024-11-01').\n"
-            "- Compare to prior periods when data is available — calculate % changes.\n"
-            "- If data is missing, say exactly what's missing and suggest how to get it.\n\n"
-            "SOURCE ATTRIBUTION — always tag where data comes from:\n"
-            "- Prefix SEC-sourced numbers with [SEC EDGAR] inline.\n"
-            "- Prefix web-sourced context with [Web Search] inline.\n"
-            "- Prefix cross-validated data (SEC matched by Polygon) with [Verified ✓] inline.\n"
-            "- Keep these tags inline with the data, not as separate sections.\n\n"
-            "FOR DEEP ANALYSIS:\n"
-            "- Use ## headers to organize sections.\n"
-            "- Provide actionable insights: 'This suggests...', 'Key risk:...'.\n"
-            "- End with a suggested follow-up question.\n"
-            "- For exec summaries, organize by: Overview, Strengths, Risks, Outlook.\n"
-        )
-
-        # Build messages with conversation history for multi-turn context
-        messages = []
-        # Include recent history (last 6 turns to stay within token budget)
-        for turn in (req.history or [])[-6:]:
-            role = turn.get("role", "user")
-            content = turn.get("content", "")
-            if role in ("user", "assistant") and content:
-                messages.append({"role": role, "content": content})
-
-        # Current message with full data context
-        user_msg = (
-            (f"FINANCIAL DATA ON SCREEN:\n{context_text}\n\n" if has_data else "") +
-            f"USER QUESTION: {req.message}"
-        )
-        messages.append({"role": "user", "content": user_msg})
-
         response = client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=2000,
@@ -1756,18 +1774,61 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
             if hasattr(block, "text"):
                 answer += block.text
 
-        citations = []
-        fi = (ctx or {}).get("filing_info", {})
-        if fi and fi.get("form_type"):
-            citations.append({
-                "source": f"{fi.get('form_type', '?')} filed {fi.get('filing_date', '?')}",
-                "accession": fi.get("accession_number"),
-            })
-
         return {"answer": answer, "citations": citations}
     except Exception as e:
         log.exception("Chatbot Q&A failed")
         return {"answer": f"Error: {e}", "citations": []}
+
+
+@app.post("/api/chatbot-stream")
+async def chatbot_stream(req: ChatbotRequest):
+    """Streaming twin of /api/chatbot — SSE token stream from Claude.
+
+    Same prompt assembly (shared helper), same grounding; tokens render as
+    they arrive instead of a spinner-then-wall-of-text. Events:
+      data: {"token": "..."}      — incremental answer text
+      data: {"citations": [...]}  — once, before the end
+      data: {"error": "..."}      — surfaced failure (never silent)
+      data: [DONE]                — stream end
+    """
+    from fastapi.responses import StreamingResponse
+    from sec_mcp.config import get_config
+    config = get_config()
+    if not config.anthropic_api_key:
+        # No key → a one-event stream that tells the user exactly why.
+        def _nokey():
+            yield 'data: {"error": "Add ANTHROPIC_API_KEY to enable the AI assistant."}\n\n'
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(_nokey(), media_type="text/event-stream")
+
+    # Assemble OUTSIDE the generator so assembly errors surface as HTTP 500s
+    # with a stack trace rather than dying silently mid-stream.
+    system, messages, citations, _has_data = _assemble_chatbot_prompt(req)
+
+    def _gen():
+        import anthropic
+        client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        try:
+            # Sync SDK stream — FastAPI runs sync generators on the threadpool.
+            with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=2000,
+                system=system,
+                messages=messages,
+            ) as stream:
+                for text in stream.text_stream:
+                    # One SSE event per token chunk, JSON-encoded.
+                    yield f"data: {json.dumps({'token': text})}\n\n"
+            # Citations after the answer, then the terminator.
+            yield f"data: {json.dumps({'citations': citations})}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as exc:  # rule: no silent failures
+            log.exception("chatbot stream failed")
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 class ExecSummaryRequest(BaseModel):
