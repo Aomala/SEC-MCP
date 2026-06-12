@@ -1443,7 +1443,8 @@ async def get_segments(ticker: str, period: str = "annual"):
 
 
 @app.get("/api/financials-history/{ticker}")
-async def get_financials_history(ticker: str, period: str = "annual",
+async def get_financials_history(ticker: str, bg: BackgroundTasks,
+                                  period: str = "annual",
                                   date_from: str = "", date_to: str = "",
                                   limit: int = 10):
     """Multi-year income statement, balance sheet, and cash flow data from FMP.
@@ -1453,31 +1454,49 @@ async def get_financials_history(ticker: str, period: str = "annual",
     tk = ticker.upper()
 
     from sec_mcp import supabase_cache
-    # New cache_type ("sec_*") so we never serve stale FMP-sourced rows that may
-    # still be cached under the old "income_history" key.
-    cache_type = "sec_income_history"
-    cached = supabase_cache.get_cached(tk, cache_type, period, date_from, date_to)
-    if cached:
-        return cached
+    # ONE full-depth (12-period) entry per (ticker, period) — requests slice it.
+    # The old key omitted `limit`, so a shallow cached response starved deeper
+    # requests and every cold deep-history hit re-extracted live (slow,
+    # especially for older filings). v2 keeps the cache key limit-free on
+    # purpose: the VALUE is always full depth.
+    cache_type = "sec_income_history_v2"
+    want = max(1, min(int(limit), 12))
 
-    try:
-        # SEC-native (XBRL) multi-period statements — FMP-shaped so existing
-        # consumers parse it unchanged. Quarters are standalone (decumulated).
-        from sec_mcp.financials import get_fmp_shaped_history
-        result = get_fmp_shaped_history(tk, period=period, limit=max(1, min(int(limit), 12)))
-
-        # Apply date range filter if provided
+    def _slice(full: dict) -> dict:
+        # Serve-time shaping: trim to the requested window without touching
+        # the cached full-depth entry.
+        out = {k: v for k, v in full.items() if k not in ("income", "balance", "cashflow")}
         for key in ("income", "balance", "cashflow"):
-            rows = result.get(key) or []
+            rows = list(full.get(key) or [])
             if date_from:
                 rows = [r for r in rows if r.get("date", "") >= date_from]
             if date_to:
                 rows = [r for r in rows if r.get("date", "") <= date_to]
-            result[key] = rows
+            out[key] = rows[:want]
+        out.pop("_cached_at", None)
+        return out
 
-        if result.get("income"):
-            supabase_cache.set_cached(tk, cache_type, result, period, date_from, date_to)
-        return result
+    def _compute_and_cache() -> dict:
+        # Build the FULL 12-period history once; everything else slices it.
+        from sec_mcp.financials import get_fmp_shaped_history
+        full = get_fmp_shaped_history(tk, period=period, limit=12)
+        if full.get("income"):
+            full["_cached_at"] = time.time()  # SWR freshness marker
+            supabase_cache.set_cached(tk, cache_type, full, period)
+        return full
+
+    cached = supabase_cache.get_cached(tk, cache_type, period)
+    if cached:
+        # Stale-while-revalidate: serve instantly; if the entry is >24h old,
+        # refresh in the background so new filings appear without ever making
+        # a user wait on extraction.
+        cached_at = cached.get("_cached_at") or 0
+        if time.time() - cached_at > 24 * 3600:
+            bg.add_task(_compute_and_cache)
+        return _slice(cached)
+
+    try:
+        return _slice(_compute_and_cache())
     except Exception as exc:
         log.warning("SEC history fetch failed for %s: %s", tk, exc)
         return {"ticker": tk, "error": str(exc), "income": [], "balance": [], "cashflow": []}

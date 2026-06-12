@@ -64,6 +64,28 @@ def extract_and_cache(ticker: str) -> dict | None:
         return None
 
 
+def prewarm_history(ticker: str) -> None:
+    """Pre-compute full-depth (12-period) shaped history, annual + quarterly,
+    into the same cache the /api/financials-history endpoint reads
+    (sec_income_history_v2). This makes deep/older history instant: the
+    marginal cost is small here — the ticker's companyfacts frame is already
+    in memory from extract_and_cache — but it saves users a 10-60s cold
+    extraction per (ticker, period)."""
+    import time as _time
+    from sec_mcp.financials import get_fmp_shaped_history
+    from sec_mcp import supabase_cache
+
+    for period in ("annual", "quarter"):
+        try:
+            full = get_fmp_shaped_history(ticker, period=period, limit=12)
+            if full.get("income"):
+                full["_cached_at"] = _time.time()  # SWR freshness marker
+                supabase_cache.set_cached(ticker, "sec_income_history_v2", full, period)
+        except Exception as exc:
+            # Logged, never fatal — one bad period must not stop the sweep.
+            log.warning("  %s: history pre-warm (%s) failed — %s", ticker, period, exc)
+
+
 def run(sector: str | None = None, force: bool = False, delay: float = 0.5):
     """Run the batch cache job."""
     from sec_mcp import supabase_cache
@@ -94,6 +116,10 @@ def run(sector: str | None = None, force: bool = False, delay: float = 0.5):
         log.info("%s %s (%s) — extracting...", prefix, tk, sect.replace("_", " "))
 
         data = extract_and_cache(tk)
+        if data:
+            # Companyfacts is hot in memory now — pre-warm full-depth history
+            # (annual + quarterly) so the dashboard's deep charts are instant.
+            prewarm_history(tk)
         if data:
             rev = data.get("metrics", {}).get("revenue")
             company = data.get("company_name", "")
