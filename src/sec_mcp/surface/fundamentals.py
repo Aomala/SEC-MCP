@@ -121,7 +121,10 @@ def _build_periods(ticker: str, period: str, periods_back: int) -> list[dict]:
             "endDate": inc.get("date"),                    # period end (report date)
             "fiscalYear": inc.get("fiscalYear"),
             "fiscalPeriod": inc.get("period"),             # FY / Q1..Q4
+            "currency": inc.get("reportedCurrency") or "USD",  # filing currency (FPIs ≠ USD)
             "accession": (inc.get("_meta") or {}).get("accession"),
+            # Source filing form (10-K/10-Q/20-F/6-K) so callers can label the period
+            "formType": (inc.get("_meta") or {}).get("formType"),
             "quality": (inc.get("_meta") or {}).get("quality"),
             "metrics": _row_to_metrics(inc, bal, cf),
         })
@@ -153,7 +156,10 @@ def _ttm_from_quarters(periods: list[dict]) -> dict:
         "endDate": qs[0]["endDate"],                       # TTM window ends at latest quarter
         "fiscalYear": qs[0]["fiscalYear"],
         "fiscalPeriod": "TTM",
+        "currency": qs[0].get("currency") or "USD",        # carry filing currency
         "accession": qs[0]["accession"],
+        # TTM is summed from quarterlies — surface the underlying form (10-Q/6-K)
+        "formType": qs[0].get("formType"),
         "quality": "ttm_sum_4q",                           # provenance flag
         "metrics": ttm_metrics,
     }
@@ -221,15 +227,21 @@ def _cross_check(ticker: str, latest: dict) -> dict:
         return {"provider": "polygon", "status": "unavailable", "detail": str(exc)[:120]}
 
 
-def _segments_block(ticker: str) -> dict:
+def _segments_block(ticker: str, period: str = "annual") -> dict:
     """Latest geographic + product revenue split, chart-ready, plus a
     multi-period geographic series when FMP is configured.
 
     Primary source: dimensional XBRL parsed from the filing itself
     (graph/segments.py) — companyfacts strips dimensions, so that's the
-    only authoritative segment source.
+    only authoritative segment source. `period` selects the source filing:
+    annual → 10-K/20-F, quarterly/ttm → 10-Q/6-K. `sourceMeta` echoes which
+    filing the breakdown came from (formType/fiscalPeriod/reportDate/currency).
     """
-    out: dict = {"geographic": [], "product": [], "segmentSeries": None}
+    # Map the requested period to the segment source filing's form
+    seg_form = "10-Q" if period in ("quarterly", "ttm") else "10-K"
+    seg_fmp_period = "quarter" if period in ("quarterly", "ttm") else "annual"
+    out: dict = {"geographic": [], "product": [], "segmentSeries": None,
+                 "sourceMeta": None}
     # Total revenue gives each slice its percentage (chart labels)
     import contextlib
     total = None
@@ -247,24 +259,25 @@ def _segments_block(ticker: str) -> dict:
         return shaped
 
     try:
-        # Dimensional XBRL from the latest filing (authoritative)
+        # Dimensional XBRL from the period's filing (authoritative)
         from sec_mcp.graph.segments import get_dimensional_segments
-        dims = get_dimensional_segments(ticker) or {}
+        dims = get_dimensional_segments(ticker, form_type=seg_form) or {}
         out["product"] = _shape(dims.get("segments") or [])
         out["geographic"] = _shape(dims.get("geographic_segments") or [])
+        out["sourceMeta"] = dims.get("source_meta")        # which filing it came from
     except Exception as exc:
         log.debug("dimensional segments failed for %s: %s", ticker, exc)
     try:
         # FMP fallback fills whichever breakdown XBRL didn't provide
         if (not out["geographic"] or not out["product"]) and get_config().fmp_api_key:
             if not out["geographic"]:
-                geo = fmp_client.get_geo_segments(ticker, period="annual", limit=1) or []
+                geo = fmp_client.get_geo_segments(ticker, period=seg_fmp_period, limit=1) or []
                 if geo:
                     out["geographic"] = _shape(
                         [{"name": s.get("name"), "value": s.get("value")}
                          for s in (geo[0].get("segments") or [])])
             if not out["product"]:
-                prod = fmp_client.get_product_segments(ticker, period="annual", limit=1) or []
+                prod = fmp_client.get_product_segments(ticker, period=seg_fmp_period, limit=1) or []
                 if prod:
                     out["product"] = _shape(
                         [{"name": s.get("name"), "value": s.get("value")}
@@ -272,9 +285,9 @@ def _segments_block(ticker: str) -> dict:
     except Exception as exc:
         log.debug("FMP segment fallback failed for %s: %s", ticker, exc)
     try:
-        # Multi-year geographic series (FMP) — feeds stacked-area charts
+        # Multi-period geographic series (FMP) — feeds stacked-area charts
         if get_config().fmp_api_key:
-            series = fmp_client.get_geo_segments(ticker, period="annual", limit=5) or []
+            series = fmp_client.get_geo_segments(ticker, period=seg_fmp_period, limit=5) or []
             if series:
                 out["segmentSeries"] = {"geographic": series, "source": "fmp"}
     except Exception as exc:
@@ -328,9 +341,10 @@ def get_fundamentals_impl(ticker, period=None, metrics=None, periods_back=None,
         "meta": build_meta("edgar:xbrl_companyfacts", t0, cache_hit=False,
                            as_of=periods[0].get("endDate")),
     }
-    # Segment breakdowns are chart gold but cost an extra extraction — optional
+    # Segment breakdowns are chart gold but cost an extra extraction — optional.
+    # Pass period so quarterly views pull the latest 10-Q/6-K segments.
     if include_segments:
-        out["segments"] = _segments_block(tk)
+        out["segments"] = _segments_block(tk, period=period)
     return out
 
 

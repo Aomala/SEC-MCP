@@ -60,17 +60,26 @@ _lock = threading.Lock()
 
 
 def _xbrl_for(ticker: str, form_type: str):
+    """Return (filing, xbrl) for the latest filing of form_type, or (None, None).
+
+    Callers need the filing object for its accession/form and the xbrl for
+    facts + entity_info (fiscal period, report date).
+    """
     import edgar
     edgar.set_identity(get_config().edgar_identity)
     company = edgar.Company(ticker)
-    filings = company.get_filings(form=form_type).latest(1)
-    if filings is None:
-        return None
-    return filings.xbrl()
+    filing = company.get_filings(form=form_type).latest(1)
+    if filing is None:
+        return None, None
+    return filing, filing.xbrl()
 
 
-def _axis_breakdown(facts, axes: tuple[str, ...]) -> list[dict]:
-    """Latest-period revenue breakdown along the first axis that has data."""
+def _axis_breakdown(facts, axes: tuple[str, ...]) -> tuple[list[dict], str | None]:
+    """Latest-period revenue breakdown along the first axis that has data.
+
+    Returns (rows, currency) where currency is the ISO code from the facts'
+    unit_ref (e.g. "USD", "EUR" for FPIs) or None if undetectable.
+    """
     for axis in axes:
         for concept in _REVENUE_CONCEPTS:
             try:
@@ -81,6 +90,13 @@ def _axis_breakdown(facts, axes: tuple[str, ...]) -> list[dict]:
             if df is None or df.empty or "period_end" not in df.columns:
                 continue
             latest = df[df["period_end"] == df["period_end"].max()]
+            # Currency rides on the fact's unit_ref ("usd"/"eur"/…); take the
+            # first non-null and normalize to an upper-case ISO code
+            currency = None
+            if "unit_ref" in latest.columns:
+                units = latest["unit_ref"].dropna()
+                if not units.empty:
+                    currency = str(units.iloc[0]).upper()
             rows = []
             for _, r in latest.iterrows():
                 label = str(r.get("label") or "").strip()
@@ -102,8 +118,8 @@ def _axis_breakdown(facts, axes: tuple[str, ...]) -> list[dict]:
                 total = sum(r["value"] for r in rows)
                 for r in rows:
                     r["pct"] = round(100 * r["value"] / total, 1)
-                return rows
-    return []
+                return rows, currency
+    return [], None
 
 
 def _drop_subtotals(rows: list[dict]) -> list[dict]:
@@ -139,19 +155,35 @@ def _drop_subtotals(rows: list[dict]) -> list[dict]:
 
 
 def get_dimensional_segments(ticker: str, form_type: str = "10-K") -> dict | None:
-    """{'segments': [...], 'geographic_segments': [...]} from the latest
-    filing's dimensional XBRL, or None when unavailable."""
+    """{'segments': [...], 'geographic_segments': [...], 'source_meta': {...}}
+    from the latest filing's dimensional XBRL, or None when unavailable.
+
+    `form_type` defaults to "10-K" (the annual path is unchanged). Pass "10-Q"
+    for the latest quarterly breakdown. Foreign private issuers are handled via
+    get_form_alternatives (10-K→20-F, 10-Q→6-K), so an FPI request resolves to
+    the right filing and `source_meta.formType` reports what was actually used.
+
+    `source_meta` describes the SOURCE filing the segments came from:
+    {formType, fiscalPeriod, fiscalYear, reportDate, accession, currency}.
+    """
+    from sec_mcp.sec_client import get_form_alternatives
+
     key = (ticker.upper(), form_type)
     with _lock:
         if key in _cache:
             return _cache[key]
     result: dict | None = None
     try:
-        x = _xbrl_for(ticker.upper(), form_type)
+        # Try the requested form first, then its FPI equivalent (20-F/6-K).
+        filing = x = None
+        for ft in get_form_alternatives(form_type):
+            filing, x = _xbrl_for(ticker.upper(), ft)
+            if x is not None:
+                break
         if x is not None:
-            biz = _axis_breakdown(x.facts, _BUSINESS_AXES)
-            prod = _axis_breakdown(x.facts, _PRODUCT_AXES)
-            geo = _axis_breakdown(x.facts, _GEO_AXES)
+            biz, ccy_biz = _axis_breakdown(x.facts, _BUSINESS_AXES)
+            prod, ccy_prod = _axis_breakdown(x.facts, _PRODUCT_AXES)
+            geo, ccy_geo = _axis_breakdown(x.facts, _GEO_AXES)
 
             # Some filers' reportable segments ARE regions (Apple). When the
             # business axis looks geographic, the product axis is the real
@@ -165,8 +197,25 @@ def get_dimensional_segments(ticker: str, form_type: str = "10-K") -> dict | Non
                 segs = biz or prod
 
             if segs or geo:
-                result = {"segments": segs, "geographic_segments": geo,
-                          "source": "sec_xbrl_dimensions"}
+                # Build provenance from the filing actually used. entity_info
+                # carries fiscal period/year; the filing object the accession.
+                ei = getattr(x, "entity_info", None) or {}
+                result = {
+                    "segments": segs,
+                    "geographic_segments": geo,
+                    "source": "sec_xbrl_dimensions",
+                    "source_meta": {
+                        "formType": getattr(x, "document_type", None)
+                                    or getattr(filing, "form", None),
+                        "fiscalPeriod": ei.get("fiscal_period"),
+                        "fiscalYear": ei.get("fiscal_year"),
+                        "reportDate": str(getattr(x, "period_of_report", "")
+                                          or getattr(filing, "report_date", "")) or None,
+                        "accession": getattr(filing, "accession_no", None),
+                        # currency rides on the segment facts (USD/EUR/…)
+                        "currency": ccy_prod or ccy_geo or ccy_biz,
+                    },
+                }
     except Exception as exc:
         log.warning("dimensional segments failed for %s: %s", ticker, exc)
     with _lock:

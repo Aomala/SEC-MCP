@@ -130,6 +130,8 @@ app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 # charts consume these.
 from sec_mcp.api.routes import metrics as _metrics_routes  # noqa: E402
 app.include_router(_metrics_routes.router)
+# v2 overview — one-call payload for the explorer's animated dashboard
+app.include_router(_metrics_routes.router_v2)
 
 
 @app.get("/explorer")
@@ -1283,21 +1285,29 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
     """
     tk = ticker.upper()
 
-    # Check Supabase cache
+    # Check Supabase cache. Treat pre-meta blobs (cached before filing-type
+    # metadata existed) as a miss so they self-heal on the next fetch.
     from sec_mcp import supabase_cache
     cached = supabase_cache.get_cached(tk, "geo_segments", period)
-    if cached:
+    if cached and cached.get("meta"):
         return cached
+
+    # Map the requested period to the source filing form (annual → 10-K/20-F,
+    # quarter → 10-Q/6-K). The XBRL helper handles the FPI fallback.
+    seg_form = "10-Q" if period in ("quarter", "quarterly") else "10-K"
+    fb_meta = {"formType": seg_form, "fiscalPeriod": None, "fiscalYear": None,
+               "reportDate": None, "accession": None, "currency": None}
 
     # 1. PRIMARY: dimensional XBRL from the filing itself (companyfacts
     # strips dimensions, so this is the only authoritative segment source)
     try:
         from sec_mcp.graph.segments import get_dimensional_segments
-        dims = get_dimensional_segments(tk)
+        dims = get_dimensional_segments(tk, form_type=seg_form)
         if dims and len(dims.get("geographic_segments") or []) >= 2:
             result = {"ticker": tk,
                       "geographic_segments": dims["geographic_segments"],
-                      "source": "sec_xbrl_dimensions"}
+                      "source": "sec_xbrl_dimensions",
+                      "meta": dims.get("source_meta")}
             supabase_cache.set_cached(tk, "geo_segments", result, period)
             return result
     except Exception as exc:
@@ -1310,7 +1320,9 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
         if data:
             geo = (data.get("segments") or {}).get("geographic_segments", [])
             if len(geo) >= 2:
-                result = {"ticker": tk, "geographic_segments": geo, "source": "sec_xbrl"}
+                fb_meta["currency"] = data.get("reporting_currency")
+                result = {"ticker": tk, "geographic_segments": geo,
+                          "source": "sec_xbrl", "meta": fb_meta}
                 supabase_cache.set_cached(tk, "geo_segments", result, period)
                 return result
     except Exception as exc:
@@ -1320,7 +1332,7 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
     try:
         from sec_mcp.financials import _parse_geo_from_filing_text
 
-        filing_result = _handle_filing_text(tk, section="financial_statements", form_type="10-K")
+        filing_result = _handle_filing_text(tk, section="financial_statements", form_type=seg_form)
         text = filing_result.get("text", "")
         total_rev = None
         try:
@@ -1331,7 +1343,8 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
 
         geo = _parse_geo_from_filing_text(text, total_revenue=total_rev)
         if geo and len(geo) >= 2:
-            result = {"ticker": tk, "geographic_segments": geo, "source": "sec_filing_text"}
+            result = {"ticker": tk, "geographic_segments": geo,
+                      "source": "sec_filing_text", "meta": fb_meta}
             supabase_cache.set_cached(tk, "geo_segments", result, period)
             return result
     except Exception as e:
@@ -1353,13 +1366,14 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
                     "geographic_segments": geo_formatted,
                     "history": fmp_data,
                     "source": "fmp_fallback",
+                    "meta": fb_meta,
                 }
                 supabase_cache.set_cached(tk, "geo_segments", result, period)
                 return result
     except Exception as exc:
         log.debug("FMP geo fallback failed for %s: %s", tk, exc)
 
-    return {"ticker": tk, "geographic_segments": [], "source": "none"}
+    return {"ticker": tk, "geographic_segments": [], "source": "none", "meta": fb_meta}
 
 
 @app.get("/api/segments/{ticker}")
@@ -1367,11 +1381,16 @@ async def get_segments(ticker: str, period: str = "annual"):
     """Revenue segments — SEC XBRL first (truth), filing text second, FMP fallback."""
     tk = ticker.upper()
 
-    # Check Supabase cache
+    # Check Supabase cache. Treat pre-meta blobs (cached before filing-type
+    # metadata existed) as a miss so they self-heal on the next fetch.
     from sec_mcp import supabase_cache
     cached = supabase_cache.get_cached(tk, "product_segments", period)
-    if cached:
+    if cached and cached.get("meta"):
         return cached
+
+    # Map the requested period to the source filing form (annual → 10-K/20-F,
+    # quarter → 10-Q/6-K). The XBRL helper handles the FPI fallback.
+    seg_form = "10-Q" if period in ("quarter", "quarterly") else "10-K"
 
     # 1. PRIMARY: dimensional XBRL from the filing itself (companyfacts
     # strips dimensions — this is the only authoritative segment source;
@@ -1379,14 +1398,21 @@ async def get_segments(ticker: str, period: str = "annual"):
     # "segments" for filers like MSFT)
     try:
         from sec_mcp.graph.segments import get_dimensional_segments
-        dims = get_dimensional_segments(tk)
+        dims = get_dimensional_segments(tk, form_type=seg_form)
         if dims and len(dims.get("segments") or []) >= 2:
+            # segments already carry per-segment pct; meta says which filing
             result = {"ticker": tk, "segments": dims["segments"],
-                      "source": "sec_xbrl_dimensions"}
+                      "source": "sec_xbrl_dimensions",
+                      "meta": dims.get("source_meta")}
             supabase_cache.set_cached(tk, "product_segments", result, period)
             return result
     except Exception as exc:
         log.warning("dimensional segment extraction failed for %s: %s", tk, exc)
+
+    # Best-effort meta for the fallback paths — at minimum the form we targeted
+    # so the response shape is consistent with the primary path.
+    fb_meta = {"formType": seg_form, "fiscalPeriod": None, "fiscalYear": None,
+               "reportDate": None, "accession": None, "currency": None}
 
     # 1b. companyfacts-derived segment concepts
     try:
@@ -1394,7 +1420,9 @@ async def get_segments(ticker: str, period: str = "annual"):
         if data:
             segs = (data.get("segments") or {}).get("revenue_segments", [])
             if len(segs) >= 2:
-                result = {"ticker": tk, "segments": segs, "source": "sec_xbrl"}
+                fb_meta["currency"] = data.get("reporting_currency")
+                result = {"ticker": tk, "segments": segs, "source": "sec_xbrl",
+                          "meta": fb_meta}
                 supabase_cache.set_cached(tk, "product_segments", result, period)
                 return result
     except Exception as exc:
@@ -1412,11 +1440,12 @@ async def get_segments(ticker: str, period: str = "annual"):
             log.debug("Revenue fetch for segment scale failed for %s: %s", tk, exc)
 
         for section in ("mda", "financial_statements"):
-            filing_result = _handle_filing_text(tk, section=section, form_type="10-K")
+            filing_result = _handle_filing_text(tk, section=section, form_type=seg_form)
             text = filing_result.get("text", "")
             segs = _parse_segments_from_filing_text(text, total_revenue=total_rev)
             if len(segs) >= 2:
-                result = {"ticker": tk, "segments": segs, "source": "sec_filing_text"}
+                result = {"ticker": tk, "segments": segs,
+                          "source": "sec_filing_text", "meta": fb_meta}
                 supabase_cache.set_cached(tk, "product_segments", result, period)
                 return result
     except Exception as e:
@@ -1438,13 +1467,14 @@ async def get_segments(ticker: str, period: str = "annual"):
                     "segments": seg_formatted,
                     "history": fmp_data,
                     "source": "fmp_fallback",
+                    "meta": fb_meta,
                 }
                 supabase_cache.set_cached(tk, "product_segments", result, period)
                 return result
     except Exception as exc:
         log.debug("FMP segment fallback failed for %s: %s", tk, exc)
 
-    return {"ticker": tk, "segments": [], "source": "none"}
+    return {"ticker": tk, "segments": [], "source": "none", "meta": fb_meta}
 
 
 @app.get("/api/financials-history/{ticker}")

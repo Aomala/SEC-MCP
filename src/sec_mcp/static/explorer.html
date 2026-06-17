@@ -7,37 +7,96 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <style>
   :root {
-    --bg: #0b0d10; --panel: #12151a; --line: #1f242c;
-    --text: #e8eaed; --dim: #8a919c; --accent: #4f82f3;
+    --bg: #0b0d10; --panel: #12151a; --panel2: #161a20; --line: #1f242c;
+    --text: #f2f4f7; --dim: #9aa3af; --accent: #4f82f3;
     --green: #34c08b; --red: #e5634c; --gold: #d9a441;
   }
   * { box-sizing: border-box; margin: 0; }
   body { background: var(--bg); color: var(--text);
-         font: 14px/1.5 -apple-system, "Inter", "Segoe UI", sans-serif; }
-  header { display: flex; align-items: center; gap: 12px; padding: 14px 22px;
-           border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 15px; font-weight: 600; letter-spacing: .4px; margin-right: 8px; }
-  header span.sub { color: var(--dim); font-size: 12px; }
+         font: 15px/1.6 -apple-system, "Inter", "Segoe UI", sans-serif;
+         -webkit-font-smoothing: antialiased; }
+
+  /* ── header: sticky, roomy ─────────────────────────────────────────── */
+  header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center;
+           gap: 14px; padding: 16px 28px; background: rgba(11,13,16,.85);
+           backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 16px; font-weight: 650; letter-spacing: .2px; }
+  header .sub { color: var(--dim); font-size: 12.5px; margin-right: auto; }
   input, select, button {
     background: var(--panel); color: var(--text); border: 1px solid var(--line);
-    border-radius: 8px; padding: 7px 12px; font-size: 13px; outline: none;
+    border-radius: 9px; padding: 9px 13px; font-size: 13px; outline: none;
   }
-  input { width: 110px; text-transform: uppercase; }
-  button { cursor: pointer; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 18px 22px; }
-  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-          padding: 14px 16px; min-height: 320px; }
-  .card.wide { grid-column: 1 / -1; }
-  .card h2 { font-size: 12px; font-weight: 600; color: var(--dim);
-             text-transform: uppercase; letter-spacing: .8px; margin-bottom: 8px; }
-  .chart { width: 100%; height: 290px; }
-  .chart.tall { height: 420px; }
-  #status { color: var(--dim); font-size: 12px; margin-left: auto; }
-  .flag { color: var(--gold); }
-  .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
-  .tabs button { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
-  .tabs button.active { border-color: var(--accent); color: var(--accent); }
+  input { width: 92px; text-transform: uppercase; font-weight: 600; letter-spacing: .5px; }
+  input:focus, select:focus { border-color: var(--accent); }
+  button { cursor: pointer; transition: background .15s, border-color .15s; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.primary:hover { background: #5d8df5; }
+  #status { color: var(--dim); font-size: 12px; }
+
+  /* ── single-column readable flow ───────────────────────────────────── */
+  main { max-width: 980px; margin: 0 auto; padding: 26px 28px 64px;
+         display: flex; flex-direction: column; gap: 26px; }
+  .section-title { font-size: 13px; font-weight: 650; color: var(--dim);
+                   text-transform: uppercase; letter-spacing: 1px;
+                   margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line);
+          border-radius: 16px; padding: 22px 24px; }
+  .chart { width: 100%; height: 320px; }
+
+  /* ── KPI tiles: count-up, generous ─────────────────────────────────── */
+  #kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .kpi { background: var(--panel); border: 1px solid var(--line);
+         border-radius: 16px; padding: 18px 20px; }
+  .kpi .k-label { font-size: 11px; font-weight: 600; color: var(--dim);
+                  text-transform: uppercase; letter-spacing: .7px;
+                  display: flex; align-items: center; gap: 7px; }
+  .kpi .k-value { font-size: 30px; font-weight: 680; letter-spacing: -.8px;
+                  margin-top: 8px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .kpi .k-sub { font-size: 12.5px; color: var(--dim); margin-top: 5px;
+                font-variant-numeric: tabular-nums; }
+  .k-sub .up { color: var(--green); } .k-sub .down { color: var(--red); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+         background: var(--dim); }
+  .dot.live { background: var(--green); box-shadow: 0 0 0 3px rgba(52,192,139,.18); }
+
+  /* ── provenance + form-type badge ──────────────────────────────────── */
+  #prov { display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
+          font-size: 12.5px; color: var(--dim); }
+  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
+          background: var(--panel); white-space: nowrap; }
+  .pill.ok { color: var(--green); border-color: rgba(52,192,139,.35); }
+  .pill.warn { color: var(--gold); border-color: rgba(217,164,65,.35); }
+  /* the form-type badge — the proof the view is dynamic by filing */
+  .form-badge { font-weight: 700; letter-spacing: .4px; border-radius: 8px;
+                padding: 4px 11px; font-size: 12.5px; border: 1px solid transparent; }
+  .form-badge.annual { color: #9cc0ff; background: rgba(79,130,243,.13); border-color: rgba(79,130,243,.4); }
+  .form-badge.quarter { color: #74d6ac; background: rgba(52,192,139,.12); border-color: rgba(52,192,139,.4); }
+  .form-badge.event  { color: #e8c478; background: rgba(217,164,65,.12); border-color: rgba(217,164,65,.4); }
+
+  /* ── two-pane (chart + ranked list) for geo & segments ─────────────── */
+  .split { display: grid; grid-template-columns: 1.45fr 1fr; gap: 20px; align-items: stretch; }
+  .pane-chart { height: 340px; }
+  .ranked { display: flex; flex-direction: column; gap: 11px; justify-content: center;
+            max-height: 340px; overflow-y: auto; }
+  .rrow { opacity: 0; transform: translateY(6px);
+          transition: opacity .4s ease, transform .4s ease; }
+  .rrow.in { opacity: 1; transform: none; }
+  .rrow .r-head { display: flex; justify-content: space-between; align-items: baseline;
+                  font-size: 13px; margin-bottom: 5px; }
+  .rrow .r-name { color: var(--text); font-weight: 500; }
+  .rrow .r-val { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 12px; }
+  .rrow .r-bar { height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .rrow .r-fill { height: 100%; width: 0; border-radius: 4px;
+                  transition: width .8s cubic-bezier(.16,1,.3,1); }
+  .empty { color: var(--dim); font-size: 13px; padding: 28px 4px; text-align: center; }
+
+  @media (max-width: 820px) {
+    #kpis { grid-template-columns: repeat(2, 1fr); }
+    .split { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rrow, .rrow .r-fill { transition: none; }
+  }
 </style>
 </head>
 <body>
@@ -52,27 +111,54 @@
   <button class="primary" onclick="loadAll()">Load</button>
   <span id="status"></span>
 </header>
+
 <main>
-  <div class="card"><h2>Revenue &amp; Net Income</h2><div id="c-rev" class="chart"></div></div>
-  <div class="card"><h2>Cash Flow (OCF / FCF / Capex)</h2><div id="c-cash" class="chart"></div></div>
-  <div class="card"><h2>Margins</h2><div id="c-margin" class="chart"></div></div>
-  <div class="card"><h2>Income Waterfall (latest period)</h2><div id="c-water" class="chart"></div></div>
-  <div class="card wide">
-    <h2>Calculation Tree — how this filing computes its statements</h2>
-    <div class="tabs" id="tree-tabs">
-      <button data-s="income" class="active">Income</button>
-      <button data-s="balance">Balance</button>
-      <button data-s="cashflow">Cash Flow</button>
-    </div>
-    <div id="c-tree" class="chart tall"></div>
-  </div>
+  <!-- KPI strip -->
+  <section id="kpis">
+    <div class="kpi"><div class="k-label"><span class="dot" id="dot-price"></span>
+      <span id="lbl-price">Price</span></div>
+      <div class="k-value" id="kpi-price">—</div><div class="k-sub" id="sub-price"></div></div>
+    <div class="kpi"><div class="k-label">Revenue <span id="lbl-rev-period"></span></div>
+      <div class="k-value" id="kpi-rev">—</div><div class="k-sub" id="sub-rev"></div></div>
+    <div class="kpi"><div class="k-label">Net margin</div>
+      <div class="k-value" id="kpi-margin">—</div><div class="k-sub" id="sub-margin"></div></div>
+    <div class="kpi"><div class="k-label">Free cash flow</div>
+      <div class="k-value" id="kpi-fcf">—</div><div class="k-sub" id="sub-fcf"></div></div>
+  </section>
+
+  <!-- provenance: source + form-type badge + cross-check -->
+  <section id="prov"></section>
+
+  <!-- Revenue & margins (the headline trend) -->
+  <section>
+    <div class="section-title">Revenue &amp; Margins</div>
+    <div class="card"><div id="c-trend" class="chart"></div></div>
+  </section>
+
+  <!-- Geographic revenue (the hero) -->
+  <section>
+    <div class="section-title" id="t-geo">Geographic Revenue</div>
+    <div class="card"><div class="split">
+      <div id="c-geo" class="pane-chart"></div>
+      <div id="geo-list" class="ranked"></div>
+    </div></div>
+  </section>
+
+  <!-- Revenue by segment -->
+  <section>
+    <div class="section-title" id="t-seg">Revenue by Segment</div>
+    <div class="card"><div class="split">
+      <div id="c-seg" class="pane-chart"></div>
+      <div id="seg-list" class="ranked"></div>
+    </div></div>
+  </section>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
 const charts = {};
-const state = { concepts: null, stmt: "income" };
-const PALETTE = ["#4f82f3", "#34c08b", "#e5634c", "#d9a441", "#9b7ef0"];
+const PALETTE = ["#4f82f3", "#34c08b", "#e5634c", "#d9a441", "#9b7ef0", "#5fb7d4", "#c47fb8"];
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function chart(id) {
   if (!charts[id]) charts[id] = echarts.init($(id), null, { renderer: "canvas" });
@@ -81,18 +167,26 @@ function chart(id) {
 const fmtB = v => v == null ? "—" :
   Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(1) + "B" :
   Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + "M" : (+v).toLocaleString();
+// fundamentals print in the FILING currency — FPIs report EUR/TWD/etc.
+const CCY = { USD: "$", EUR: "€", GBP: "£", JPY: "¥", CNY: "CN¥", TWD: "NT$", KRW: "₩" };
+let ccy = "$";
+const fmtCcy = v => v == null ? "—" : ccy + fmtB(v);
 
+const ANIM = REDUCED ? { animation: false } : {
+  animationDuration: 900, animationEasing: "quarticOut",
+  animationDelay: i => i * 45,
+};
 const BASE = {
-  backgroundColor: "transparent",
-  grid: { left: 56, right: 16, top: 28, bottom: 28 },
-  textStyle: { color: "#8a919c", fontSize: 11 },
-  tooltip: { trigger: "axis", backgroundColor: "#12151a", borderColor: "#1f242c",
-             textStyle: { color: "#e8eaed", fontSize: 12 },
-             valueFormatter: fmtB },
-  xAxis: { type: "category", axisLine: { lineStyle: { color: "#1f242c" } } },
-  yAxis: { type: "value", splitLine: { lineStyle: { color: "#1f242c" } },
+  backgroundColor: "transparent", ...ANIM,
+  grid: { left: 58, right: 54, top: 36, bottom: 30 },
+  textStyle: { color: "#9aa3af", fontSize: 11 },
+  tooltip: { trigger: "axis", backgroundColor: "#161a20", borderColor: "#2a313b",
+             textStyle: { color: "#f2f4f7", fontSize: 12 }, valueFormatter: fmtB },
+  xAxis: { type: "category", axisLine: { lineStyle: { color: "#1f242c" } },
+           axisTick: { show: false } },
+  yAxis: { type: "value", splitLine: { lineStyle: { color: "#171b21" } },
            axisLabel: { formatter: fmtB } },
-  legend: { top: 0, textStyle: { color: "#8a919c", fontSize: 11 } },
+  legend: { top: 0, right: 0, textStyle: { color: "#9aa3af", fontSize: 11.5 }, icon: "roundRect" },
 };
 
 async function getJSON(url) {
@@ -101,139 +195,294 @@ async function getJSON(url) {
   return r.json();
 }
 
+// ── count-up: rAF tween, expo-out, format mid-flight ─────────────────────
+function countUp(el, target, fmt, ms = 800) {
+  if (target == null) { el.textContent = "—"; return; }
+  if (REDUCED) { el.textContent = fmt(target); return; }
+  const t0 = performance.now();
+  (function tick(now) {
+    const p = Math.min((now - t0) / ms, 1);
+    el.textContent = fmt(target * (1 - Math.pow(2, -10 * p)));
+    if (p < 1) requestAnimationFrame(tick); else el.textContent = fmt(target);
+  })(t0);
+}
+
 function qualityMark(series) {
-  // synthesized / YTD-fallback points get a hollow style so estimates are
-  // visually honest
+  // synthesized / YTD-fallback points get a hollow style — honest estimates
   return (series.data || []).map((v, i) => {
     const q = (series.quality || [])[i];
-    if (q === "q4_synthesized" || q === "ytd_fallback") {
-      return { value: v, itemStyle: { opacity: 0.55, borderType: "dashed" } };
-    }
-    return v;
+    return (q === "q4_synthesized" || q === "ytd_fallback")
+      ? { value: v, itemStyle: { opacity: 0.5, borderType: "dashed" } } : v;
   });
 }
 
+// ── form-type badge: dynamic-by-filing proof ─────────────────────────────
+function formBadge(formType) {
+  if (!formType) return "";
+  const f = formType.toUpperCase();
+  const cls = (f.startsWith("10-K") || f.startsWith("20-F")) ? "annual"
+            : (f.startsWith("10-Q")) ? "quarter"
+            : (f.startsWith("8-K") || f.startsWith("6-K")) ? "event"
+            : f === "TTM" ? "quarter" : "annual";
+  return `<span class="form-badge ${cls}">${f}</span>`;
+}
+
+// ── KPI strip + provenance ───────────────────────────────────────────────
+const SESSION_LABEL = { regular: "Live", pre: "Pre-market", after: "After hours", closed: "At close" };
+function renderKpis(ov) {
+  ccy = CCY[(ov.latest || {}).currency] || ((ov.latest || {}).currency || "$");
+  const q = ov.quote || {};
+  const m = (ov.latest || {}).metrics || {};
+  const series = ov.chartSeries || {};
+  $("lbl-price").textContent = "Price · " + (SESSION_LABEL[q.session] || "—");
+  $("dot-price").className = "dot" + (q.session === "regular" ? " live" : "");
+  if (q.price != null) {
+    countUp($("kpi-price"), q.price, v => "$" + v.toFixed(2));
+    const up = (q.changePct ?? 0) >= 0;
+    $("sub-price").innerHTML = q.changePct == null ? "" :
+      `<span class="${up ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(q.changePct).toFixed(2)}%</span>` +
+      (q.ageSeconds > 120 ? ` · ${Math.round(q.ageSeconds / 60)}m old` : "");
+  } else { $("kpi-price").textContent = "—"; $("sub-price").textContent = q.error || ""; }
+
+  const yoy = arr => arr && arr.length >= 2 && arr.at(-2) != null && arr.at(-1) != null
+    ? (arr.at(-1) - arr.at(-2)) / Math.abs(arr.at(-2)) * 100 : null;
+  const delta = (el, pct, suffix) => {
+    if (pct == null) { el.textContent = ""; return; }
+    const up = pct >= 0;
+    el.innerHTML = `<span class="${up ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}%</span> ${suffix}`;
+  };
+  $("lbl-rev-period").textContent = "· " + (ov.latest.fiscalPeriod || "") + " " + (ov.latest.fiscalYear || "");
+  countUp($("kpi-rev"), m.revenue, fmtCcy);
+  delta($("sub-rev"), yoy(series.revenue), "YoY");
+  countUp($("kpi-margin"), (m.netMargin ?? 0) * 100, v => v.toFixed(1) + "%");
+  $("sub-margin").textContent = m.netIncome != null ? fmtCcy(m.netIncome) + " net income" : "";
+  countUp($("kpi-fcf"), m.freeCashFlow, fmtCcy);
+  delta($("sub-fcf"), yoy(series.freeCashFlow), "YoY");
+
+  // provenance: source · FORM BADGE · period · cross-check · accession
+  const cc = ov.crossCheck || {};
+  const ccPill = cc.status === "ok"
+    ? '<span class="pill ok">cross-checked ✓ polygon</span>'
+    : cc.status === "mismatch"
+      ? '<span class="pill warn">cross-check mismatch — citing SEC</span>'
+      : '<span class="pill">cross-check unavailable</span>';
+  $("prov").innerHTML =
+    formBadge(ov.latest.formType) +
+    `<span class="pill">${(ov.meta || {}).source || "sec"}</span>` + ccPill +
+    `<span class="pill">as of ${ov.latest.endDate || "—"}</span>` +
+    (ov.latest.accession ? `<span class="pill">filing ${ov.latest.accession}</span>` : "");
+}
+
+// ── ranked list (shared by geo + segments): staggered rows, sweeping fills ─
+function renderRanked(elId, items, colorAt) {
+  const list = $(elId);
+  list.innerHTML = "";
+  if (!items || !items.length) return false;
+  const maxPct = Math.max(...items.map(s => s.pct || 0)) || 1;
+  items.forEach((s, i) => {
+    const row = document.createElement("div");
+    row.className = "rrow";
+    row.innerHTML =
+      `<div class="r-head"><span class="r-name">${s.name}</span>` +
+      `<span class="r-val">${fmtCcy(s.value)} · ${s.pct == null ? "—" : s.pct + "%"}</span></div>` +
+      `<div class="r-bar"><div class="r-fill" style="background:${colorAt(i)}"></div></div>`;
+    list.appendChild(row);
+    const reveal = () => { row.classList.add("in");
+      row.querySelector(".r-fill").style.width = ((s.pct || 0) / maxPct * 100) + "%"; };
+    REDUCED ? reveal() : setTimeout(reveal, 130 * i + 80);
+  });
+  return true;
+}
+
+// ── geographic revenue: choropleth + ranked list ─────────────────────────
+const REGION_COUNTRIES = {
+  "u.s.": ["United States"], "us": ["United States"], "usa": ["United States"],
+  "united states": ["United States"], "domestic": ["United States"],
+  "americas": ["United States", "Canada", "Mexico", "Brazil", "Argentina",
+               "Chile", "Colombia", "Peru", "Venezuela", "Ecuador"],
+  "north america": ["United States", "Canada", "Mexico"],
+  "china": ["China"], "mainland china": ["China"], "greater china": ["China", "Taiwan"],
+  "japan": ["Japan"], "germany": ["Germany"], "france": ["France"],
+  "united kingdom": ["United Kingdom"], "uk": ["United Kingdom"],
+  "netherlands": ["Netherlands"], "canada": ["Canada"], "india": ["India"],
+  "taiwan": ["Taiwan"], "korea": ["Korea"], "south korea": ["Korea"],
+  "europe": ["United Kingdom", "Germany", "France", "Italy", "Spain", "Netherlands",
+             "Switzerland", "Sweden", "Norway", "Denmark", "Finland", "Ireland",
+             "Belgium", "Austria", "Poland", "Portugal", "Greece", "Czech Rep."],
+  "emea": ["United Kingdom", "Germany", "France", "Italy", "Spain", "Netherlands",
+           "Switzerland", "Sweden", "Norway", "Denmark", "Finland", "Ireland",
+           "Belgium", "Austria", "Poland", "Portugal", "Greece", "Turkey",
+           "Saudi Arabia", "United Arab Emirates", "Israel", "Egypt",
+           "South Africa", "Nigeria"],
+  "asia pacific": ["India", "Korea", "Australia", "Indonesia", "Thailand", "Vietnam",
+                   "Philippines", "Malaysia", "Singapore", "New Zealand", "Taiwan"],
+  "rest of asia pacific": ["India", "Korea", "Australia", "Indonesia", "Thailand",
+                           "Vietnam", "Philippines", "Malaysia", "Singapore",
+                           "New Zealand", "Taiwan"],
+  "apac": ["India", "Korea", "Australia", "Indonesia", "Thailand", "Vietnam",
+           "Philippines", "Malaysia", "Singapore", "New Zealand", "Taiwan", "China", "Japan"],
+};
+const OTHER_RX = /other countries|rest of (the )?world|all other|international|non-?u\.?s|foreign|worldwide/i;
+
+let worldReady = null;
+function loadWorld() {
+  if (!worldReady) worldReady = fetch(
+    "https://cdn.jsdelivr.net/npm/echarts@4.9.0/map/json/world.json")
+    .then(r => r.json())
+    .then(gj => { echarts.registerMap("world", gj);
+                  return new Set(gj.features.map(f => f.properties.name)); })
+    .catch(() => null);
+  return worldReady;
+}
+
+async function renderGeo(geo) {
+  const has = renderRanked("geo-list", geo, () => "var(--accent)");
+  if (!has) {
+    $("geo-list").innerHTML = '<div class="empty">No geographic breakdown disclosed in this filing.</div>';
+    chart("c-geo").clear();
+    return;
+  }
+  const maxPct = Math.max(...geo.map(s => s.pct || 0)) || 1;
+  const names = await loadWorld();
+  if (!names) { chart("c-geo").clear(); return; }
+  const claimed = new Set(); const data = []; const regionOf = {}; const unmapped = [];
+  const byLower = {}; names.forEach(n => byLower[n.toLowerCase()] = n);
+  geo.forEach(s => {
+    const label = (s.name || "").trim().toLowerCase();
+    const countries = REGION_COUNTRIES[label] || (byLower[label] ? [byLower[label]] : null);
+    if (!countries) { unmapped.push(s); return; }
+    countries.filter(c => names.has(c)).forEach(c => {
+      if (claimed.has(c)) return;
+      claimed.add(c); regionOf[c] = s; data.push({ name: c, value: s.pct || 0 });
+    });
+  });
+  if (unmapped.length === 1 && OTHER_RX.test(unmapped[0].name || "other")) {
+    const s = unmapped[0];
+    names.forEach(c => { if (!claimed.has(c)) { regionOf[c] = s; data.push({ name: c, value: s.pct || 0 }); } });
+  }
+  chart("c-geo").setOption({
+    backgroundColor: "transparent", ...ANIM,
+    tooltip: { backgroundColor: "#161a20", borderColor: "#2a313b",
+               textStyle: { color: "#f2f4f7", fontSize: 12 },
+               formatter: p => { const s = regionOf[p.name];
+                 return s ? `${s.name}<br>${fmtCcy(s.value)} · ${s.pct}%` : p.name; } },
+    visualMap: { show: false, min: 0, max: maxPct,
+                 inRange: { color: ["rgba(79,130,243,.16)", "rgba(79,130,243,.95)"] } },
+    series: [{ type: "map", map: "world", roam: false, left: 0, right: 0, top: 6, bottom: 0,
+               itemStyle: { areaColor: "#171b21", borderColor: "#242a33", borderWidth: .5 },
+               emphasis: { label: { show: false }, itemStyle: { areaColor: "#d9a441" } },
+               select: { disabled: true }, data }],
+  }, true);
+}
+
+// ── revenue by segment: donut + ranked list ──────────────────────────────
+function renderSegments(productRaw) {
+  // Overview percentages are share of TOTAL revenue. When the disclosed
+  // segments don't cover all of it (e.g. ASML tags systems but not services),
+  // close the ring with an honest "Other / unallocated" remainder slice.
+  let product = productRaw;
+  if (productRaw && productRaw.length) {
+    const sumPct = productRaw.reduce((a, s) => a + (s.pct || 0), 0);
+    const first = productRaw.find(s => s.pct);
+    const total = first ? first.value / first.pct * 100 : null;   // back out total revenue
+    if (total && sumPct < 98.5) {
+      const remPct = +(100 - sumPct).toFixed(1);
+      product = [...productRaw,
+                 { name: "Other / unallocated", value: total * remPct / 100, pct: remPct }];
+    }
+  }
+  const otherIdx = product ? product.findIndex(s => s.name === "Other / unallocated") : -1;
+  const colorAt = i => i === otherIdx ? "#3a414c" : PALETTE[i % PALETTE.length];
+  const has = renderRanked("seg-list", product, colorAt);
+  if (!has) {
+    $("t-seg").textContent = "Revenue by Segment — not disclosed";
+    $("seg-list").innerHTML = '<div class="empty">No product/segment breakdown disclosed in this filing.</div>';
+    chart("c-seg").clear();
+    return;
+  }
+  $("t-seg").textContent = "Revenue by Segment";
+  chart("c-seg").setOption({
+    backgroundColor: "transparent",
+    ...(REDUCED ? { animation: false } : { animationDuration: 650, animationEasing: "cubicOut" }),
+    tooltip: { trigger: "item", backgroundColor: "#161a20", borderColor: "#2a313b",
+               textStyle: { color: "#f2f4f7", fontSize: 12 },
+               formatter: p => `${p.name}<br>${fmtCcy(p.value)} · ${p.data.pct ?? "—"}%` },
+    series: [{ type: "pie", radius: ["56%", "82%"], center: ["50%", "50%"],
+               startAngle: 90, padAngle: 1.4,
+               itemStyle: { borderRadius: 5, borderColor: "#12151a", borderWidth: 2 },
+               label: { show: false }, emphasis: { scale: true, scaleSize: 5 },
+               data: product.map((s, i) => ({ name: s.name, value: s.value, pct: s.pct,
+                 itemStyle: { color: colorAt(i) } })) }],
+  }, true);
+}
+
+let loadSeq = 0;                                        // latest-request-wins guard
 async function loadAll() {
   const t = $("ticker").value.trim().toUpperCase();
-  const p = $("period").value;
+  const p = $("period").value;                          // "annual" | "quarter"
+  const apiPeriod = p === "quarter" ? "quarterly" : "annual";  // overview vocab
   if (!t) return;
+  const seq = ++loadSeq;                                // this call's ticket
   $("status").textContent = "loading " + t + "…";
   try {
-    const cd = await getJSON(`/api/v1/chart-data/${t}?period=${p}&limit=12&metrics=` +
-      "revenue,net_income,gross_profit,operating_income,operating_cash_flow," +
-      "free_cash_flow,capital_expenditures");
+    // overview now honors period → KPIs, segments AND geo switch annual↔quarterly
+    const [ov, cd] = await Promise.all([
+      getJSON(`/api/v2/overview/${t}?period=${apiPeriod}`),
+      getJSON(`/api/v1/chart-data/${t}?period=${p}&limit=12&metrics=` +
+        "revenue,net_income,gross_profit,operating_income"),
+    ]);
+    if (seq !== loadSeq) return;                        // a newer load superseded us
+    renderKpis(ov);
+    renderGeo((ov.segments || {}).geographic);
+    renderSegments((ov.segments || {}).product);
+
     const S = {}; cd.series.forEach(s => S[s.name] = s);
     const labels = cd.labels;
-
-    chart("c-rev").setOption({ ...BASE,
-      xAxis: { ...BASE.xAxis, data: labels },
-      series: [
-        { name: "Revenue", type: "bar", data: qualityMark(S.revenue),
-          itemStyle: { color: PALETTE[0], borderRadius: [3, 3, 0, 0] } },
-        { name: "Net income", type: "line", data: qualityMark(S.net_income),
-          itemStyle: { color: PALETTE[1] }, lineStyle: { width: 2 }, smooth: true },
-      ]}, true);
-
-    chart("c-cash").setOption({ ...BASE,
-      xAxis: { ...BASE.xAxis, data: labels },
-      series: [
-        { name: "OCF", type: "bar", data: qualityMark(S.operating_cash_flow),
-          itemStyle: { color: PALETTE[0], borderRadius: [3, 3, 0, 0] } },
-        { name: "FCF", type: "bar", data: qualityMark(S.free_cash_flow),
-          itemStyle: { color: PALETTE[1], borderRadius: [3, 3, 0, 0] } },
-        { name: "Capex", type: "line", data: (S.capital_expenditures.data || []).map(v => v == null ? null : Math.abs(v)),
-          itemStyle: { color: PALETTE[2] }, lineStyle: { width: 2 } },
-      ]}, true);
-
     const margin = (num, den) => (num.data || []).map((v, i) =>
       v != null && den.data[i] ? +(100 * v / den.data[i]).toFixed(1) : null);
-    chart("c-margin").setOption({ ...BASE,
-      tooltip: { ...BASE.tooltip, valueFormatter: v => v == null ? "—" : v + "%" },
-      yAxis: { ...BASE.yAxis, axisLabel: { formatter: "{value}%" } },
-      xAxis: { ...BASE.xAxis, data: labels },
-      series: [
-        { name: "Gross", type: "line", data: margin(S.gross_profit, S.revenue), smooth: true },
-        { name: "Operating", type: "line", data: margin(S.operating_income, S.revenue), smooth: true },
-        { name: "Net", type: "line", data: margin(S.net_income, S.revenue), smooth: true },
-      ].map((s, i) => ({ ...s, itemStyle: { color: PALETTE[i] }, lineStyle: { width: 2 } }))}, true);
 
-    // Waterfall from the latest period: Revenue → Gross → Operating → Net
-    const last = labels.length - 1;
-    const rev = S.revenue.data[last], gp = S.gross_profit.data[last],
-          oi = S.operating_income.data[last], ni = S.net_income.data[last];
-    const steps = [
-      ["Revenue", rev, null],
-      ["COGS", gp != null && rev != null ? gp - rev : null, gp],
-      ["OpEx", oi != null && gp != null ? oi - gp : null, oi],
-      ["Other/Tax", ni != null && oi != null ? ni - oi : null, ni],
-      ["Net income", ni, null],
-    ];
-    let run = 0;
-    const base = [], vals = [], colors = [];
-    steps.forEach(([name, delta, after], i) => {
-      if (delta == null) { base.push(0); vals.push(0); colors.push(PALETTE[3]); return; }
-      if (i === 0 || i === steps.length - 1) { base.push(0); vals.push(delta); colors.push(PALETTE[0]); run = delta; }
-      else {
-        const next = after != null ? after : run + delta;
-        base.push(Math.min(run, next)); vals.push(Math.abs(run - next));
-        colors.push(next < run ? "#e5634c" : "#34c08b"); run = next;
-      }
-    });
-    chart("c-water").setOption({ ...BASE, legend: { show: false },
-      tooltip: { ...BASE.tooltip, trigger: "item",
-                 formatter: i => steps[i.dataIndex][0] + ": " + fmtB(vals[i.dataIndex] * (colors[i.dataIndex] === "#e5634c" ? -1 : 1)) },
-      xAxis: { ...BASE.xAxis, data: steps.map(s => s[0]) },
+    // Revenue & Margins — one dual-axis chart (revenue bars $ / margin lines %)
+    chart("c-trend").setOption({ ...BASE,
+      tooltip: { ...BASE.tooltip,
+        valueFormatter: undefined,
+        formatter: ps => {
+          const head = ps[0].axisValue;
+          const lines = ps.map(s => {
+            const isRev = s.seriesName === "Revenue";
+            const v = (s.value && s.value.value !== undefined) ? s.value.value : s.value;
+            return `${s.marker} ${s.seriesName}: ` + (isRev ? fmtCcy(v) : (v == null ? "—" : v + "%"));
+          });
+          return [head, ...lines].join("<br>");
+        } },
+      legend: { ...BASE.legend, data: ["Revenue", "Gross", "Operating", "Net"] },
+      xAxis: { ...BASE.xAxis, data: labels },
+      yAxis: [
+        { type: "value", splitLine: { lineStyle: { color: "#171b21" } },
+          axisLabel: { formatter: fmtB } },
+        { type: "value", position: "right", splitLine: { show: false },
+          axisLabel: { formatter: "{value}%" }, min: 0 },
+      ],
       series: [
-        { type: "bar", stack: "w", data: base, itemStyle: { color: "transparent" }, silent: true },
-        { type: "bar", stack: "w", data: vals.map((v, i) => ({ value: v, itemStyle: { color: colors[i], borderRadius: 3 } })) },
+        { name: "Revenue", type: "bar", yAxisIndex: 0, data: qualityMark(S.revenue),
+          itemStyle: { color: "rgba(79,130,243,.55)", borderRadius: [4, 4, 0, 0] },
+          barWidth: "52%" },
+        { name: "Gross", type: "line", yAxisIndex: 1, smooth: true, symbol: "none",
+          data: margin(S.gross_profit, S.revenue), lineStyle: { width: 2 }, itemStyle: { color: PALETTE[4] } },
+        { name: "Operating", type: "line", yAxisIndex: 1, smooth: true, symbol: "none",
+          data: margin(S.operating_income, S.revenue), lineStyle: { width: 2 }, itemStyle: { color: PALETTE[3] } },
+        { name: "Net", type: "line", yAxisIndex: 1, smooth: true, symbol: "circle", symbolSize: 5,
+          data: margin(S.net_income, S.revenue), lineStyle: { width: 2.5 }, itemStyle: { color: PALETTE[1] } },
       ]}, true);
 
-    // Calc tree for the newest filing in the series
-    const mr = await getJSON(`/api/v1/metrics/${t}/revenue?period=${p}&limit=2`);
-    const acc = (mr.points || []).map(pt => pt.accession).filter(Boolean).pop();
-    state.concepts = acc ? await getJSON(`/api/v1/concepts/${t}/${acc}`) : null;
-    renderTree();
-    $("status").textContent = t + " loaded" + (acc ? " · filing " + acc : "");
+    $("status").textContent = t + " · " + (ov.latest.formType || "") +
+      " " + (ov.latest.fiscalPeriod || "") + " " + (ov.latest.fiscalYear || "");
   } catch (e) {
     $("status").textContent = "error: " + e.message;
   }
 }
 
-function renderTree() {
-  const c = chart("c-tree");
-  const data = state.concepts && (state.concepts.calc[state.stmt] || state.concepts.pres[state.stmt]);
-  if (!data || !data.length) { c.clear(); return; }
-  const byName = {};
-  data.forEach(e => byName[e.child] = { name: e.child, children: [],
-    itemStyle: { color: e.weight < 0 ? "#e5634c" : "#34c08b" },
-    label: { color: "#e8eaed", fontSize: 11 } });
-  let roots = [];
-  data.forEach(e => {
-    if (e.parent && byName[e.parent]) byName[e.parent].children.push(byName[e.child]);
-    else roots.push(byName[e.child]);
-  });
-  c.setOption({
-    backgroundColor: "transparent",
-    tooltip: { backgroundColor: "#12151a", borderColor: "#1f242c",
-               textStyle: { color: "#e8eaed", fontSize: 12 } },
-    series: [{
-      type: "tree", data: roots.length === 1 ? roots : [{ name: state.stmt, children: roots }],
-      orient: "LR", left: 16, right: 220, top: 10, bottom: 10,
-      symbolSize: 8, initialTreeDepth: -1, roam: true,
-      lineStyle: { color: "#2a313b", width: 1 },
-      label: { position: "right", color: "#c8cdd4", fontSize: 11, distance: 6 },
-      leaves: { label: { position: "right" } },
-    }],
-  }, true);
-}
-
-$("tree-tabs").addEventListener("click", e => {
-  if (e.target.tagName !== "BUTTON") return;
-  document.querySelectorAll("#tree-tabs button").forEach(b => b.classList.remove("active"));
-  e.target.classList.add("active");
-  state.stmt = e.target.dataset.s;
-  renderTree();
-});
+$("ticker").addEventListener("keydown", e => { if (e.key === "Enter") loadAll(); });
+$("period").addEventListener("change", loadAll);       // toggle re-pulls the filing
 window.addEventListener("resize", () => Object.values(charts).forEach(c => c.resize()));
 loadAll();
 </script>

@@ -154,3 +154,66 @@ def get_filing_concepts(ticker: str, accession: str):
     return {"ticker": ticker.upper(), "accession": accession,
             "calc": fg.calc, "pres": fg.pres,
             "parser_version": fg.parser_version}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  /api/v2 — overview endpoint backing the explorer's animated dashboard
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Separate router so v2 surface-backed endpoints don't mix with the v1
+# shaped-history endpoints above (different data contracts).
+router_v2 = APIRouter(prefix="/api/v2", tags=["overview"])
+
+
+@router_v2.get("/overview/{ticker}")
+def get_overview_v2(
+    ticker: str,
+    periods: int = Query(4, ge=2, le=12),
+    period: str = Query("annual", pattern="^(annual|quarterly|ttm)$"),
+):
+    """Everything the animated company dashboard needs in ONE call:
+
+    quote (session-aware), latest-period metrics, chartSeries (plot-ready),
+    geographic + product segments (pie/choropleth-ready), and the Polygon
+    cross-check. All shapes come verbatim from the MCP v2 surface — the
+    explorer renders them without any reshaping (Skill 20 contract).
+
+    `period` (annual|quarterly|ttm) drives which filing the figures and
+    segments come from, so the dashboard can switch annual↔quarterly.
+
+    Sync `def` on purpose: FastAPI runs it in a worker thread, so the
+    blocking EDGAR/provider I/O never stalls the event loop.
+    """
+    # Surface implementations already return structured {error, code, hint}
+    # dicts on failure — pass them through rather than 500ing.
+    from sec_mcp.surface.fundamentals import get_fundamentals_impl
+    from sec_mcp.surface.meta import ToolError
+    from sec_mcp.surface.quotes import get_quote_impl
+
+    tk = ticker.strip().upper()
+
+    # Quote is best-effort — a delisted ticker still deserves fundamentals
+    try:
+        quote = get_quote_impl(tk)
+    except ToolError as exc:
+        quote = {"error": exc.message, "code": exc.code, "hint": exc.hint}
+
+    # Fundamentals + segments are the core payload; structured errors bubble
+    # up as a 404/400 with the surface's own hint text
+    try:
+        fund = get_fundamentals_impl(tk, period=period, periods_back=periods,
+                                     include_segments=True)
+    except ToolError as exc:
+        code = 404 if exc.code in ("NOT_FOUND", "UNKNOWN_TICKER") else 400
+        raise HTTPException(status_code=code,
+                            detail=f"{exc.message} {exc.hint}") from None
+
+    return {
+        "ticker": tk,
+        "quote": quote,                          # incl. session / ageSeconds / priceBasis
+        "latest": fund["periods"][0],            # newest period + metrics + accession
+        "chartSeries": fund["chartSeries"],      # oldest→newest arrays, plot as-is
+        "segments": fund.get("segments") or {},  # geographic / product, name+value+pct
+        "crossCheck": fund.get("crossCheck"),    # provenance pill feeds off this
+        "meta": fund.get("meta"),
+    }

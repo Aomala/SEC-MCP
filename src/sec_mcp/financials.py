@@ -3488,6 +3488,9 @@ def sec_to_fmp_statements(result: dict) -> dict:
                 "quality": result.get("quality"),
                 "isYtd": bool(result.get("is_ytd")),
                 "accession": fi.get("accession_number"),
+                # Source filing form (10-K/10-Q/20-F/6-K) — additive, lets the
+                # frontend label each period by the filing it came from.
+                "formType": fi.get("form_type"),
                 "confidence": result.get("confidence_scores") or {},
                 "sources": result.get("metrics_sourced") or {},
                 "validation": result.get("validation") or [],
