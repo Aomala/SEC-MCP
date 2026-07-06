@@ -95,7 +95,10 @@ def _xbrl_for(ticker: str, form_type: str):
     import edgar
     edgar.set_identity(get_config().edgar_identity)
     company = edgar.Company(ticker)
-    filing = company.get_filings(form=form_type).latest(1)
+    # amendments=False: an -/A refiling (TSLA's 2026 10-K/A) often carries
+    # partial XBRL with no revenue facts at all — segment extraction needs
+    # the original filing's full instance
+    filing = company.get_filings(form=form_type, amendments=False).latest(1)
     if filing is None:
         return None, None
     return filing, filing.xbrl()
@@ -157,8 +160,13 @@ def _drop_subtotals(rows: list[dict]) -> list[dict]:
 
     Apple's ProductOrServiceAxis carries 'Products' (= iPhone + Mac + iPad +
     Wearables) alongside the detail members. A member is a subtotal when some
-    subset (>=2) of the OTHER members sums to its value within 1%; checked
+    subset (>=2) of the OTHER members sums to its value within 0.1%; checked
     largest-first with brute-force subset sums (axes have <=10 members).
+
+    The tolerance is deliberately tight: true XBRL subtotals sum exactly
+    (same instance, same rounding), while unrelated members can land close by
+    coincidence — TSLA's China + Other international is within 0.9% of its
+    United States revenue, which a 1% window wrongly ate.
     """
     from itertools import combinations
 
@@ -172,7 +180,7 @@ def _drop_subtotals(rows: list[dict]) -> list[dict]:
             for k in range(2, len(others) + 1):
                 for combo in combinations(others, k):
                     s = sum(combo)
-                    if s and abs(s - target) / target < 0.01:
+                    if s and abs(s - target) / target < 0.001:
                         found = True
                         break
                 if found:
