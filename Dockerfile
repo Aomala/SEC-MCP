@@ -26,7 +26,8 @@ RUN pip install --no-cache-dir \
     "anthropic>=0.40" \
     "yfinance>=0.2.30" \
     "python-dotenv>=1.0" \
-    "supabase>=2.0"
+    "supabase>=2.0" \
+    "edgartools>=5.16"
 
 # Copy source code
 COPY src/ src/
@@ -35,8 +36,11 @@ COPY src/ src/
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
-# Verify imports work at build time
-RUN python -c "from sec_mcp.chat_app import app; print('imports OK')"
+# Verify imports work at build time. `import edgar` is load-bearing: the
+# dimensional segment extractor (graph/segments.py) lazy-imports it, so a
+# missing edgartools doesn't fail startup — it silently degrades segments
+# to fallback sources. Catch that here instead.
+RUN python -c "import edgar; from sec_mcp.chat_app import app; print('imports OK')"
 
 # Railway sets PORT dynamically — app reads os.environ["PORT"] with fallback to 8877
 CMD ["python", "-m", "sec_mcp.chat_app"]

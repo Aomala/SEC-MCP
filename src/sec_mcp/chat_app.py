@@ -1286,10 +1286,14 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
     tk = ticker.upper()
 
     # Check Supabase cache. Treat pre-meta blobs (cached before filing-type
-    # metadata existed) as a miss so they self-heal on the next fetch.
+    # metadata existed) as a miss so they self-heal on the next fetch. Text-
+    # parsed blobs also self-heal: they were cached while the dimensional
+    # extractor was broken in prod (edgartools missing) and are superseded.
     from sec_mcp import supabase_cache
     cached = supabase_cache.get_cached(tk, "geo_segments", period)
-    if cached and cached.get("meta"):
+    if cached and cached.get("meta") and (
+            cached.get("source") != "sec_filing_text"
+            or cached["meta"].get("textParse")):
         return cached
 
     # Map the requested period to the source filing form (annual → 10-K/20-F,
@@ -1323,7 +1327,8 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
                 fb_meta["currency"] = data.get("reporting_currency")
                 result = {"ticker": tk, "geographic_segments": geo,
                           "source": "sec_xbrl", "meta": fb_meta}
-                supabase_cache.set_cached(tk, "geo_segments", result, period)
+                supabase_cache.set_cached(tk, "geo_segments", result, period,
+                                          ttl=86400)
                 return result
     except Exception as exc:
         log.warning("XBRL geo extraction failed for %s: %s", tk, exc)
@@ -1343,9 +1348,14 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
 
         geo = _parse_geo_from_filing_text(text, total_revenue=total_rev)
         if geo and len(geo) >= 2:
+            # textParse marks a post-fix text result — the cache-read miss on
+            # sec_filing_text only targets blobs cached while dimensional
+            # extraction was broken in prod (edgartools missing from image)
             result = {"ticker": tk, "geographic_segments": geo,
-                      "source": "sec_filing_text", "meta": fb_meta}
-            supabase_cache.set_cached(tk, "geo_segments", result, period)
+                      "source": "sec_filing_text",
+                      "meta": {**fb_meta, "textParse": True}}
+            supabase_cache.set_cached(tk, "geo_segments", result, period,
+                                      ttl=86400)
             return result
     except Exception as e:
         log.warning("Filing text geo parsing failed for %s: %s", tk, e)
@@ -1368,7 +1378,8 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
                     "source": "fmp_fallback",
                     "meta": fb_meta,
                 }
-                supabase_cache.set_cached(tk, "geo_segments", result, period)
+                supabase_cache.set_cached(tk, "geo_segments", result, period,
+                                          ttl=86400)
                 return result
     except Exception as exc:
         log.debug("FMP geo fallback failed for %s: %s", tk, exc)
@@ -1381,11 +1392,17 @@ async def get_segments(ticker: str, period: str = "annual"):
     """Revenue segments — SEC XBRL first (truth), filing text second, FMP fallback."""
     tk = ticker.upper()
 
-    # Check Supabase cache. Treat pre-meta blobs (cached before filing-type
-    # metadata existed) as a miss so they self-heal on the next fetch.
+    # Check Supabase cache. Self-heal (treat as a miss) three stale shapes:
+    # pre-meta blobs, dimensional blobs cached before segmentsAxis existed
+    # (business-axis splits; the contract is now product/service-first), and
+    # text-parsed blobs — those were income-statement rows cached while the
+    # dimensional extractor was broken in prod (edgartools missing).
     from sec_mcp import supabase_cache
     cached = supabase_cache.get_cached(tk, "product_segments", period)
-    if cached and cached.get("meta"):
+    if cached and cached.get("meta") and (
+            cached.get("source") not in ("sec_xbrl_dimensions", "sec_filing_text")
+            or (cached.get("source") == "sec_xbrl_dimensions"
+                and cached["meta"].get("segmentsAxis"))):
         return cached
 
     # Map the requested period to the source filing form (annual → 10-K/20-F,
@@ -1423,35 +1440,18 @@ async def get_segments(ticker: str, period: str = "annual"):
                 fb_meta["currency"] = data.get("reporting_currency")
                 result = {"ticker": tk, "segments": segs, "source": "sec_xbrl",
                           "meta": fb_meta}
-                supabase_cache.set_cached(tk, "product_segments", result, period)
+                supabase_cache.set_cached(tk, "product_segments", result, period,
+                                          ttl=86400)
                 return result
     except Exception as exc:
         log.warning("XBRL segment extraction failed for %s: %s", tk, exc)
 
-    # 3. Fall back to filing text parsing
-    try:
-        from sec_mcp.financials import _parse_segments_from_filing_text
+    # NOTE: the filing-text segment parser was removed from this chain — it
+    # served income-statement rows ("Operating Income", "Cost of revenue") as
+    # "segments" whenever the real extractors failed, and those results got
+    # cached and shipped to Fineas. Structured FMP data is a safer last resort.
 
-        total_rev = None
-        try:
-            data = extract_financials(tk)
-            total_rev = (data or {}).get("metrics", {}).get("revenue")
-        except Exception as exc:
-            log.debug("Revenue fetch for segment scale failed for %s: %s", tk, exc)
-
-        for section in ("mda", "financial_statements"):
-            filing_result = _handle_filing_text(tk, section=section, form_type=seg_form)
-            text = filing_result.get("text", "")
-            segs = _parse_segments_from_filing_text(text, total_revenue=total_rev)
-            if len(segs) >= 2:
-                result = {"ticker": tk, "segments": segs,
-                          "source": "sec_filing_text", "meta": fb_meta}
-                supabase_cache.set_cached(tk, "product_segments", result, period)
-                return result
-    except Exception as e:
-        log.warning("Segment parsing failed for %s: %s", tk, e)
-
-    # 3. FALLBACK: FMP API
+    # 2. FALLBACK: FMP API
     try:
         from sec_mcp.fmp_client import get_product_segments, is_available as fmp_ok
         if fmp_ok():
@@ -1469,7 +1469,8 @@ async def get_segments(ticker: str, period: str = "annual"):
                     "source": "fmp_fallback",
                     "meta": fb_meta,
                 }
-                supabase_cache.set_cached(tk, "product_segments", result, period)
+                supabase_cache.set_cached(tk, "product_segments", result, period,
+                                          ttl=86400)
                 return result
     except Exception as exc:
         log.debug("FMP segment fallback failed for %s: %s", tk, exc)

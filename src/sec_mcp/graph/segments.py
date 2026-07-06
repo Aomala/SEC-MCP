@@ -55,6 +55,32 @@ def _looks_geographic(rows: list[dict]) -> bool:
 _EXCLUDE_LABELS = ("total", "elimination", "consolidat", "reconcil",
                    "intersegment", "corporate and other unallocated")
 
+# Generic product-vs-service members (us-gaap ProductMember/ServiceMember and
+# friends). Some filers (MSFT) tag this coarse split on ProductOrServiceAxis
+# ALONGSIDE their detailed product lines — two complete partitions of the same
+# revenue, which double-counts the total and halves every pct.
+_GENERIC_TYPE_LABELS = frozenset({
+    "product", "products", "service", "services", "service and other",
+    "services and other", "product and other", "products and services",
+})
+
+
+def _drop_generic_type_partition(rows: list[dict]) -> list[dict]:
+    """Drop the coarse Product/Service partition when it duplicates the
+    detailed members (both partitions sum to the same total). Sum equality is
+    the guard: a genuinely generic-labeled segment (Apple's 'Services') won't
+    match the rest of the rows' sum, so it survives.
+    """
+    generic = [r for r in rows
+               if r["segment"].strip().lower() in _GENERIC_TYPE_LABELS]
+    detail = [r for r in rows if r not in generic]
+    if generic and len(detail) >= 2:
+        gsum = sum(r["value"] for r in generic)
+        dsum = sum(r["value"] for r in detail)
+        if gsum and abs(gsum - dsum) / gsum < 0.02:
+            return detail
+    return rows
+
 _cache: dict[tuple, dict | None] = {}
 _lock = threading.Lock()
 
@@ -114,6 +140,7 @@ def _axis_breakdown(facts, axes: tuple[str, ...]) -> tuple[list[dict], str | Non
                     seen[row["segment"]] = row
             rows = sorted(seen.values(), key=lambda x: -x["value"])
             rows = _drop_subtotals(rows)
+            rows = _drop_generic_type_partition(rows)
             if len(rows) >= 2:
                 total = sum(r["value"] for r in rows)
                 for r in rows:
@@ -158,13 +185,20 @@ def get_dimensional_segments(ticker: str, form_type: str = "10-K") -> dict | Non
     """{'segments': [...], 'geographic_segments': [...], 'source_meta': {...}}
     from the latest filing's dimensional XBRL, or None when unavailable.
 
+    `segments` is the product/service-type revenue split
+    (srt_ProductOrServiceAxis), falling back to reportable business segments
+    only when no product axis is tagged; `geographic_segments` is the
+    geographic split. `source_meta.segmentsAxis`/`geographyAxis` record which
+    axis each actually came from.
+
     `form_type` defaults to "10-K" (the annual path is unchanged). Pass "10-Q"
     for the latest quarterly breakdown. Foreign private issuers are handled via
     get_form_alternatives (10-K→20-F, 10-Q→6-K), so an FPI request resolves to
     the right filing and `source_meta.formType` reports what was actually used.
 
     `source_meta` describes the SOURCE filing the segments came from:
-    {formType, fiscalPeriod, fiscalYear, reportDate, accession, currency}.
+    {formType, fiscalPeriod, fiscalYear, reportDate, accession, currency,
+    segmentsAxis, geographyAxis}.
     """
     from sec_mcp.sec_client import get_form_alternatives
 
@@ -185,16 +219,19 @@ def get_dimensional_segments(ticker: str, form_type: str = "10-K") -> dict | Non
             prod, ccy_prod = _axis_breakdown(x.facts, _PRODUCT_AXES)
             geo, ccy_geo = _axis_breakdown(x.facts, _GEO_AXES)
 
-            # Some filers' reportable segments ARE regions (Apple). When the
-            # business axis looks geographic, the product axis is the real
-            # "segments" answer — and the regional split can stand in for
-            # geography if no geographic axis is tagged.
-            if _looks_geographic(biz) and prod:
-                segs = prod
-                if not geo:
-                    geo = biz
-            else:
-                segs = biz or prod
+            # The two breakdowns we serve are product/service type and
+            # geography. srt_ProductOrServiceAxis is the primary "segments"
+            # answer; the business axis only stands in when no product axis
+            # is tagged AND it isn't just regions (some filers' reportable
+            # segments ARE regions — Apple's are Americas/Europe/Greater
+            # China/… — those belong under geography, not product).
+            biz_is_geo = _looks_geographic(biz)
+            geo_axis = "geographic" if geo else None
+            if not geo and biz_is_geo:
+                geo = biz
+                geo_axis = "business"
+            segs = prod or ([] if biz_is_geo else biz)
+            segs_axis = "product" if prod else ("business" if segs else None)
 
             if segs or geo:
                 # Build provenance from the filing actually used. entity_info
@@ -214,6 +251,9 @@ def get_dimensional_segments(ticker: str, form_type: str = "10-K") -> dict | Non
                         "accession": getattr(filing, "accession_no", None),
                         # currency rides on the segment facts (USD/EUR/…)
                         "currency": ccy_prod or ccy_geo or ccy_biz,
+                        # which XBRL axis each breakdown actually came from
+                        "segmentsAxis": segs_axis,
+                        "geographyAxis": geo_axis,
                     },
                 }
     except Exception as exc:

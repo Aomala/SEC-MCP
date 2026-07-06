@@ -131,14 +131,21 @@ def set_cached(
     period: str = "annual",
     date_from: str = "",
     date_to: str = "",
+    ttl: int | None = None,
 ) -> bool:
-    """Store data in cache with TTL-based expiration."""
+    """Store data in cache with TTL-based expiration.
+
+    `ttl` overrides the per-type default — use a short TTL for fallback-quality
+    results so they retry the primary source sooner instead of squatting for
+    the full window.
+    """
     client = _get_client()
     if not client:
         return False
 
     key = _cache_key(ticker, data_type, period, date_from, date_to)
-    ttl = CACHE_TTLS.get(data_type, _SECTION_TTL if data_type.startswith("section_") else 3600)
+    if ttl is None:
+        ttl = CACHE_TTLS.get(data_type, _SECTION_TTL if data_type.startswith("section_") else 3600)
     expires = datetime.now(timezone.utc) + timedelta(seconds=ttl)
 
     try:
