@@ -1274,6 +1274,28 @@ async def get_peers(ticker: str):
     }
 
 
+def _seg_cache_fresh(cached: dict | None, *, dimensional_needs_axis: bool) -> bool:
+    """Serve a cached segment blob only if it predates none of the fixes:
+    meta must exist, text-parsed blobs must be post-fix (textParse marker for
+    geo; the segments endpoint dropped that source entirely), dimensional
+    blobs must carry segmentsAxis (product/service-first contract), and
+    meta.currency must be a clean ISO code (a brief prod window cached
+    edgartools unit refs like "U_USD", which break Intl.NumberFormat).
+    """
+    if not cached or not cached.get("meta"):
+        return False
+    meta = cached["meta"]
+    ccy = meta.get("currency")
+    if ccy and not re.fullmatch(r"[A-Z]{3}", str(ccy)):
+        return False
+    src = cached.get("source")
+    if src == "sec_filing_text":
+        return bool(meta.get("textParse"))
+    if dimensional_needs_axis and src == "sec_xbrl_dimensions":
+        return bool(meta.get("segmentsAxis"))
+    return True
+
+
 @app.get("/api/geo-revenue/{ticker}")
 async def get_geo_revenue(ticker: str, period: str = "annual"):
     """Geographic revenue breakdown — SEC XBRL first (truth), filing text second, FMP fallback.
@@ -1285,15 +1307,10 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
     """
     tk = ticker.upper()
 
-    # Check Supabase cache. Treat pre-meta blobs (cached before filing-type
-    # metadata existed) as a miss so they self-heal on the next fetch. Text-
-    # parsed blobs also self-heal: they were cached while the dimensional
-    # extractor was broken in prod (edgartools missing) and are superseded.
+    # Check Supabase cache; _seg_cache_fresh self-heals stale blob shapes
     from sec_mcp import supabase_cache
     cached = supabase_cache.get_cached(tk, "geo_segments", period)
-    if cached and cached.get("meta") and (
-            cached.get("source") != "sec_filing_text"
-            or cached["meta"].get("textParse")):
+    if _seg_cache_fresh(cached, dimensional_needs_axis=False):
         return cached
 
     # Map the requested period to the source filing form (annual → 10-K/20-F,
@@ -1392,17 +1409,10 @@ async def get_segments(ticker: str, period: str = "annual"):
     """Revenue segments — SEC XBRL first (truth), filing text second, FMP fallback."""
     tk = ticker.upper()
 
-    # Check Supabase cache. Self-heal (treat as a miss) three stale shapes:
-    # pre-meta blobs, dimensional blobs cached before segmentsAxis existed
-    # (business-axis splits; the contract is now product/service-first), and
-    # text-parsed blobs — those were income-statement rows cached while the
-    # dimensional extractor was broken in prod (edgartools missing).
+    # Check Supabase cache; _seg_cache_fresh self-heals stale blob shapes
     from sec_mcp import supabase_cache
     cached = supabase_cache.get_cached(tk, "product_segments", period)
-    if cached and cached.get("meta") and (
-            cached.get("source") not in ("sec_xbrl_dimensions", "sec_filing_text")
-            or (cached.get("source") == "sec_xbrl_dimensions"
-                and cached["meta"].get("segmentsAxis"))):
+    if _seg_cache_fresh(cached, dimensional_needs_axis=True):
         return cached
 
     # Map the requested period to the source filing form (annual → 10-K/20-F,

@@ -15,6 +15,7 @@ filing internally).
 from __future__ import annotations
 
 import logging
+import re
 import threading
 
 from sec_mcp.config import get_config
@@ -116,13 +117,15 @@ def _axis_breakdown(facts, axes: tuple[str, ...]) -> tuple[list[dict], str | Non
             if df is None or df.empty or "period_end" not in df.columns:
                 continue
             latest = df[df["period_end"] == df["period_end"].max()]
-            # Currency rides on the fact's unit_ref ("usd"/"eur"/…); take the
-            # first non-null and normalize to an upper-case ISO code
+            # Currency rides on the fact's unit_ref; normalize to an ISO code.
+            # The ref format varies by edgartools version ("usd" vs "u_usd" vs
+            # "U_iso4217:USD") — keep only the token after the last _ or :
             currency = None
             if "unit_ref" in latest.columns:
                 units = latest["unit_ref"].dropna()
                 if not units.empty:
-                    currency = str(units.iloc[0]).upper()
+                    raw = re.split(r"[_:]", str(units.iloc[0]))[-1].upper()
+                    currency = raw if re.fullmatch(r"[A-Z]{3}", raw) else None
             rows = []
             for _, r in latest.iterrows():
                 label = str(r.get("label") or "").strip()
