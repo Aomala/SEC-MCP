@@ -1274,6 +1274,31 @@ async def get_peers(ticker: str):
     }
 
 
+@app.get("/embed/youtube/{video_id}")
+async def youtube_embed_shim(video_id: str, autoplay: int = 0, rel: int = 0):
+    """HTTPS shim page wrapping a YouTube embed.
+
+    The Fineas iOS app runs from capacitor://localhost — WKWebView sends no
+    valid HTTP Referer, and YouTube rejects referrer-less embeds with
+    "playback error 153". Framing this https page instead gives the inner
+    YouTube request a real referrer, so playback works everywhere (the app,
+    web, and any strict-referrer-policy context).
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+        return JSONResponse({"error": "invalid video id"}, status_code=404)
+    src = (f"https://www.youtube.com/embed/{video_id}"
+           f"?rel={1 if rel else 0}&autoplay={1 if autoplay else 0}&playsinline=1")
+    html = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{{margin:0;height:100%;background:#000;overflow:hidden}}
+iframe{{border:0;width:100%;height:100%;display:block}}</style></head><body>
+<iframe src="{src}" title="YouTube video"
+ allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+ allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
+</body></html>"""
+    return HTMLResponse(html, headers={"Cache-Control": "public, max-age=86400"})
+
+
 def _seg_cache_fresh(cached: dict | None, *, dimensional_needs_axis: bool) -> bool:
     """Serve a cached segment blob only if it predates none of the fixes:
     meta must exist, text-parsed blobs must be post-fix (textParse marker for
