@@ -29,6 +29,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from sec_mcp import disk_cache
+from sec_mcp.db import get_job
+from sec_mcp.db import is_available as db_available
 from sec_mcp.edgar_client import get_filing_content, list_filings, search_companies
 from sec_mcp.financials import (
     extract_financials,
@@ -36,9 +39,7 @@ from sec_mcp.financials import (
     generate_local_summary,
 )
 from sec_mcp.historical import get_historical_data, run_historical_extraction
-from sec_mcp.db import get_job, is_available as db_available
-from sec_mcp.intent_parser import learn_company, parse_intent, resolve_name
-from sec_mcp import disk_cache
+from sec_mcp.intent_parser import learn_company, parse_intent
 
 log = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 # — same router the standalone REST app mounts; the explorer page and Fineas
 # charts consume these.
 from sec_mcp.api.routes import metrics as _metrics_routes  # noqa: E402
+
 app.include_router(_metrics_routes.router)
 # v2 overview — one-call payload for the explorer's animated dashboard
 app.include_router(_metrics_routes.router_v2)
@@ -768,6 +770,31 @@ def _handle_entity(ticker: str) -> dict:
             } if latest_filing else None,
         }
 
+        # ── Polygon enrichment: description, employees, market cap, IPO date ──
+        # SEC submissions lack these; Polygon ticker-details fills the profile
+        # so consumers (Fineas Description/Metrics tabs) need no FMP profile.
+        try:
+            from sec_mcp import polygon_client
+            details = polygon_client.get_ticker_details(ticker)
+            if details:
+                branding = details.get("branding") or {}
+                profile.update({
+                    "company_name": details.get("name") or info.name,
+                    "description": details.get("description") or "",
+                    "employees": details.get("total_employees"),
+                    "ipo_date": details.get("list_date"),
+                    "market_cap": details.get("market_cap"),
+                    "shares_outstanding": details.get("weighted_shares_outstanding")
+                        or details.get("share_class_shares_outstanding"),
+                    "homepage": details.get("homepage_url") or profile.get("website") or "",
+                    "ticker_type": details.get("type"),
+                    "logo_url": branding.get("logo_url") or branding.get("icon_url") or None,
+                })
+                if not profile.get("website") and details.get("homepage_url"):
+                    profile["website"] = details["homepage_url"]
+        except Exception as exc:
+            log.debug("Polygon entity enrichment failed for %s: %s", ticker, exc)
+
         # Try to extract CEO from latest 10-K filing text (first 2000 chars often has signatures)
         ceo_name = None
         ceo_source = None
@@ -1016,7 +1043,7 @@ async def chat(req: ChatRequest, bg: BackgroundTasks) -> dict:
                 bg.add_task(run_historical_extraction, tickers[0])
 
         return {"type": "result", **meta, **result}
-    except Exception as exc:
+    except Exception:
         log.exception("Chat request failed")
         return {"type": "error", "message": traceback.format_exc(), **meta}
 
@@ -1404,7 +1431,8 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
 
     # 3. FALLBACK: FMP API (may not match SEC filings exactly)
     try:
-        from sec_mcp.fmp_client import get_geo_segments, is_available as fmp_ok
+        from sec_mcp.fmp_client import get_geo_segments
+        from sec_mcp.fmp_client import is_available as fmp_ok
         if fmp_ok():
             fmp_data = get_geo_segments(tk, period=period)
             if fmp_data and fmp_data[0].get("segments"):
@@ -1488,7 +1516,8 @@ async def get_segments(ticker: str, period: str = "annual"):
 
     # 2. FALLBACK: FMP API
     try:
-        from sec_mcp.fmp_client import get_product_segments, is_available as fmp_ok
+        from sec_mcp.fmp_client import get_product_segments
+        from sec_mcp.fmp_client import is_available as fmp_ok
         if fmp_ok():
             fmp_data = get_product_segments(tk, period=period)
             if fmp_data and fmp_data[0].get("segments"):
@@ -1646,7 +1675,7 @@ async def cache_clear(ticker: str | None = None):
 
 
 
-def _assemble_chatbot_prompt(req: "ChatbotRequest") -> tuple[str, list, list, bool]:
+def _assemble_chatbot_prompt(req: ChatbotRequest) -> tuple[str, list, list, bool]:
     """Shared prompt assembly for /api/chatbot and /api/chatbot-stream.
 
     Returns (system, messages, citations, has_data). Extracted verbatim from
@@ -1731,7 +1760,8 @@ def _assemble_chatbot_prompt(req: "ChatbotRequest") -> tuple[str, list, list, bo
                           "compare to", "vs market", "industry average", "verify", "validate")
     if any(kw in req.message.lower() for kw in _realtime_keywords):
         try:
-            from sec_mcp.perplexity_client import search, is_available as pplx_avail
+            from sec_mcp.perplexity_client import is_available as pplx_avail
+            from sec_mcp.perplexity_client import search
             if pplx_avail():
                 pplx = search(req.message, ticker=req.ticker or None)
                 if pplx and pplx.get("content"):
@@ -1882,6 +1912,7 @@ async def chatbot_stream(req: ChatbotRequest):
       data: [DONE]                — stream end
     """
     from fastapi.responses import StreamingResponse
+
     from sec_mcp.config import get_config
     config = get_config()
     if not config.anthropic_api_key:
@@ -2092,6 +2123,190 @@ async def get_entity(ticker: str) -> dict:
         return {"error": str(exc)}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+#  ETF / fund endpoints — seed registry + Polygon (no FMP)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/etf/{ticker}")
+async def get_etf(ticker: str) -> dict:
+    """ETF detection + profile (AUM, expense ratio, issuer, peers).
+
+    `isEtf: false` for operating companies — callers use this as their
+    fund-vs-stock branch, replacing FMP-profile-based detection.
+    """
+    from sec_mcp.core import etf
+
+    try:
+        return etf.get_etf_profile(ticker)
+    except Exception as exc:
+        log.warning("ETF profile failed for %s: %s", ticker, exc)
+        return {"error": str(exc), "code": "INTERNAL", "isEtf": False, "ticker": ticker.upper()}
+
+
+class EtfCompsRequest(BaseModel):
+    tickers: list[str]
+
+
+@app.post("/api/etf/comps")
+async def etf_comps(req: EtfCompsRequest) -> dict:
+    """Profiles for a target ETF + its peers in one call."""
+    from sec_mcp.core import etf
+
+    try:
+        return etf.get_etf_comps(req.tickers)
+    except Exception as exc:
+        log.warning("ETF comps failed: %s", exc)
+        return {"error": str(exc), "code": "INTERNAL", "results": []}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Single-ticker valuation metrics — SEC fundamentals + live price
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/metrics/{ticker}")
+async def get_ticker_metrics(ticker: str) -> dict:
+    """TTM-ish valuation block (P/E, P/S, EV/EBITDA, margins, ROE …).
+
+    Reuses the same cached SEC extraction as /api/comps, adds a live price
+    (Polygon → yfinance chain) to compute multiples. Margins are percent
+    units; raw financials are dollars.
+    """
+    from sec_mcp import polygon_client
+    from sec_mcp.core.realtime_price import get_realtime_price
+    from sec_mcp.core.ticker_metrics import compute_ticker_metrics
+
+    tk = ticker.upper().strip()
+    try:
+        fin = _handle_financials(tk, None, "10-K")
+        data = fin.get("data") or {}
+        if data.get("error") or not data.get("metrics"):
+            return {
+                "error": data.get("error") or "No XBRL financials available",
+                "code": "NOT_FOUND", "ticker": tk,
+                "hint": "ETFs and recent IPOs have no 10-K fundamentals — try /api/etf for funds.",
+            }
+
+        price = None
+        snap: dict | None = None
+        try:
+            snap = get_realtime_price(tk)
+            price = snap.get("price") if isinstance(snap, dict) else None
+        except Exception as exc:
+            log.debug("Price fetch failed for %s: %s", tk, exc)
+
+        shares_override = None
+        market_cap_override = None
+        try:
+            details = polygon_client.get_ticker_details(tk)
+            if details:
+                market_cap_override = details.get("market_cap")
+                shares_override = details.get("weighted_shares_outstanding") or details.get(
+                    "share_class_shares_outstanding")
+        except Exception as exc:
+            log.debug("Polygon details failed for %s: %s", tk, exc)
+
+        block = compute_ticker_metrics(
+            tk, data.get("metrics") or {}, data.get("ratios") or {},
+            price=price if isinstance(price, (int, float)) else None,
+            shares_override=shares_override if isinstance(shares_override, (int, float)) else None,
+            market_cap_override=market_cap_override if isinstance(market_cap_override, (int, float)) else None,
+        )
+        fi = data.get("filing_info") or {}
+        return {
+            "tool": "metrics",
+            "ticker": tk,
+            "companyName": data.get("company_name"),
+            "fiscalYear": data.get("fiscal_year"),
+            "periodType": data.get("period_type"),
+            "periodEnd": fi.get("period_end"),
+            "metrics": block,
+            "meta": {"source": "sec+polygon", "priceSource": (snap or {}).get("source")},
+        }
+    except Exception as exc:
+        log.warning("Metrics failed for %s: %s", tk, exc)
+        return {"error": str(exc), "code": "INTERNAL", "ticker": tk}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Bulk ticker universe — SEC company_tickers_exchange dump
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Internal sector buckets → display sector names (FMP/GICS-style, matches
+# the values the Fineas screener already filters on).
+_SECTOR_DISPLAY: dict[str, str] = {
+    "mega_tech": "Technology", "semiconductors": "Technology",
+    "enterprise_software": "Technology", "cybersecurity": "Technology",
+    "it_services": "Technology",
+    "fintech_payments": "Financial Services", "banks_mega": "Financial Services",
+    "banks_regional": "Financial Services", "insurance": "Financial Services",
+    "crypto": "Financial Services",
+    "pharma_large": "Healthcare", "biotech": "Healthcare",
+    "healthcare_services": "Healthcare", "medtech": "Healthcare",
+    "energy_majors": "Energy", "energy_ep": "Energy",
+    "utilities": "Utilities",
+    "telecom": "Communication Services", "media_entertainment": "Communication Services",
+    "retail_broadline": "Consumer Defensive", "consumer_staples": "Consumer Defensive",
+    "retail_specialty": "Consumer Cyclical", "restaurants": "Consumer Cyclical",
+    "auto": "Consumer Cyclical",
+    "aerospace_defense": "Industrials", "industrials": "Industrials",
+    "airlines": "Industrials", "logistics": "Industrials",
+    "reits": "Real Estate",
+    "materials_mining": "Basic Materials",
+}
+
+
+@app.get("/api/tickers/bulk")
+async def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
+    """Paginated dump of the full SEC-registered ticker universe.
+
+    Source: SEC company_tickers_exchange.json (~10k active filers). Sector is
+    filled from the curated universe where known, null otherwise — consumers
+    should treat null as "leave existing value". Replaces FMP profile-bulk.
+    """
+    try:
+        from sec_mcp.sec_client import get_sec_client
+
+        page = max(1, page)
+        page_size = min(max(1, page_size), 2000)
+
+        tmap = get_sec_client()._get_tickers_map()
+        rows = []
+        seen: set[str] = set()
+        for key, rec in tmap.items():
+            if key.startswith("CIK:"):
+                continue
+            tk = rec.get("ticker", "")
+            if not tk or tk in seen:
+                continue
+            seen.add(tk)
+            bucket = _TICKER_TO_SECTOR.get(tk)
+            rows.append({
+                "ticker": tk,
+                "name": rec.get("title", ""),
+                "cik": rec.get("cik_str", ""),
+                "exchange": rec.get("exchange") or None,
+                "sector": _SECTOR_DISPLAY.get(bucket) if bucket else None,
+                "is_actively_trading": True,
+            })
+        rows.sort(key=lambda r: r["ticker"])
+
+        total = len(rows)
+        start = (page - 1) * page_size
+        chunk = rows[start:start + page_size]
+        return {
+            "tool": "tickers_bulk",
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "total_pages": (total + page_size - 1) // page_size,
+            "tickers": chunk,
+            "meta": {"source": "sec_company_tickers_exchange"},
+        }
+    except Exception as exc:
+        log.warning("Bulk tickers failed: %s", exc)
+        return {"error": str(exc), "code": "INTERNAL", "tickers": []}
+
+
 @app.get("/api/filing-text/{ticker}/{section}")
 async def get_filing_text(
     ticker: str,
@@ -2180,7 +2395,7 @@ class SearchRequest(BaseModel):
 async def search_realtime(req: SearchRequest):
     """Real-time web search via Perplexity for financial data validation."""
     try:
-        from sec_mcp.perplexity_client import search, is_available
+        from sec_mcp.perplexity_client import is_available, search
         if not is_available():
             return {"error": "Perplexity API not configured", "available": False}
 
@@ -2203,7 +2418,7 @@ async def search_realtime(req: SearchRequest):
 async def get_news(ticker: str):
     """Get latest financial news for a ticker via Perplexity."""
     try:
-        from sec_mcp.perplexity_client import search_financial_news, is_available
+        from sec_mcp.perplexity_client import is_available, search_financial_news
         if not is_available():
             return {"error": "Perplexity API not configured"}
 
@@ -2230,7 +2445,7 @@ async def validate_metric_endpoint(request: Request):
         metric = body.get("metric", "")
         value = body.get("value", 0)
 
-        from sec_mcp.perplexity_client import validate_metric, is_available
+        from sec_mcp.perplexity_client import is_available, validate_metric
         if not is_available():
             return {"error": "Perplexity API not configured"}
 
@@ -2280,9 +2495,10 @@ async def cross_check_ticker(ticker: str):
 @app.get("/api/export/{ticker}/csv")
 async def export_csv(ticker: str, year: int | None = None, form_type: str = "10-K"):
     """Export financial data as CSV download."""
-    from starlette.responses import StreamingResponse
-    import io
     import csv
+    import io
+
+    from starlette.responses import StreamingResponse
 
     result = _handle_financials(ticker.upper(), year, form_type)
     data = result.get("data") or {}
@@ -2349,9 +2565,10 @@ async def export_csv(ticker: str, year: int | None = None, form_type: str = "10-
 @app.get("/api/export/{ticker}/json")
 async def export_json(ticker: str, year: int | None = None, form_type: str = "10-K"):
     """Export full financial data as downloadable JSON."""
-    from starlette.responses import StreamingResponse
     import io
     import json as json_mod
+
+    from starlette.responses import StreamingResponse
 
     result = _handle_financials(ticker.upper(), year, form_type)
     data = result.get("data") or {}
@@ -2417,7 +2634,8 @@ async def enrich_ticker(ticker: str, year: int | None = None, form_type: str = "
     # Polygon.io cross-check
     if sec_metrics:
         try:
-            from sec_mcp.polygon_client import cross_check, is_available as poly_avail
+            from sec_mcp.polygon_client import cross_check
+            from sec_mcp.polygon_client import is_available as poly_avail
             if poly_avail():
                 cached_xcheck = supabase_cache.get_cached(tk, "cross_check", period_key)
                 if cached_xcheck:
@@ -2434,7 +2652,8 @@ async def enrich_ticker(ticker: str, year: int | None = None, form_type: str = "
 
     # Perplexity web context
     try:
-        from sec_mcp.perplexity_client import search_financial_news, is_available as pplx_avail
+        from sec_mcp.perplexity_client import is_available as pplx_avail
+        from sec_mcp.perplexity_client import search_financial_news
         if pplx_avail():
             news = search_financial_news(tk)
             if news and news.get("content"):
@@ -2457,7 +2676,7 @@ async def enrich_ticker(ticker: str, year: int | None = None, form_type: str = "
 @app.post("/api/screener")
 async def run_screener(request: Request):
     """Screen companies from SECTOR_UNIVERSE by financial metrics."""
-    from sec_mcp.screener import screen, get_available_sectors, get_cached_ticker_count
+    from sec_mcp.screener import get_available_sectors, get_cached_ticker_count, screen
 
     body = await request.json()
     filters = body.get("filters", {})
@@ -2476,7 +2695,7 @@ async def run_screener(request: Request):
 async def get_insider_data(ticker: str):
     """Get insider trading data from SEC Form 4 filings."""
     try:
-        from sec_mcp.insider_tracker import get_insider_transactions, get_insider_summary
+        from sec_mcp.insider_tracker import get_insider_summary, get_insider_transactions
         transactions = get_insider_transactions(ticker.upper(), limit=15)
         summary = get_insider_summary(ticker.upper())
         return {"ticker": ticker.upper(), "transactions": transactions, "summary": summary}
