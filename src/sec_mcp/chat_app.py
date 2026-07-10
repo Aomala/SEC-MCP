@@ -30,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from sec_mcp import disk_cache
+from sec_mcp.classify import classify
 from sec_mcp.db import get_job
 from sec_mcp.db import is_available as db_available
 from sec_mcp.edgar_client import get_filing_content, list_filings, search_companies
@@ -1688,6 +1689,10 @@ def _assemble_chatbot_prompt(req: ChatbotRequest) -> tuple[str, list, list, bool
     if ctx:
         if ctx.get("company_name"):
             context_parts.append(f"Company: {ctx['company_name']}")
+        # GICS sector + industry so the model knows what kind of business this is
+        _cls = classify(sic_code=ctx.get("sic_code"), ticker=req.ticker)
+        if _cls.sector != "Other":
+            context_parts.append(f"Sector: {_cls.sector} | Industry: {_cls.industry}")
         fi = ctx.get("filing_info", {})
         if fi:
             context_parts.append(

@@ -18,6 +18,7 @@ from pathlib import Path
 
 import requests
 
+from sec_mcp.classify import SECTORS, classify
 from sec_mcp.config import get_config
 
 # market data for market-cap enrichment
@@ -43,41 +44,28 @@ log = logging.getLogger(__name__)
 # keeps worst-case EDGAR traffic bounded well under the 10 req/s limit.
 _MAX_ENRICH = 40
 
-# Coarse SIC-range → sector buckets. Specific ranges are checked before broad
-# ones (first match wins), so pharma resolves to healthcare not manufacturing.
-_SIC_SECTORS: list[tuple[int, int, str]] = [
-    (2833, 2836, "healthcare"),       # pharma preparations/diagnostics
-    (3826, 3851, "healthcare"),       # lab instruments, medical devices
-    (8000, 8099, "healthcare"),       # health services
-    (3570, 3579, "technology"),       # computers & office equipment
-    (3661, 3699, "technology"),       # comms equipment, semiconductors (3674)
-    (7370, 7379, "technology"),       # software & data processing
-    (4800, 4899, "communications"),   # telephone, broadcasting, media
-    (4900, 4999, "utilities"),        # electric, gas, water
-    (1300, 1399, "energy"),           # oil & gas extraction
-    (2900, 2999, "energy"),           # petroleum refining
-    (6000, 6199, "financials"),       # banks & credit
-    (6200, 6299, "financials"),       # brokers & exchanges
-    (6300, 6499, "financials"),       # insurance
-    (6500, 6599, "real_estate"),      # real estate
-    (6798, 6798, "real_estate"),      # REITs
-    (6600, 6999, "financials"),       # other finance/holding companies
-    (5200, 5999, "consumer"),         # retail
-    (2000, 2199, "consumer"),         # food & tobacco
-    (5800, 5899, "consumer"),         # restaurants (inside retail range, kept for clarity)
-    (1000, 1499, "materials"),        # mining & metals
-    (2800, 2899, "materials"),        # chemicals
-    (3300, 3399, "materials"),        # primary metals
-    (1500, 1799, "industrials"),      # construction
-    (3400, 3999, "industrials"),      # remaining manufacturing
-    (4000, 4799, "industrials"),      # transportation
-    (2200, 3299, "industrials"),      # remaining light manufacturing
-    (100, 999, "materials"),          # agriculture/forestry
-    (7000, 8999, "consumer"),         # services (hotels, leisure, misc)
-]
+# Sector/industry classification is delegated to the canonical GICS classifier
+# (sec_mcp.classify) — single source of truth shared with the market tiles and
+# the knowledge base. _KNOWN_SECTORS is the 11 GICS sectors matching the UI.
+_KNOWN_SECTORS = list(SECTORS)
 
-# Allowed values surfaced to the caller when validation fails
-_KNOWN_SECTORS = sorted({s for _, _, s in _SIC_SECTORS})
+# Accept legacy lowercase buckets + FMP/Yahoo-style names on the sector filter so
+# existing callers keep working after the switch to canonical GICS names.
+_SECTOR_ALIASES = {
+    "technology": "Technology",
+    "healthcare": "Health Care", "health care": "Health Care",
+    "financials": "Financials", "financial services": "Financials",
+    "energy": "Energy", "utilities": "Utilities",
+    "communications": "Communication Services",
+    "communication services": "Communication Services",
+    "real_estate": "Real Estate", "real estate": "Real Estate",
+    "materials": "Materials", "basic materials": "Materials",
+    "industrials": "Industrials",
+    "consumer discretionary": "Consumer Discretionary",
+    "consumer cyclical": "Consumer Discretionary",
+    "consumer staples": "Consumer Staples",
+    "consumer defensive": "Consumer Staples",
+}
 
 # Wikipedia constituent list (parsed by regex) backs the is_sp500 filter;
 # refreshed weekly, cached on disk so off-line runs still answer.
@@ -86,19 +74,22 @@ _SP500_CACHE = Path.home() / ".sec_mcp_cache" / "sp500_constituents.json"
 _SP500_TTL = 7 * 86400  # constituents change a few times a year — weekly is plenty
 
 
-def _sic_to_sector(sic: str | None) -> str | None:
-    """Map a 4-digit SIC code to one of our coarse sector buckets."""
-    if not sic:
+def _normalize_sector(s: str | None) -> str | None:
+    """Map any accepted sector spelling to a canonical GICS sector, else None."""
+    if not s:
         return None
-    try:
-        code = int(str(sic)[:4])                          # normalize "3674.0" etc.
-    except ValueError:
-        return None
-    # First matching range wins — list is ordered specific → broad
-    for lo, hi, sector in _SIC_SECTORS:
-        if lo <= code <= hi:
-            return sector
-    return None
+    key = str(s).strip().lower()
+    for sec in SECTORS:
+        if sec.lower() == key:
+            return sec
+    return _SECTOR_ALIASES.get(key)
+
+
+def _sic_to_sector(sic: str | None, ticker: str | None = None) -> str | None:
+    """Canonical GICS sector for a SIC (+ optional ticker override). None if the
+    company can't be classified — preserves the old 'unknown → drop' contract."""
+    c = classify(sic_code=sic, ticker=ticker)
+    return None if c.sector == "Other" else c.sector
 
 
 def _load_sp500() -> set[str]:
@@ -150,8 +141,11 @@ def _enrich(record: dict, need_profile: bool, need_cap: bool) -> dict:
             subs = client._get_submissions(cik)            # cached + rate-limited
             sic = subs.get("sic")                          # 4-digit SIC string
             out["sic"] = sic
-            out["industry"] = subs.get("sicDescription")   # EDGAR's industry label
-            out["sector"] = _sic_to_sector(sic)            # coarse bucket
+            out["sic_description"] = subs.get("sicDescription")  # EDGAR's raw label
+            # Canonical GICS classification (ticker override + SIC base)
+            cls = classify(sic_code=sic, ticker=record.get("ticker"))
+            out["sector"] = None if cls.sector == "Other" else cls.sector
+            out["industry"] = cls.industry if cls.industry != "Unknown" else subs.get("sicDescription")
             # Country: HQ address description beats state-of-incorporation
             addr = (subs.get("addresses") or {}).get("business") or {}
             out["country"] = (addr.get("stateOrCountryDescription")
@@ -192,10 +186,12 @@ def search_companies_impl(query, filters=None, limit=None) -> dict:
     cap_min = require_number(f.get("market_cap_min"), "market_cap_min")
     cap_max = require_number(f.get("market_cap_max"), "market_cap_max")
     ipo_after = parse_iso_date(f.get("ipo_date_after"), "ipo_date_after")
-    sector = f.get("sector")
-    if sector is not None and str(sector).lower() not in _KNOWN_SECTORS:
-        raise ToolError(INVALID_INPUT, f"Unknown sector {sector!r}.",
-                        f"Supported sectors: {_KNOWN_SECTORS}.")
+    sector = None
+    if f.get("sector") is not None:
+        sector = _normalize_sector(f.get("sector"))
+        if sector is None:
+            raise ToolError(INVALID_INPUT, f"Unknown sector {f.get('sector')!r}.",
+                            f"Supported sectors: {_KNOWN_SECTORS}.")
     # Query may be empty ONLY when at least one filter narrows the universe
     q = (query or "").strip()
     if not q and not f:
@@ -253,11 +249,12 @@ def search_companies_impl(query, filters=None, limit=None) -> dict:
         row = _enrich(rec, need_profile, need_cap) if (need_profile or need_cap) else dict(rec)
         if need_profile or need_cap:
             enriched_count += 1
-        # Apply enrichment-dependent filters
-        if sector is not None and (row.get("sector") or "") != str(sector).lower():
+        # Apply enrichment-dependent filters (sector is canonical GICS)
+        if sector is not None and (row.get("sector") or "") != sector:
             continue
         if f.get("industry") is not None and \
-                str(f["industry"]).lower() not in (row.get("industry") or "").lower():
+                str(f["industry"]).lower() not in \
+                f"{row.get('industry') or ''} {row.get('sic_description') or ''}".lower():
             continue
         if f.get("country") is not None and \
                 str(f["country"]).lower() not in (row.get("country") or "").lower():

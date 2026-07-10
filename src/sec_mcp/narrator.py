@@ -59,6 +59,11 @@ def _build_data_section(data: dict) -> str:
 
     parts.append(f"Company: {data.get('company_name', 'Unknown')}")
     parts.append(f"Ticker: {data.get('ticker_or_cik', '?')}")
+    # GICS sector + industry (canonical classifier) — grounds the model in what
+    # kind of business this is; the coarse industry_class stays for XBRL context.
+    from sec_mcp.classify import classify
+    _cls = classify(sic_code=data.get("sic_code"), ticker=data.get("ticker_or_cik"))
+    parts.append(f"Sector: {_cls.sector} | Industry: {_cls.industry}")
     parts.append(f"Industry class: {data.get('industry_class', '?')}")
     parts.append(f"Fiscal year: {data.get('fiscal_year', 'latest')}")
     parts.append("")

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 
 import requests
 
+from sec_mcp.classify import classify
 from sec_mcp.config import get_config
 
 logging.basicConfig(
@@ -182,6 +183,8 @@ def phase2_check_filings(limit: int = 0):
             exchanges = sub.get("exchanges", [])
             exchange = exchanges[0] if exchanges else ""
             category = sub.get("category", "")
+            # Canonical GICS classification (ticker override + SIC base)
+            _cls = classify(sic_code=sic, ticker=ticker if ticker != "?" else None)
 
             update = {
                 "has_10k": has_10k,
@@ -190,6 +193,8 @@ def phase2_check_filings(limit: int = 0):
                 "latest_filing_date": latest_date,
                 "sic_code": sic,
                 "sic_description": sic_desc,
+                "sector": None if _cls.sector == "Other" else _cls.sector,
+                "industry": None if _cls.industry == "Unknown" else _cls.industry,
                 "state": state,
                 "exchange": exchange,
                 "category": category,
