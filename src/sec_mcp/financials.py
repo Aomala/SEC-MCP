@@ -2718,11 +2718,20 @@ def extract_financials(
             log.info("Current Assets computed via rollup (%d components): %s",
                       ca_found, _fmt(ca_total))
 
-    # Operating Income = Gross Profit - Operating Expenses (if missing)
+    # Operating Income = Gross Profit - Operating Expenses (if missing).
+    # Guard: only valid when operating_expenses is a TRUE operating-expense line
+    # (excludes COGS). When it resolved to a total-costs concept
+    # ("Costs and Expenses" / "Operating Costs and Expenses", which already
+    # include cost of revenue), gross_profit - total_costs double-subtracts COGS
+    # and yields garbage (e.g. CVX: 80.8B - 169.3B = -88.5B). Skip rather than
+    # emit an obviously-invalid value.
     if metrics.get("operating_income") is None:
         gp_val = metrics.get("gross_profit")
         opex_val = metrics.get("operating_expenses")
-        if gp_val is not None and opex_val is not None:
+        opex_src = (sourced.get("operating_expenses") or "")
+        _opex_is_total = any(t in opex_src for t in
+                             ("Costs and Expenses", "Operating Costs and Expenses"))
+        if gp_val is not None and opex_val is not None and not _opex_is_total:
             metrics["operating_income"] = gp_val - abs(opex_val)
             sourced["operating_income"] = "Computed: Gross Profit - OpEx"
             confidence["operating_income"] = 0.70

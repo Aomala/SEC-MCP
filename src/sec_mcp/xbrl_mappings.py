@@ -826,9 +826,20 @@ CAPITAL_EXPENDITURES: list[ConceptEntry] = [
     ConceptEntry("CapitalExpenditures", "Capital Expenditures (generic)"),
     ConceptEntry("PaymentsToAcquireProductiveAssets",
                  "Payments to Acquire Assets"),
+    # Filer-specific PP&E capex lines (fallbacks — only win when the generic
+    # concepts above are absent). LLY tags only the "Other PP&E" line; triple-net
+    # REITs (O) tag recurring portfolio capex as PaymentsForCapitalImprovements.
+    ConceptEntry("PaymentsToAcquireOtherPropertyPlantAndEquipment",
+                 "Capital Expenditures (other PP&E)"),
+    ConceptEntry("PaymentsForCapitalImprovements", "Capital Improvements"),
     # IFRS
     ConceptEntry("PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
                  "IFRS CapEx"),
+    # IFRS combined PP&E + intangibles capex line (SAP and other EU filers report
+    # a single cash-flow purchase line covering PP&E, intangibles and other
+    # non-current assets).
+    ConceptEntry("PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets",
+                 "IFRS CapEx (combined PP&E/intangibles)"),
 ]
 
 INVESTING_CASH_FLOW: list[ConceptEntry] = [
