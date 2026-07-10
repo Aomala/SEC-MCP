@@ -2212,7 +2212,7 @@ async def get_ticker_metrics(ticker: str) -> dict:
             market_cap_override=market_cap_override if isinstance(market_cap_override, (int, float)) else None,
         )
         fi = data.get("filing_info") or {}
-        return {
+        resp = {
             "tool": "metrics",
             "ticker": tk,
             "companyName": data.get("company_name"),
@@ -2222,6 +2222,12 @@ async def get_ticker_metrics(ticker: str) -> dict:
             "metrics": block,
             "meta": {"source": "sec+polygon", "priceSource": (snap or {}).get("source")},
         }
+        # Additive: bank revenue-driver breakdown (income-type + business divisions).
+        # Present only for banks; non-banks omit the key entirely.
+        drivers = data.get("bank_revenue_drivers")
+        if drivers:
+            resp["revenueDrivers"] = drivers
+        return resp
     except Exception as exc:
         log.warning("Metrics failed for %s: %s", tk, exc)
         return {"error": str(exc), "code": "INTERNAL", "ticker": tk}

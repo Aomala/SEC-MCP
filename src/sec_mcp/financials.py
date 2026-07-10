@@ -43,6 +43,7 @@ from sec_mcp.facts.periods import PeriodType, annotate_periods, dedupe_facts
 from sec_mcp.sec_client import get_sec_client
 from sec_mcp.xbrl_mappings import (
     ABSTRACT_COLUMNS,
+    BANK_NONINTEREST_SUBDRIVERS,
     CONCEPT_MAP,
     DIMENSION_COLUMNS,
     LEVEL_COLUMNS,
@@ -50,6 +51,7 @@ from sec_mcp.xbrl_mappings import (
     ConceptEntry,
     IndustryClass,
     detect_industry_class,
+    get_bank_revenue_drivers,
     get_revenue_concepts,
     is_custom_net_revenue,
     is_custom_revenue,
@@ -2309,6 +2311,163 @@ def _decumulate_cash_flow(
         log.debug("cash-flow decumulation failed for %s: %s", ticker_or_cik, exc)
 
 
+def resolve_bank_revenue_drivers(
+    facts_df: pd.DataFrame | None,
+    *,
+    total_net_revenue: float | None = None,
+    period_index: int = 0,
+    target_fp: str | None = None,
+    target_fy: int | None = None,
+    duration_pref: str | None = "annual",
+) -> dict | None:
+    """Decompose bank revenue into canonical income-type drivers.
+
+    Resolves each driver PICK-FIRST from BANK_REVENUE_DRIVERS (first tag the
+    filer reports wins — no summing, so interest-variant double-counting can't
+    happen). Builds a breakdown that reconciles to total net revenue:
+
+      Tier 1: net_interest_income + noninterest_income  (≈ total; a hard XBRL
+              identity for banks that tag both).
+      Tier 2: the noninterest sub-drivers (investment banking, trading,
+              brokerage, asset/wealth mgmt, card, deposits, fiduciary, mortgage)
+              that resolve via a live standard tag, plus a balancing
+              "Other fee income" plug = noninterest − Σ(resolved sub-drivers) so
+              custom-tagged fees invisible in companyfacts are bucketed, not dropped.
+
+    Returns None when neither NII nor noninterest income can be resolved (e.g. a
+    filer misclassified as a bank). Otherwise:
+      {
+        "income_type": [{driver, label, value, pct_of_total, source_tag}, ...],
+        "net_interest_income": float|None,
+        "noninterest_income": float|None,
+        "total_net_revenue": float|None,
+        "reconciles": bool,       # displayed rows sum to total (via residual plug)
+        "tier1_identity": bool,   # NII + noninterest ≈ total held (clean 2-tier)
+      }
+    Values are in the facts' native currency (same scale as metrics["revenue"]);
+    the caller applies FX. Business-segment rows are added separately by the caller.
+    """
+    if facts_df is None or getattr(facts_df, "empty", True):
+        return None
+
+    drivers = get_bank_revenue_drivers()
+
+    def _resolve_driver(key: str) -> tuple[float | None, str | None]:
+        for entry in drivers[key]:
+            val = _lookup_fact(
+                facts_df, entry.xbrl_concept, period_index,
+                match_mode="exact", duration_pref=duration_pref,
+                target_fp=target_fp, target_fy=target_fy,
+            )
+            if val is not None:
+                return val, entry.xbrl_concept
+        return None, None
+
+    resolved: dict[str, tuple[float | None, str | None]] = {
+        key: _resolve_driver(key) for key in drivers
+    }
+
+    nii, nii_src = resolved["net_interest_income"]
+    non, non_src = resolved["noninterest_income"]
+    if nii is None and non is None:
+        return None  # not enough to call this a bank breakdown
+
+    total = total_net_revenue
+    if total is None and nii is not None and non is not None:
+        total = nii + non
+
+    def _pct(v: float | None) -> float | None:
+        if v is None or not total:
+            return None
+        return round(v / total * 100, 1)
+
+    rows: list[dict] = []
+    accounted = 0.0
+    if nii is not None:
+        accounted += nii
+        rows.append({"driver": "net_interest_income", "label": "Net Interest Income",
+                     "value": nii, "pct_of_total": _pct(nii), "source_tag": nii_src})
+
+    # Tier-2 sub-drivers (components OF noninterest income).
+    sub_found = False
+    for key in BANK_NONINTEREST_SUBDRIVERS:
+        val, src = resolved[key]
+        if val is None:
+            continue
+        sub_found = True
+        accounted += val
+        rows.append({"driver": key, "label": drivers[key][0].display_name,
+                     "value": val, "pct_of_total": _pct(val), "source_tag": src})
+
+    # Balancing residual so the rows sum to the reported total. Covers the fees
+    # we cannot decompose (custom-tagged tier-3 lines invisible in companyfacts,
+    # e.g. SCHW's asset-mgmt/trading which aren't even under NoninterestIncome).
+    tier1_identity = (
+        nii is not None and non is not None and total is not None
+        and abs((nii + non) - total) <= abs(total) * 0.01
+    )
+    if total is not None:
+        residual = total - accounted
+        if residual > abs(total) * 0.005:
+            # "Other Fee Income" when the residual is inside a decomposed
+            # noninterest total; "Other Revenue" when noninterest itself is
+            # untagged (SCHW) so the remainder spans fees we can't see.
+            label = ("Other Fee Income"
+                     if (non is not None and sub_found) else "Other Revenue")
+            rows.append({"driver": "other_revenue", "label": label,
+                         "value": residual, "pct_of_total": _pct(residual),
+                         "source_tag": non_src})
+            accounted += residual
+    elif non is not None and not sub_found:
+        # No total available — surface noninterest income as its own row.
+        rows.append({"driver": "noninterest_income", "label": "Noninterest Income",
+                     "value": non, "pct_of_total": _pct(non), "source_tag": non_src})
+        accounted += non
+
+    # Reconciles = the displayed rows sum to the reported total (always true when
+    # a total is present, by construction of the residual plug).
+    reconciles = bool(
+        total is not None and abs(accounted - total) <= abs(total) * 0.01
+    )
+
+    return {
+        "income_type": rows,
+        "net_interest_income": nii,
+        "noninterest_income": non,
+        "total_net_revenue": total,
+        "reconciles": reconciles,          # displayed rows sum to total
+        "tier1_identity": tier1_identity,  # NII + noninterest ≈ total held
+    }
+
+
+def _bank_business_segments(ticker: str, form_type: str = "10-K") -> list[dict]:
+    """Revenue by reportable business division (CIB/CCB/AWM …) from the filing's
+    dimensional data. Uses the authoritative per-filing segment parser (companyfacts
+    strips dimensions). Returns [] unless the filing tags the *business* axis."""
+    try:
+        from sec_mcp.graph.segments import get_dimensional_segments
+        dims = get_dimensional_segments(ticker, form_type) or {}
+        if (dims.get("source_meta") or {}).get("segmentsAxis") != "business":
+            return []
+        return [
+            {"segment": r.get("segment"), "value": r.get("value"), "pct": r.get("pct")}
+            for r in (dims.get("segments") or [])
+        ]
+    except Exception as exc:
+        log.debug("bank business-segment lookup failed for %s: %s", ticker, exc)
+        return []
+
+
+def _scale_bank_drivers(block: dict, fx_rate: float) -> None:
+    """Convert a native-currency driver block to USD in place (native × fx_rate)."""
+    for k in ("net_interest_income", "noninterest_income", "total_net_revenue"):
+        if block.get(k) is not None:
+            block[k] = block[k] * fx_rate
+    for row in block.get("income_type", []):
+        if row.get("value") is not None:
+            row["value"] = row["value"] * fx_rate
+
+
 def extract_financials(
     ticker_or_cik: str,
     *,
@@ -2850,6 +3009,18 @@ def extract_financials(
             sourced["revenue"] = best_src
             confidence["revenue"] = 0.80
 
+    # ── Bank revenue-driver breakdown (income-type composition; additive) ──
+    # Banks only. Computed from the already-loaded native facts_df (cheap), so
+    # metrics["revenue"] here is still the native total. Business-division rows
+    # need a separate filing fetch, so they're gated behind include_segments.
+    bank_drivers = None
+    if industry == IndustryClass.BANK:
+        bank_drivers = resolve_bank_revenue_drivers(
+            facts_df, total_net_revenue=metrics.get("revenue"),
+            period_index=period_index, target_fp=target_fp,
+            target_fy=target_fy, duration_pref=dur_pref,
+        )
+
     # ── Currency conversion to USD (currency detected pre-extraction) ──
     from sec_mcp.core.fx import convert_metrics_to_usd
     result["reporting_currency"] = reporting_currency
@@ -2858,6 +3029,14 @@ def extract_financials(
         result["fx_rate"] = fx_rate
         result["fx_note"] = f"Converted from {reporting_currency} to USD at {fx_rate:.4f}" if fx_rate else f"Reported in {reporting_currency} (conversion unavailable)"
         log.info("Foreign filer %s reports in %s, converted to USD", ticker_or_cik, reporting_currency)
+        if bank_drivers and fx_rate:
+            _scale_bank_drivers(bank_drivers, fx_rate)
+
+    if bank_drivers is not None:
+        if include_segments:
+            bank_drivers["business_segments"] = _bank_business_segments(
+                ticker_or_cik, actual_form)
+        result["bank_revenue_drivers"] = bank_drivers
 
     result["metrics"] = metrics
     result["metrics_sourced"] = sourced

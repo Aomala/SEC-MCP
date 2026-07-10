@@ -307,6 +307,84 @@ REVENUE_BANK: list[ConceptEntry] = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  BANK REVENUE DRIVERS (income-type composition, NOT the total)
+#  Canonical drivers → ordered us-gaap tags. Unlike REVENUE_BANK's aggregate
+#  entries (which are SUMMED for a total and double-count when a filer tags
+#  several interest variants), these are resolved PICK-FIRST: the first tag in
+#  the list that the filer reports wins, giving one clean value per driver.
+#
+#  Backbone identity (reconciles exactly from companyfacts across all banks):
+#      net_interest_income + noninterest_income = total net revenue
+#  Sub-drivers decompose noninterest_income where the filer tags them with a
+#  live STANDARD us-gaap concept. Granular fees re-tagged as company extensions
+#  post-ASU-2014-09 (asset mgmt / card / deposit for GS/MS/SCHW) are invisible in
+#  companyfacts — the resolver buckets that remainder as "Other fee income".
+#  Order within each driver: most-specific / most-common live tag first.
+# ═══════════════════════════════════════════════════════════════════════════
+
+BANK_REVENUE_DRIVERS: dict[str, list[ConceptEntry]] = {
+    # ── Tier 1: the two halves of bank revenue ──
+    "net_interest_income": [
+        ConceptEntry("InterestIncomeExpenseNet", "Net Interest Income"),
+        ConceptEntry("NetInterestIncome", "Net Interest Income (alt)"),
+        ConceptEntry("InterestIncomeExpenseAfterProvisionForLoanLoss",
+                     "Net Interest Income After Provision"),
+    ],
+    "noninterest_income": [
+        ConceptEntry("NoninterestIncome", "Noninterest Income"),
+        ConceptEntry("NonInterestIncome", "Noninterest Income (alt)"),
+    ],
+    # ── Tier 2: noninterest-income sub-drivers (live standard tags only) ──
+    "investment_banking": [
+        ConceptEntry("InvestmentBankingRevenue", "Investment Banking"),
+        ConceptEntry("InvestmentBankingAdvisoryBrokerageAndUnderwritingFeesAndCommissions",
+                     "Investment Banking & Advisory"),
+    ],
+    "trading_principal": [
+        ConceptEntry("PrincipalTransactionsRevenue", "Trading & Principal Transactions"),
+        ConceptEntry("TradingGainsLosses", "Trading Revenue"),
+        ConceptEntry("DebtSecuritiesTradingGainLoss", "Trading Revenue (debt securities)"),
+    ],
+    "brokerage_commissions": [
+        ConceptEntry("BrokerageCommissionsRevenue", "Brokerage & Commissions"),
+        ConceptEntry("CommissionsAndFees", "Commissions & Fees"),
+    ],
+    "asset_wealth_management": [
+        ConceptEntry("AssetManagementFees1", "Asset & Wealth Management"),
+        ConceptEntry("AssetManagementFees", "Asset Management Fees"),
+        ConceptEntry("InvestmentManagementFees", "Investment Management Fees"),
+        ConceptEntry("WealthManagementRevenue", "Wealth Management"),
+    ],
+    "card_income": [
+        ConceptEntry("FeesAndCommissionsCreditAndDebitCards", "Card & Interchange"),
+        ConceptEntry("CreditCardIncome", "Credit Card Income"),
+    ],
+    "deposit_service_charges": [
+        ConceptEntry("FeesAndCommissionsDepositorAccounts", "Deposit Service Charges"),
+    ],
+    "fiduciary_trust": [
+        ConceptEntry("FeesAndCommissionsFiduciaryAndTrustActivities", "Fiduciary & Trust"),
+    ],
+    "mortgage_banking": [
+        ConceptEntry("FeesAndCommissionsMortgageBankingAndServicing", "Mortgage Banking"),
+        ConceptEntry("FeesAndCommissionsMortgageBanking", "Mortgage Banking (alt)"),
+    ],
+}
+
+# Drivers whose values are components OF noninterest_income (used to derive the
+# "Other fee income" plug = noninterest_income − Σ resolved sub-drivers).
+BANK_NONINTEREST_SUBDRIVERS: tuple[str, ...] = (
+    "investment_banking", "trading_principal", "brokerage_commissions",
+    "asset_wealth_management", "card_income", "deposit_service_charges",
+    "fiduciary_trust", "mortgage_banking",
+)
+
+
+def get_bank_revenue_drivers() -> dict[str, list[ConceptEntry]]:
+    return BANK_REVENUE_DRIVERS
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  REVENUE — Insurance
 #  Canonical: premiums_earned + investment income
 # ═══════════════════════════════════════════════════════════════════════════

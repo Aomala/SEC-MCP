@@ -3,11 +3,14 @@
 import pytest
 
 from sec_mcp.xbrl_mappings import (
+    BANK_NONINTEREST_SUBDRIVERS,
+    BANK_REVENUE_DRIVERS,
     CONCEPT_MAP,
     REVENUE_MAP,
     ConceptEntry,
     IndustryClass,
     detect_industry_class,
+    get_bank_revenue_drivers,
     get_revenue_concepts,
 )
 
@@ -110,3 +113,44 @@ class TestConceptMap:
                 )
                 assert isinstance(entry.xbrl_concept, str)
                 assert isinstance(entry.display_name, str)
+
+
+class TestBankRevenueDrivers:
+    def test_getter_returns_mapping(self):
+        assert get_bank_revenue_drivers() is BANK_REVENUE_DRIVERS
+
+    def test_tier1_drivers_present(self):
+        # The reconciling backbone must exist.
+        assert "net_interest_income" in BANK_REVENUE_DRIVERS
+        assert "noninterest_income" in BANK_REVENUE_DRIVERS
+
+    def test_entries_well_formed(self):
+        for driver, entries in BANK_REVENUE_DRIVERS.items():
+            assert isinstance(entries, list) and entries, f"{driver} empty"
+            for e in entries:
+                assert isinstance(e, ConceptEntry)
+                assert isinstance(e.xbrl_concept, str) and e.xbrl_concept
+                assert isinstance(e.display_name, str) and e.display_name
+
+    def test_pick_first_not_aggregate(self):
+        # Drivers are resolved pick-first; no entry should be flagged aggregate
+        # (aggregate=True belongs to REVENUE_BANK's summed total, not here — a
+        # stray aggregate flag would change resolution semantics).
+        for driver, entries in BANK_REVENUE_DRIVERS.items():
+            for e in entries:
+                assert e.aggregate is False, f"{driver}/{e.xbrl_concept} is aggregate"
+
+    def test_subdrivers_are_known_drivers(self):
+        # Every noninterest sub-driver must be a real driver key (used to derive
+        # the "Other fee income" residual plug).
+        for key in BANK_NONINTEREST_SUBDRIVERS:
+            assert key in BANK_REVENUE_DRIVERS, f"sub-driver {key} not a driver"
+
+    def test_subdrivers_exclude_tier1(self):
+        assert "net_interest_income" not in BANK_NONINTEREST_SUBDRIVERS
+        assert "noninterest_income" not in BANK_NONINTEREST_SUBDRIVERS
+
+    def test_no_duplicate_concepts_within_driver(self):
+        for driver, entries in BANK_REVENUE_DRIVERS.items():
+            tags = [e.xbrl_concept for e in entries]
+            assert len(tags) == len(set(tags)), f"{driver} has duplicate tags"

@@ -295,6 +295,39 @@ def _segments_block(ticker: str, period: str = "annual") -> dict:
     return out
 
 
+def _revenue_drivers_block(ticker: str, period: str = "annual") -> dict | None:
+    """Bank revenue-driver breakdown (banks only) — two lenses, chart-ready:
+      incomeType:       net interest / IB / trading / brokerage / other fee income
+      businessSegments: reportable divisions (CIB/CCB/AWM …) from the filing
+
+    Reshaped to the surface's {name, value, pct} convention. Returns None for
+    non-banks (extraction only populates `bank_revenue_drivers` for IndustryClass.BANK).
+    """
+    import contextlib
+    form = "10-Q" if period in ("quarterly", "ttm") else "10-K"
+    block = None
+    with contextlib.suppress(Exception):
+        block = (extract_financials(ticker, form_type=form,
+                                    include_segments=True) or {}).get("bank_revenue_drivers")
+    if not block:
+        return None
+    income = [{"name": r.get("label"), "value": r.get("value"),
+               "pct": r.get("pct_of_total"), "driver": r.get("driver")}
+              for r in (block.get("income_type") or []) if r.get("value") is not None]
+    segs = [{"name": s.get("segment"), "value": s.get("value"), "pct": s.get("pct")}
+            for s in (block.get("business_segments") or []) if s.get("value") is not None]
+    segs.sort(key=lambda s: -(s["value"] or 0))
+    return {
+        "incomeType": income,
+        "businessSegments": segs,
+        "netInterestIncome": block.get("net_interest_income"),
+        "noninterestIncome": block.get("noninterest_income"),
+        "totalNetRevenue": block.get("total_net_revenue"),
+        "reconciles": block.get("reconciles"),
+        "tier1Identity": block.get("tier1_identity"),
+    }
+
+
 def _chart_series(periods: list[dict]) -> dict:
     """Per-metric arrays (oldest → newest) ready for direct charting."""
     ordered = list(reversed(periods))                      # charts read left-to-right
@@ -345,6 +378,9 @@ def get_fundamentals_impl(ticker, period=None, metrics=None, periods_back=None,
     # Pass period so quarterly views pull the latest 10-Q/6-K segments.
     if include_segments:
         out["segments"] = _segments_block(tk, period=period)
+        drivers = _revenue_drivers_block(tk, period=period)   # banks only; None otherwise
+        if drivers:
+            out["revenueDrivers"] = drivers
     return out
 
 
