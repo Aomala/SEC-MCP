@@ -52,6 +52,7 @@ from sec_mcp.xbrl_mappings import (
     IndustryClass,
     detect_industry_class,
     get_bank_revenue_drivers,
+    get_operating_income_concepts,
     get_revenue_concepts,
     is_custom_net_revenue,
     is_custom_revenue,
@@ -2820,6 +2821,11 @@ def extract_financials(
 
     # All other metrics from the CONCEPT_MAP
     for metric_name, concepts in CONCEPT_MAP.items():
+        # operating_income is industry-aware: banks/insurers use pretax income as
+        # their operating-income proxy; standard filers use a list with no pretax
+        # fallback (so pretax is never mislabeled as operating income).
+        if metric_name == "operating_income":
+            concepts = get_operating_income_concepts(industry)
         resolved = _resolve_metric(
             facts_df, concepts, period_index=period_index,
             industry=industry, duration_pref=dur_pref,
@@ -2894,6 +2900,20 @@ def extract_financials(
             metrics["operating_income"] = gp_val - abs(opex_val)
             sourced["operating_income"] = "Computed: Gross Profit - OpEx"
             confidence["operating_income"] = 0.70
+
+    # CapEx: add equipment bought to lease OUT (equipment lessors report two
+    # capex lines — own-use PP&E + rental/leased fleet — and every data provider
+    # reports headline capex as the sum, e.g. CAT: 2.82B PP&E + 1.47B on-lease =
+    # 4.29B). Distinct, non-overlapping concepts, so summing can't double-count.
+    capex_src = sourced.get("capital_expenditures") or ""
+    if metrics.get("capital_expenditures") is not None and "Capital Expenditures" in capex_src:
+        lease_capex = _lookup_fact(
+            facts_df, "PaymentsToAcquireEquipmentOnLease", period_index,
+            match_mode="exact", duration_pref=dur_pref,
+            target_fp=target_fp, target_fy=target_fy)
+        if lease_capex is not None and lease_capex > 0:
+            metrics["capital_expenditures"] = metrics["capital_expenditures"] + lease_capex
+            sourced["capital_expenditures"] = f"{capex_src} + Equipment on Lease"
 
     # Total liabilities = Assets − Equity − NCI (when no Liabilities subtotal
     # is tagged — utilities often jump straight to "capitalization and
@@ -3064,6 +3084,8 @@ def extract_financials(
         )
         prior_metrics["revenue"] = prev_rev.value
         for metric_name, concepts in CONCEPT_MAP.items():
+            if metric_name == "operating_income":
+                concepts = get_operating_income_concepts(industry)
             prev = _resolve_metric(
                 facts_df, concepts, period_index=yoy_idx,
                 industry=industry, duration_pref=dur_pref,
@@ -3087,6 +3109,8 @@ def extract_financials(
             )
             qoq_metrics["revenue"] = q_rev.value
             for metric_name, concepts in CONCEPT_MAP.items():
+                if metric_name == "operating_income":
+                    concepts = get_operating_income_concepts(industry)
                 q_prev = _resolve_metric(
                     facts_df, concepts, period_index=qoq_idx,
                     industry=industry, duration_pref=dur_pref,

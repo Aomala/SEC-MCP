@@ -6,13 +6,18 @@ from sec_mcp.xbrl_mappings import (
     BANK_NONINTEREST_SUBDRIVERS,
     BANK_REVENUE_DRIVERS,
     CONCEPT_MAP,
+    OPERATING_INCOME,
+    OPERATING_INCOME_FINANCIAL,
     REVENUE_MAP,
     ConceptEntry,
     IndustryClass,
     detect_industry_class,
     get_bank_revenue_drivers,
+    get_operating_income_concepts,
     get_revenue_concepts,
 )
+
+_PRETAX = "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest"
 
 
 class TestDetectIndustryClass:
@@ -154,3 +159,31 @@ class TestBankRevenueDrivers:
         for driver, entries in BANK_REVENUE_DRIVERS.items():
             tags = [e.xbrl_concept for e in entries]
             assert len(tags) == len(set(tags)), f"{driver} has duplicate tags"
+
+
+class TestOperatingIncomeSplit:
+    def test_standard_list_has_no_pretax_fallback(self):
+        # Standard filers must NOT fall back to pretax income (it mislabels
+        # pretax as operating income for JNJ/LLY/GE/O/XOM).
+        tags = [e.xbrl_concept for e in OPERATING_INCOME]
+        assert _PRETAX not in tags
+
+    def test_financials_have_pretax_as_fallback(self):
+        # Financials get pretax as a LAST-RESORT fallback (not first): a real
+        # OperatingIncomeLoss (UNH) still wins; only filers with no op-income tag
+        # (banks, BRK-B) fall through to the pretax proxy.
+        tags = [e.xbrl_concept for e in OPERATING_INCOME_FINANCIAL]
+        assert _PRETAX in tags
+        assert tags[0] == "OperatingIncomeLoss"          # real op-income wins first
+        assert tags.index("OperatingIncomeLoss") < tags.index(_PRETAX)
+
+    def test_getter_routes_by_industry(self):
+        for ind in (IndustryClass.BANK, IndustryClass.INSURANCE):
+            assert get_operating_income_concepts(ind) is OPERATING_INCOME_FINANCIAL
+        for ind in (IndustryClass.STANDARD, IndustryClass.REIT,
+                    IndustryClass.UTILITY, IndustryClass.CRYPTO):
+            assert get_operating_income_concepts(ind) is OPERATING_INCOME
+
+    def test_real_operating_income_still_first_for_standard(self):
+        # A filer that DOES tag real operating income (AAPL) is unaffected.
+        assert OPERATING_INCOME[0].xbrl_concept == "OperatingIncomeLoss"

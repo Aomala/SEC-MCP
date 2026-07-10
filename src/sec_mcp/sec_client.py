@@ -39,6 +39,18 @@ SUBMISSIONS_URL = f"{DATA_BASE}/submissions/CIK{{cik}}.json"
 COMPANY_FACTS_URL = f"{DATA_BASE}/api/xbrl/companyfacts/CIK{{cik}}.json"
 COMPANY_CONCEPT_URL = f"{DATA_BASE}/api/xbrl/companyconcept/CIK{{cik}}/{{taxonomy}}/{{tag}}.json"
 
+# Ticker → CIK overrides for corporate-reorg edge cases where SEC's own
+# company_tickers.json points a ticker at a newly-registered holding-company CIK
+# that carries little/no XBRL history, while the real filing history lives under
+# the legacy operating-company CIK.
+#   XOM: company_tickers.json maps XOM → 0002115436 ("ExxonMobil Holdings Corp",
+#   a 2025 holdco with ~0 facts); the full history + current 10-Ks are under
+#   0000034088 ("Exxon Mobil Corporation"). Without this, every XOM metric is null.
+# Revisit if/when the holdco becomes the primary consolidated filer.
+_CIK_OVERRIDES: dict[str, str] = {
+    "XOM": "0000034088",
+}
+
 # SEC requires a descriptive User-Agent with contact email
 DEFAULT_USER_AGENT = "SEC-MCP sec-mcp@example.com"
 
@@ -292,6 +304,11 @@ class SECClient:
         # If it's already a numeric CIK
         if clean.isdigit():
             return clean.zfill(10)
+
+        # Reorg/holdco overrides take precedence over SEC's ticker file
+        override = _CIK_OVERRIDES.get(clean)
+        if override:
+            return override.zfill(10)
 
         # Look up in tickers map
         try:

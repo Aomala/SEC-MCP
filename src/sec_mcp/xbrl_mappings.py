@@ -577,9 +577,41 @@ OPERATING_INCOME: list[ConceptEntry] = [
     # IFRS
     ConceptEntry("ProfitLossFromOperatingActivities", "IFRS Operating Profit"),
     ConceptEntry("OperatingProfit", "IFRS Operating Profit (alt)"),
-    ConceptEntry("IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
-                 "Income Before Tax"),
+    # NOTE: the pretax concept (IncomeLossFromContinuingOperationsBeforeIncomeTaxes
+    # ...NoncontrollingInterest) is deliberately NOT a fallback here. For standard
+    # filers that tag no real operating-income concept (JNJ, LLY, GE, O, XOM),
+    # pretax income ≠ operating income once non-operating items are nonzero, so it
+    # mislabels pretax as operating income. It stays in INCOME_BEFORE_TAX (correct
+    # there) and in OPERATING_INCOME_FINANCIAL (banks/insurers use pretax as their
+    # operating-income proxy — see OPERATING_INCOME_MAP).
 ]
+
+# Banks & most insurers report no COGS/opex operating-income line; data providers
+# fall back to pretax income for them. So for financials ONLY, append pretax as a
+# LAST-RESORT fallback — a real us-gaap:OperatingIncomeLoss (health insurers /
+# managed care like UNH genuinely tag one) still wins first, and only filers that
+# tag no operating-income concept at all (banks, BRK-B, PGR) get the pretax proxy.
+# (Ranking pretax first was wrong: it robbed UNH of its real operating income.)
+OPERATING_INCOME_FINANCIAL: list[ConceptEntry] = OPERATING_INCOME + [
+    ConceptEntry("IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                 "Pretax Income (operating proxy)"),
+    ConceptEntry("IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+                 "Pretax Income (operating proxy, alt)"),
+    ConceptEntry("IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+                 "Pretax Income (operating proxy, alt2)"),
+]
+
+OPERATING_INCOME_MAP: dict[IndustryClass, list[ConceptEntry]] = {
+    IndustryClass.BANK: OPERATING_INCOME_FINANCIAL,
+    IndustryClass.INSURANCE: OPERATING_INCOME_FINANCIAL,
+}
+
+
+def get_operating_income_concepts(industry: IndustryClass) -> list[ConceptEntry]:
+    """Operating-income tag list, industry-aware. Financials (banks/insurers) use
+    pretax income as the operating-income proxy; everyone else uses the standard
+    list with NO pretax fallback."""
+    return OPERATING_INCOME_MAP.get(industry, OPERATING_INCOME)
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  OTHER INCOME / EXPENSE
@@ -910,6 +942,12 @@ CAPITAL_EXPENDITURES: list[ConceptEntry] = [
     ConceptEntry("PaymentsToAcquireOtherPropertyPlantAndEquipment",
                  "Capital Expenditures (other PP&E)"),
     ConceptEntry("PaymentsForCapitalImprovements", "Capital Improvements"),
+    # REIT real-estate capex (property-owning REITs tag no generic PP&E line;
+    # their capex is real-estate acquisition/development). Late fallbacks: only
+    # reached when nothing above matched, so non-REITs are unaffected.
+    ConceptEntry("PaymentsToAcquireRealEstate", "Real Estate Acquisitions (REIT capex)"),
+    ConceptEntry("PaymentsToAcquireAndDevelopRealEstate",
+                 "Real Estate Acquisition & Development (REIT capex)"),
     # IFRS
     ConceptEntry("PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
                  "IFRS CapEx"),
