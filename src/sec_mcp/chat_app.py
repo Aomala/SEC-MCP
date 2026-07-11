@@ -2318,6 +2318,23 @@ _SECTOR_DISPLAY: dict[str, str] = {
     "materials_mining": "Basic Materials",
 }
 
+# Canonical GICS sector (from classify) → the FMP/Yahoo display vocabulary the
+# /api/tickers/bulk consumer (frontend SECTOR_TO_BULK) expects. Lets bulk assign
+# sectors with the accurate classifier while keeping the wire vocabulary stable.
+_GICS_TO_DISPLAY: dict[str, str] = {
+    "Technology": "Technology",
+    "Financials": "Financial Services",
+    "Health Care": "Healthcare",
+    "Consumer Discretionary": "Consumer Cyclical",
+    "Consumer Staples": "Consumer Defensive",
+    "Communication Services": "Communication Services",
+    "Energy": "Energy",
+    "Industrials": "Industrials",
+    "Materials": "Basic Materials",
+    "Real Estate": "Real Estate",
+    "Utilities": "Utilities",
+}
+
 
 # Enrichment for the curated set, loaded once at import. `industry` is derived
 # in-process from the classifier; `marketCap` + `highlight` are precomputed static
@@ -2364,20 +2381,30 @@ async def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
             if not tk or tk in seen:
                 continue
             seen.add(tk)
+            # Sector: prefer the canonical GICS classifier (fixes the SIC↔GICS
+            # mismatches the coarse SECTOR_UNIVERSE buckets get wrong — AMZN→
+            # Consumer Cyclical, GOOGL/META→Communication Services), falling back
+            # to the curated bucket. Emit the FMP/Yahoo display vocab the frontend
+            # expects. industry comes from the same classifier for consistency.
+            cls = None
+            try:
+                cls = _classify(ticker=tk) if _classify else None
+            except Exception:
+                cls = None
+            gics = cls.sector if (cls and cls.sector != "Other") else None
             bucket = _TICKER_TO_SECTOR.get(tk)
+            sector_display = (_GICS_TO_DISPLAY.get(gics) if gics
+                              else (_SECTOR_DISPLAY.get(bucket) if bucket else None))
             row = {
                 "ticker": tk,
                 "name": rec.get("title", ""),
                 "cik": rec.get("cik_str", ""),
                 "exchange": rec.get("exchange") or None,
-                "sector": _SECTOR_DISPLAY.get(bucket) if bucket else None,
+                "sector": sector_display,
                 "is_actively_trading": True,
             }
-            if bucket:  # enrich only the curated/sectored set
-                try:
-                    row["industry"] = _classify(ticker=tk).industry if _classify else None
-                except Exception:
-                    row["industry"] = None
+            if sector_display:  # enrich only the curated/sectored set
+                row["industry"] = (cls.industry if (cls and cls.industry != "Unknown") else None)
                 row["marketCap"] = _BULK_MARKETCAP.get(tk)
                 row["highlight"] = _BULK_HIGHLIGHTS.get(tk)
             rows.append(row)
