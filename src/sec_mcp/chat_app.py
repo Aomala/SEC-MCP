@@ -2536,24 +2536,53 @@ async def search_realtime(req: SearchRequest):
 
 @app.get("/api/news/{ticker}")
 async def get_news(ticker: str):
-    """Get latest financial news for a ticker via Perplexity."""
+    """Latest per-ticker news. Polygon Ticker News is the reliable primary source
+    (structured, no Perplexity); a Perplexity narrative is added only when its key
+    is available and not quota-exhausted."""
+    tk = ticker.upper()
     try:
-        from sec_mcp.perplexity_client import is_available, search_financial_news
-        if not is_available():
-            return {"error": "Perplexity API not configured"}
+        from sec_mcp.polygon_client import get_ticker_news
 
-        result = search_financial_news(ticker.upper())
-        if not result:
-            return {"error": "No news found"}
+        articles = []
+        for a in get_ticker_news(tk, limit=12):
+            title = a.get("title")
+            url = a.get("article_url")
+            if not title or not url:
+                continue
+            insights = a.get("insights") or []
+            sentiment = next(
+                (i.get("sentiment") for i in insights if str(i.get("ticker", "")).upper() == tk),
+                None,
+            )
+            articles.append({
+                "title": title,
+                "url": url,
+                "publisher": (a.get("publisher") or {}).get("name"),
+                "publishedUtc": a.get("published_utc"),
+                "imageUrl": a.get("image_url"),
+                "description": a.get("description"),
+                "tickers": a.get("tickers") or [],
+                "sentiment": sentiment,
+            })
 
-        return {
-            "ticker": ticker.upper(),
-            "content": result["content"],
-            "citations": result.get("citations", []),
-        }
+        # Optional Perplexity narrative — skipped entirely when the key is missing
+        # or quota-exhausted (the circuit breaker), so it never blocks the feed.
+        content, citations = None, []
+        try:
+            from sec_mcp.perplexity_client import is_available, search_financial_news
+
+            if is_available():
+                result = search_financial_news(tk)
+                if result:
+                    content = result.get("content")
+                    citations = result.get("citations", [])
+        except Exception as exc:  # noqa: BLE001 — enrichment is best-effort
+            log.warning("Perplexity news enrich failed for %s: %s", tk, exc)
+
+        return {"ticker": tk, "articles": articles, "content": content, "citations": citations}
     except Exception as e:
-        log.exception("News fetch failed for %s", ticker)
-        return {"error": str(e)}
+        log.exception("News fetch failed for %s", tk)
+        return {"error": str(e), "ticker": tk, "articles": []}
 
 
 @app.post("/api/validate-metric")

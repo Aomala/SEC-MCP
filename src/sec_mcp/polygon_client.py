@@ -60,6 +60,86 @@ def get_ticker_details(ticker: str) -> dict | None:
     return data.get("results")
 
 
+def get_ticker_news(ticker: str, limit: int = 12) -> list[dict]:
+    """Recent per-ticker news from Polygon (reliable, no Perplexity). Each item:
+    title, article_url, publisher{name,...}, published_utc, tickers[], image_url,
+    description, insights[] (per-ticker sentiment)."""
+    data = _get(
+        "/v2/reference/news",
+        {"ticker": ticker.upper(), "limit": limit, "order": "desc", "sort": "published_utc"},
+    )
+    if not isinstance(data, dict):
+        return []
+    return data.get("results") or []
+
+
+def get_index_snapshot(symbols: list[str]) -> dict[str, dict] | None:
+    """Live snapshot for one or more index instruments (I:SPX, I:VIX, …).
+
+    Returns a dict keyed by the requested symbol → {value, change, changePct,
+    name}. Polygon's Indices add-on backs this; None when the key lacks the
+    entitlement or the request fails (caller degrades gracefully).
+    """
+    if not symbols:
+        return None
+    # Polygon wants comma-joined symbols under ticker.any_of
+    joined = ",".join(s.upper() for s in symbols)
+    data = _get("/v3/snapshot/indices", {"ticker.any_of": joined, "limit": len(symbols)})
+    if not data or not isinstance(data, dict):
+        return None
+    out: dict[str, dict] = {}
+    for row in data.get("results") or []:
+        sym = (row.get("ticker") or "").upper()
+        if not sym:
+            continue
+        sess = row.get("session") or {}
+        out[sym] = {
+            "value": row.get("value"),
+            "change": sess.get("change"),
+            "changePct": sess.get("change_percent"),
+            "name": row.get("name"),
+        }
+    return out or None
+
+
+def get_index_aggs(symbol: str, date_from: str, date_to: str,
+                   timespan: str = "day") -> list[dict] | None:
+    """Daily (or other timespan) index-level history between two ISO dates.
+
+    Each row is {t: epoch_ms, c: close_value, …}. Index aggs carry the level
+    in `c`, same as equity closes.
+    """
+    sym = symbol.upper()
+    data = _get(
+        f"/v2/aggs/ticker/{sym}/range/1/{timespan}/{date_from}/{date_to}",
+        {"adjusted": "true", "sort": "asc", "limit": 5000},
+    )
+    if not data or not isinstance(data, dict):
+        return None
+    results = data.get("results")
+    return results if isinstance(results, list) else None
+
+
+def get_grouped_daily(date: str) -> dict[str, dict] | None:
+    """Every US stock's OHLC for one trading date in a single request.
+
+    The breadth + cap-weight input: one call returns ~10k rows keyed by
+    ticker → {c, o, h, l, v}. `date` is ISO 'YYYY-MM-DD'.
+    """
+    data = _get(
+        f"/v2/aggs/grouped/locale/us/market/stocks/{date}",
+        {"adjusted": "true"},
+    )
+    if not data or not isinstance(data, dict):
+        return None
+    out: dict[str, dict] = {}
+    for row in data.get("results") or []:
+        sym = (row.get("T") or "").upper()
+        if sym:
+            out[sym] = row
+    return out or None
+
+
 def get_financials(ticker: str, limit: int = 4) -> list[dict] | None:
     """Fetch standardized financials from Polygon.
 
