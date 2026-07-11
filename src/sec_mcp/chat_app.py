@@ -2165,6 +2165,59 @@ async def etf_comps(req: EtfCompsRequest) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+#  Index instruments + market overview — real levels (not ETF proxies)
+# ═══════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/index/{symbol}")
+async def get_index_route(symbol: str, history: bool = True, window: str = "1M") -> dict:
+    """Real index level + history: I:SPX / SPX / ^GSPC, I:NDX, I:DJI, I:RUT, I:VIX."""
+    from sec_mcp.surface.indices import get_index_impl
+
+    try:
+        return get_index_impl(symbol, include_history=history, history_window=window)
+    except Exception as exc:  # noqa: BLE001 — surface layer already structures ToolError
+        log.warning("Index fetch failed for %s: %s", symbol, exc)
+        return {"error": str(exc), "code": "INTERNAL", "symbol": symbol.upper()}
+
+
+@app.get("/api/market/overview")
+async def get_market_overview_route() -> dict:
+    """One-call market dashboard: index tape + breadth + cap-weighted sectors."""
+    from sec_mcp.surface.indices import get_market_overview_impl
+
+    try:
+        return get_market_overview_impl()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Market overview failed: %s", exc)
+        return {"error": str(exc), "code": "INTERNAL"}
+
+
+@app.post("/api/ingest/indices")
+async def ingest_indices_route(request: Request) -> dict:
+    """Trigger the breadth + constituent recompute (cron-invoked, secret-gated).
+
+    Set INGEST_SECRET to require an `x-ingest-secret` header; unset = open
+    (dev). Runs the worker inline and returns its coverage summary.
+    """
+    import os
+
+    secret = os.environ.get("INGEST_SECRET", "").strip()
+    if secret and request.headers.get("x-ingest-secret", "") != secret:
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+    from sec_mcp.ingest_indices import run_ingest
+
+    try:
+        blob = run_ingest()
+        # Return the summary, not the full sector array, to keep the response light.
+        return {"ok": True, "coverage": blob.get("coverage"),
+                "breadth": blob.get("breadth"), "asOf": blob.get("cached_at_iso")}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Index ingest failed: %s", exc)
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 #  Single-ticker valuation metrics — SEC fundamentals + live price
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -2266,6 +2319,23 @@ _SECTOR_DISPLAY: dict[str, str] = {
 }
 
 
+# Enrichment for the curated set, loaded once at import. `industry` is derived
+# in-process from the classifier; `marketCap` + `highlight` are precomputed static
+# JSON in src/sec_mcp/data/ (refreshed offline — market cap ranking is stable, and
+# highlights are qualitative facts). Missing files degrade to empty dicts.
+def _load_bulk_data(name: str) -> dict:
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        return _json.loads((_Path(__file__).parent / "data" / name).read_text())
+    except Exception:
+        return {}
+
+
+_BULK_MARKETCAP: dict = _load_bulk_data("marketcap.json")
+_BULK_HIGHLIGHTS: dict = _load_bulk_data("highlights.json")
+
+
 @app.get("/api/tickers/bulk")
 async def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
     """Paginated dump of the full SEC-registered ticker universe.
@@ -2281,6 +2351,10 @@ async def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
         page_size = min(max(1, page_size), 2000)
 
         tmap = get_sec_client()._get_tickers_map()
+        try:
+            from sec_mcp.classify import classify as _classify
+        except Exception:
+            _classify = None
         rows = []
         seen: set[str] = set()
         for key, rec in tmap.items():
@@ -2291,14 +2365,22 @@ async def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
                 continue
             seen.add(tk)
             bucket = _TICKER_TO_SECTOR.get(tk)
-            rows.append({
+            row = {
                 "ticker": tk,
                 "name": rec.get("title", ""),
                 "cik": rec.get("cik_str", ""),
                 "exchange": rec.get("exchange") or None,
                 "sector": _SECTOR_DISPLAY.get(bucket) if bucket else None,
                 "is_actively_trading": True,
-            })
+            }
+            if bucket:  # enrich only the curated/sectored set
+                try:
+                    row["industry"] = _classify(ticker=tk).industry if _classify else None
+                except Exception:
+                    row["industry"] = None
+                row["marketCap"] = _BULK_MARKETCAP.get(tk)
+                row["highlight"] = _BULK_HIGHLIGHTS.get(tk)
+            rows.append(row)
         rows.sort(key=lambda r: r["ticker"])
 
         total = len(rows)
