@@ -68,7 +68,6 @@ def _extract_screening_metrics(ticker: str, data: dict, sector: str) -> dict | N
     net_income = metrics.get("net_income")
     gross_profit = metrics.get("gross_profit")
     total_assets = metrics.get("total_assets")
-    total_liabilities = metrics.get("total_liabilities")
     total_equity = metrics.get("stockholders_equity") or metrics.get("total_equity")
     eps = metrics.get("eps") or metrics.get("earnings_per_share") or metrics.get("diluted_eps")
 
@@ -85,12 +84,16 @@ def _extract_screening_metrics(ticker: str, data: dict, sector: str) -> dict | N
     elif ratios.get("net_margin") is not None:
         net_margin = ratios["net_margin"]
 
-    # D/E ratio
-    de_ratio = None
-    if total_liabilities and total_equity and total_equity != 0:
-        de_ratio = total_liabilities / total_equity
-    elif ratios.get("debt_to_equity") is not None:
-        de_ratio = ratios["debt_to_equity"]
+    # D/E ratio — canonical definition is total_debt/equity (core.ratios),
+    # matching /api/metrics and /api/comps. The old total_liabilities/equity
+    # figure survives as liabilities_to_equity in the ratios dict; screening
+    # thresholds shift DOWN with this change (debt < liabilities).
+    de_ratio = ratios.get("debt_to_equity")
+    if de_ratio is None:
+        ltd = metrics.get("long_term_debt")
+        std = metrics.get("short_term_debt")
+        if (ltd is not None or std is not None) and total_equity and total_equity > 0:
+            de_ratio = ((ltd or 0) + (std or 0)) / total_equity
 
     return {
         "ticker": ticker,
@@ -143,16 +146,16 @@ def screen(filters: dict, limit: int = 50) -> list[dict]:
 
     for sector_name, tickers in sectors_to_scan.items():
         for ticker in tickers:
-            # Try Supabase cache — skip if not cached
-            cached = supabase_cache.get_cached(ticker, "financials")
-            if not cached or not isinstance(cached, dict) or not cached.get("metrics"):
-                # Also try with common period keys
-                for period_key in ("10-K|latest", "10-K|None", "annual"):
-                    cached = supabase_cache.get_cached(ticker, "financials", period_key)
-                    if cached and isinstance(cached, dict) and cached.get("metrics"):
-                        break
-                else:
-                    continue
+            # Try Supabase cache — v2 key first (what every writer produces),
+            # then the pre-versioning keys until the dual-write era ends.
+            from sec_mcp.core.cache_keys import financials_period_key
+            cached = None
+            for period_key in (financials_period_key(), "10-K|latest", "10-K|None", "annual"):
+                cached = supabase_cache.get_cached(ticker, "financials", period_key)
+                if cached and isinstance(cached, dict) and cached.get("metrics"):
+                    break
+            else:
+                continue
 
             row = _extract_screening_metrics(ticker, cached, sector_name)
             if not row:

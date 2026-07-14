@@ -95,10 +95,13 @@ async def _startup():
     def _prewarm_cache():
         """Pre-warm the top 10 most-searched tickers if not already cached."""
         from sec_mcp import supabase_cache
+        from sec_mcp.core.cache_keys import financials_period_key
         try:
             for ticker in _HOT_TICKERS:
-                # Check if already cached in Supabase
-                cached = supabase_cache.get_cached(ticker, "financials", "10-K|latest")
+                # Check if already cached in Supabase (v2 key — what the
+                # serving paths actually read)
+                cached = supabase_cache.get_cached(
+                    ticker, "financials", financials_period_key())
                 if cached and isinstance(cached, dict) and cached.get("metrics"):
                     log.debug("Pre-warm: %s already cached", ticker)
                     continue
@@ -108,7 +111,8 @@ async def _startup():
                         ticker, include_statements=True, include_segments=True,
                     )
                     if data and data.get("metrics"):
-                        supabase_cache.set_cached(ticker, "financials", data, "10-K|latest")
+                        supabase_cache.set_cached(
+                            ticker, "financials", data, financials_period_key())
                         acc = (data.get("filing_info") or {}).get("accession_number", "prewarm")
                         summary = generate_local_summary(data)
                         _rcache_put(ticker, acc, data, summary)
@@ -165,6 +169,8 @@ class CompsRequest(BaseModel):
     tickers: list[str]
     year: int | None = None
     form_type: str = "10-K"
+    # "annual" (default, unchanged behavior) | "quarterly" | "ttm"
+    period: str = "annual"
 
 
 # ── Peer comparison map ────────────────────────────────────────────────────
@@ -460,11 +466,12 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
       4. SEC EDGAR — authoritative source, slowest
     """
     from sec_mcp import supabase_cache
+    from sec_mcp.core.cache_keys import financials_period_key
 
     # ── Try Supabase cache first (before hitting SEC EDGAR) ──
     # Cache version bumped to v2 — schema added industry_class + sector-aware
     # income_statement[] rows; v1 entries lack these fields, force refresh.
-    period_key = f"v2|{form_type}|{year or 'latest'}"
+    period_key = financials_period_key(form_type, year)
     sb_cached = supabase_cache.get_cached(ticker.upper(), "financials", period_key)
     if sb_cached and isinstance(sb_cached, dict) and sb_cached.get("metrics"):
         log.info("Supabase cache hit for %s financials", ticker)
@@ -495,7 +502,10 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
                 _rcache_put(ticker, acc, data, summary)
                 disk_cache.put(ticker, acc, data, summary)
             # ── Persist to Supabase for cross-deploy caching ──
-            supabase_cache.set_cached(ticker.upper(), "financials", data, period_key)
+            ttl = (supabase_cache.QUARTERLY_FINANCIALS_TTL
+                   if form_type in ("10-Q", "6-K") else None)
+            supabase_cache.set_cached(ticker.upper(), "financials", data,
+                                      period_key, ttl=ttl)
         else:
             summary = "No data available."
 
@@ -510,31 +520,58 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
     return result
 
 
-def _handle_compare(tickers: list[str], year: int | None, form_type: str = "10-K") -> dict:
+def _handle_compare(
+    tickers: list[str],
+    year: int | None,
+    form_type: str = "10-K",
+    period: str = "annual",
+) -> dict:
     """Handle a comparison request for multiple companies.
 
     Performance: check _rcache and disk_cache for each ticker before falling
     back to the full extract_financials_batch().  Cached hits are spliced in
     so only uncached tickers hit SEC EDGAR.
+
+    period="ttm" swaps each result's metrics/ratios for the batch-warmed TTM
+    block (cached-only — building TTM live for 8 tickers would take minutes);
+    tickers without a warm TTM entry keep annual data, marked "annual_fallback".
     """
     from sec_mcp import supabase_cache
+    from sec_mcp.core.cache_keys import (
+        QUARTER_METRICS_DATA_TYPE,
+        QUARTER_METRICS_PERIOD,
+        TTM_DATA_TYPE,
+        TTM_PERIOD,
+        financials_period_key,
+        legacy_financials_period_key,
+    )
+    from sec_mcp.core.ratios import compute_ratios, not_applicable_for, to_percent
+
+    if period == "quarterly":
+        form_type = "10-Q"
 
     # Try to pull each ticker from cache: memory → Supabase → SEC EDGAR
     cached_results: dict[str, dict] = {}  # ticker -> data
     uncached: list[str] = []
     for t in tickers:
         tk = t.upper()
-        # 1. Memory cache
+        # 1. Memory cache — annual entries only; a 10-Q compare must not be
+        #    served a lingering annual extraction (entries aren't form-keyed)
         hit = None
-        for key, entry in _result_cache.items():
-            if key.startswith(tk + "|") and (time.time() - entry["ts"]) < _RESULT_CACHE_TTL:
-                hit = entry
-                break
+        if form_type == "10-K":
+            for key, entry in _result_cache.items():
+                if key.startswith(tk + "|") and (time.time() - entry["ts"]) < _RESULT_CACHE_TTL:
+                    hit = entry
+                    break
         if hit:
             cached_results[tk] = hit["data"]
             continue
-        # 2. Supabase cache
-        sb_data = supabase_cache.get_cached(tk, "financials", f"{form_type}|latest")
+        # 2. Supabase cache — v2 key first, pre-versioning key as fallback
+        #    (transition: remove the legacy read once the batch dual-write era ends)
+        sb_data = supabase_cache.get_cached(tk, "financials", financials_period_key(form_type))
+        if not (sb_data and isinstance(sb_data, dict) and sb_data.get("metrics")):
+            sb_data = supabase_cache.get_cached(
+                tk, "financials", legacy_financials_period_key(form_type))
         if sb_data and isinstance(sb_data, dict) and sb_data.get("metrics"):
             cached_results[tk] = sb_data
             continue
@@ -550,14 +587,78 @@ def _handle_compare(tickers: list[str], year: int | None, form_type: str = "10-K
         log.exception("Compare batch failed")
         return {"tool": "compare", "error": str(e), "results": []}
 
-    # Merge cached + fresh in original ticker order
-    fresh_iter = iter(fresh)
+    # Merge cached + fresh in original ticker order. extract_financials_batch
+    # returns COMPLETION order (as_completed), so key fresh blobs by their own
+    # ticker — a positional splice would graft one company's data onto another.
+    fresh_by_ticker: dict[str, dict] = {}
+    for d in fresh:
+        key = str((d or {}).get("ticker_or_cik") or "").upper()
+        if key and key not in fresh_by_ticker:
+            fresh_by_ticker[key] = d
     results = []
     for t in tickers:
-        if t.upper() in cached_results:
-            results.append(cached_results[t.upper()])
-        else:
-            results.append(next(fresh_iter, None))
+        tk = t.upper()
+        results.append(cached_results.get(tk) or fresh_by_ticker.get(tk))
+
+    # Serve-time ratio recompute — cached blobs carry ratios frozen at write
+    # time; recomputing from metrics (microseconds) lets new ratio fields
+    # appear without invalidating warm cache entries. `ratios` stays FRACTIONS
+    # (frozen contract — fineasai and static/app.js multiply ×100); ratios_pct
+    # is the additive percent view. Shallow copies: memory-cache entries are
+    # shared references and must not be mutated.
+    for i, (t, d) in enumerate(zip(tickers, results, strict=True)):
+        if not d or d.get("error") or not d.get("metrics"):
+            continue
+        d = {**d}
+        ratio_prior = d.get("prior_metrics")
+        if period == "ttm":
+            ttm = supabase_cache.get_cached(t.upper(), TTM_DATA_TYPE, TTM_PERIOD)
+            if ttm and isinstance(ttm, dict) and ttm.get("metrics"):
+                d["metrics"] = ttm["metrics"]
+                # prior_metrics keeps the annual YoY basis for growth rows;
+                # the TTM prior (year-ago quarter balances) only feeds ratios.
+                ratio_prior = ttm.get("prior")
+                d["period_basis"] = "ttm"
+                d["ttm_as_of"] = ttm.get("as_of")
+            else:
+                d["period_basis"] = "annual_fallback"
+        elif period == "quarterly":
+            # As-reported 10-Q blobs carry YTD flows for Q2/Q3 — overlay the
+            # standalone-quarter block when warm so cross-ticker rows compare
+            # like with like.
+            qb = supabase_cache.get_cached(
+                t.upper(), QUARTER_METRICS_DATA_TYPE, QUARTER_METRICS_PERIOD)
+            if qb and isinstance(qb, dict) and qb.get("metrics"):
+                d["metrics"] = qb["metrics"]
+                ratio_prior = qb.get("prior")
+                d["period_basis"] = "quarterly"
+                d["quarter_as_of"] = qb.get("as_of")
+            else:
+                d["period_basis"] = "quarterly_as_reported"
+        ratios = compute_ratios(
+            d.get("metrics") or {}, prior=ratio_prior,
+            industry=d.get("industry_class"))
+        if period == "quarterly":
+            # Single-quarter (or worse, mixed YTD-window) return ratios are
+            # not comparable across tickers — take them from the warm TTM
+            # block like /api/metrics does, or serve honest None.
+            ttm = supabase_cache.get_cached(t.upper(), TTM_DATA_TYPE, TTM_PERIOD)
+            return_keys = ("return_on_equity", "roe", "roe_basis", "roic",
+                           "roic_basis", "return_on_assets", "effective_tax_rate")
+            if ttm and isinstance(ttm, dict) and ttm.get("metrics"):
+                t_ratios = compute_ratios(ttm["metrics"], prior=ttm.get("prior"),
+                                          industry=d.get("industry_class"))
+                for k in return_keys:
+                    ratios[k] = t_ratios.get(k)
+                d["returns_basis"] = "ttm"
+            else:
+                for k in return_keys:
+                    ratios[k] = None
+        d["ratios"] = ratios
+        d["ratios_pct"] = to_percent(ratios)
+        d["ratios_units"] = "fractions"
+        d["ratios_not_applicable"] = not_applicable_for(d.get("industry_class"))
+        results[i] = d
 
     summaries = []
     for d in results:
@@ -1609,8 +1710,15 @@ async def get_comps(req: CompsRequest):
     tickers = [t.strip().upper() for t in req.tickers if t.strip()][:8]
     if not tickers:
         return {"error": "No tickers provided", "results": [], "resolved_tickers": []}
-    result = _handle_compare(tickers, year=req.year, form_type=req.form_type)
+    period = _normalize_period(req.period)
+    if period is None:
+        return {"error": f"Invalid period '{req.period}'", "code": "BAD_PERIOD",
+                "hint": "Use period=annual|quarterly|ttm.", "results": [],
+                "resolved_tickers": tickers}
+    result = _handle_compare(tickers, year=req.year, form_type=req.form_type,
+                             period=period)
     result["resolved_tickers"] = tickers
+    result["period"] = period
     return result
 
 
@@ -1631,9 +1739,13 @@ async def save_comps_snapshot(req: SnapshotRequest):
             return {"saved": False, "reason": "Supabase not available"}
 
         # Build snapshot data from cached financials
+        from sec_mcp.core.cache_keys import financials_period_key, legacy_financials_period_key
         snapshot = {}
         for tk in tickers:
-            cached = supabase_cache.get_cached(tk, "financials", "10-K|latest")
+            cached = supabase_cache.get_cached(tk, "financials", financials_period_key())
+            if not cached:
+                cached = supabase_cache.get_cached(
+                    tk, "financials", legacy_financials_period_key())
             if cached and isinstance(cached, dict):
                 m = cached.get("metrics", {})
                 snapshot[tk] = {
@@ -2221,20 +2333,111 @@ async def ingest_indices_route(request: Request) -> dict:
 #  Single-ticker valuation metrics — SEC fundamentals + live price
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _normalize_period(period: str | None) -> str | None:
+    """Map period aliases → canonical annual|quarterly|ttm; None if invalid."""
+    p = (period or "annual").lower().strip()
+    return {"annual": "annual", "quarter": "quarterly",
+            "quarterly": "quarterly", "ttm": "ttm"}.get(p)
+
+
+def _get_or_build_ttm(tk: str, build: bool = True) -> dict | None:
+    """Cached TTM metrics block; optionally build + cache on miss.
+
+    Returns the block ({metrics, prior, as_of, ...}), an {error, hint} dict
+    when TTM cannot be built (semiannual FPIs), or None on a cache miss with
+    build=False.
+    """
+    from sec_mcp import supabase_cache
+    from sec_mcp.core.cache_keys import TTM_DATA_TYPE, TTM_PERIOD
+    cached = supabase_cache.get_cached(tk, TTM_DATA_TYPE, TTM_PERIOD)
+    if cached and isinstance(cached, dict) and (cached.get("metrics") or cached.get("error")):
+        return cached
+    if not build:
+        return None
+    from sec_mcp.core.ttm import build_ttm_metrics
+    block = build_ttm_metrics(tk)
+    # Failures cache too (3-day TTL): semiannual FPIs would otherwise pay a
+    # full quarterly-history extraction on EVERY request just to re-learn
+    # they can't produce TTM. Callers treat an error block as unavailable.
+    supabase_cache.set_cached(tk, TTM_DATA_TYPE, block, TTM_PERIOD,
+                              ttl=259200 if block.get("error") else None)
+    return block
+
+
+def _get_or_build_quarter(tk: str) -> dict | None:
+    """Cached latest-standalone-quarter block; build + cache on miss.
+
+    NOT the as-reported 10-Q extraction — Q2/Q3 10-Qs report YTD flows, so
+    this uses the decumulated standalone quarters (core/ttm.py).
+    """
+    from sec_mcp import supabase_cache
+    from sec_mcp.core.cache_keys import QUARTER_METRICS_DATA_TYPE, QUARTER_METRICS_PERIOD
+    cached = supabase_cache.get_cached(
+        tk, QUARTER_METRICS_DATA_TYPE, QUARTER_METRICS_PERIOD)
+    if cached and isinstance(cached, dict) and (cached.get("metrics") or cached.get("error")):
+        return cached
+    from sec_mcp.core.ttm import build_latest_quarter_metrics
+    block = build_latest_quarter_metrics(tk)
+    # Failure blocks cache too (3-day TTL) — see _get_or_build_ttm.
+    supabase_cache.set_cached(
+        tk, QUARTER_METRICS_DATA_TYPE, block, QUARTER_METRICS_PERIOD,
+        ttl=259200 if block.get("error") else None)
+    return block
+
+
+def _bank_metrics_block(drivers: dict, metrics: dict, prior: dict | None) -> dict | None:
+    """Bank-specific stand-ins for the not-applicable standard metrics.
+
+    NIM here is NII / average total assets — a PROXY (true NIM divides by
+    average earning assets, which companyfacts doesn't reliably expose).
+    Percent units, matching the rest of /api/metrics.
+    """
+    nii = drivers.get("net_interest_income")
+    non = drivers.get("noninterest_income")
+    total = drivers.get("total_net_revenue")
+    ta = (metrics or {}).get("total_assets")
+    prior_ta = (prior or {}).get("total_assets")
+    avg_ta = (ta + prior_ta) / 2 if (ta and prior_ta) else ta
+    out: dict = {}
+    if nii is not None:
+        out["netInterestIncome"] = nii
+    if non is not None:
+        out["nonInterestIncome"] = non
+    if nii is not None and avg_ta:
+        out["netInterestMarginProxy"] = nii / avg_ta * 100
+    if non is not None and total:
+        out["nonInterestIncomeShare"] = non / total * 100
+    return out or None
+
+
 @app.get("/api/metrics/{ticker}")
-async def get_ticker_metrics(ticker: str) -> dict:
-    """TTM-ish valuation block (P/E, P/S, EV/EBITDA, margins, ROE …).
+async def get_ticker_metrics(ticker: str, period: str = "annual") -> dict:
+    """Valuation block (P/E, P/S, EV/EBITDA, margins, ROE/ROA/ROIC …).
 
     Reuses the same cached SEC extraction as /api/comps, adds a live price
     (Polygon → yfinance chain) to compute multiples. Margins are percent
     units; raw financials are dollars.
+
+    period=annual (default) | quarterly | ttm. TTM sums the latest four
+    standalone quarters (built on demand, cached); quarterly serves quarter
+    flows/margins with multiples + return ratios taken from the warm TTM
+    block (single-quarter P/E is meaningless) or nulled when TTM is cold.
+    Companies that cannot produce TTM (semiannual FPIs) fall back to annual
+    with periodBasis="annual_fallback" — never an error.
     """
     from sec_mcp import polygon_client
+    from sec_mcp.core.ratios import compute_ratios, not_applicable_for
     from sec_mcp.core.realtime_price import get_realtime_price
     from sec_mcp.core.ticker_metrics import compute_ticker_metrics
 
     tk = ticker.upper().strip()
+    resolved = _normalize_period(period)
+    if resolved is None:
+        return {"error": f"Invalid period '{period}'", "code": "BAD_PERIOD",
+                "ticker": tk, "hint": "Use period=annual|quarterly|ttm."}
     try:
+        # Annual extraction anchors identity/industry/drivers for every period
+        # (cheap when warm); TTM/quarterly overlay their own metrics below.
         fin = _handle_financials(tk, None, "10-K")
         data = fin.get("data") or {}
         if data.get("error") or not data.get("metrics"):
@@ -2263,28 +2466,124 @@ async def get_ticker_metrics(ticker: str) -> dict:
         except Exception as exc:
             log.debug("Polygon details failed for %s: %s", tk, exc)
 
+        price = price if isinstance(price, (int, float)) else None
+        shares_override = shares_override if isinstance(shares_override, (int, float)) else None
+        market_cap_override = market_cap_override if isinstance(market_cap_override, (int, float)) else None
+
+        industry = data.get("industry_class")
+        metrics_src = data.get("metrics") or {}
+        ratio_prior = data.get("prior_metrics")
+        period_basis = "annual"
+        hint = None
+        as_of = None
+        fiscal_year = data.get("fiscal_year")
+        period_type = data.get("period_type")
+        period_end = (data.get("filing_info") or {}).get("period_end")
+
+        ttm_block = None
+        if resolved in ("ttm", "quarterly"):
+            # Build on demand for ttm; cached-only for quarterly (its TTM is
+            # a garnish — predictable latency beats completeness there).
+            ttm_block = _get_or_build_ttm(tk, build=(resolved == "ttm"))
+
+        if resolved == "ttm":
+            if ttm_block and not ttm_block.get("error") and ttm_block.get("metrics"):
+                metrics_src = ttm_block["metrics"]
+                ratio_prior = ttm_block.get("prior")
+                period_basis = "ttm"
+                as_of = ttm_block.get("as_of")
+                fiscal_year = ttm_block.get("fiscal_year") or fiscal_year
+                period_end = ttm_block.get("as_of") or period_end
+                period_type = "ttm"
+            else:
+                period_basis = "annual_fallback"
+                hint = ((ttm_block or {}).get("hint") or (ttm_block or {}).get("error")
+                        or "TTM unavailable — served annual.")
+
+        if resolved == "quarterly":
+            # Latest STANDALONE quarter (decumulated) — the as-reported 10-Q
+            # extraction serves YTD flows for Q2/Q3, which would masquerade
+            # as a quarter here.
+            q_block = _get_or_build_quarter(tk)
+            if q_block and not q_block.get("error") and q_block.get("metrics"):
+                metrics_src = q_block["metrics"]
+                ratio_prior = q_block.get("prior")
+                period_basis = "quarterly"
+                as_of = q_block.get("as_of")
+                fiscal_year = q_block.get("fiscal_year") or fiscal_year
+                period_type = "quarterly"
+                period_end = q_block.get("as_of") or period_end
+            else:
+                hint = ((q_block or {}).get("hint") or (q_block or {}).get("error")
+                        or "No standalone quarter — served annual.")
+                period_basis = "annual_fallback"
+
+        # Serve-time ratio recompute — never trust the frozen cached `ratios`
+        # dict, so new ratio fields appear without invalidating warm entries.
+        ratios = compute_ratios(metrics_src, prior=ratio_prior, industry=industry)
         block = compute_ticker_metrics(
-            tk, data.get("metrics") or {}, data.get("ratios") or {},
-            price=price if isinstance(price, (int, float)) else None,
-            shares_override=shares_override if isinstance(shares_override, (int, float)) else None,
-            market_cap_override=market_cap_override if isinstance(market_cap_override, (int, float)) else None,
+            tk, metrics_src, ratios,
+            price=price, shares_override=shares_override,
+            market_cap_override=market_cap_override,
         )
-        fi = data.get("filing_info") or {}
+
+        multiples_basis = None
+        if period_basis == "quarterly":
+            # Single-quarter flow multiples and return ratios are meaningless;
+            # take them from TTM when warm, honest None otherwise.
+            flow_keys = ("peRatio", "psRatio", "evEbitda", "evToRevenue",
+                         "priceToFcf", "roe", "roa", "roic", "roicBasis",
+                         "effectiveTaxRate")
+            if ttm_block and not ttm_block.get("error") and ttm_block.get("metrics"):
+                t_ratios = compute_ratios(
+                    ttm_block["metrics"], prior=ttm_block.get("prior"),
+                    industry=industry)
+                t_block = compute_ticker_metrics(
+                    tk, ttm_block["metrics"], t_ratios,
+                    price=price, shares_override=shares_override,
+                    market_cap_override=market_cap_override,
+                )
+                for k in flow_keys:
+                    block[k] = t_block.get(k)
+                multiples_basis = "ttm"
+            else:
+                for k in flow_keys:
+                    block[k] = None
+
         resp = {
             "tool": "metrics",
             "ticker": tk,
             "companyName": data.get("company_name"),
-            "fiscalYear": data.get("fiscal_year"),
-            "periodType": data.get("period_type"),
-            "periodEnd": fi.get("period_end"),
+            "fiscalYear": fiscal_year,
+            "periodType": period_type,
+            "periodEnd": period_end,
+            "period": resolved,
+            "periodBasis": period_basis,
             "metrics": block,
+            # Structurally-inapplicable metrics for this industry class —
+            # frontends drop these rows instead of rendering N/A. Keys stay
+            # present-but-null in `metrics` (consumers key off presence).
+            "notApplicable": not_applicable_for(industry, camel=True),
             "meta": {"source": "sec+polygon", "priceSource": (snap or {}).get("source")},
         }
+        if as_of:
+            resp["asOf"] = as_of
+        if hint:
+            resp["hint"] = hint
+        if multiples_basis:
+            resp["multiplesBasis"] = multiples_basis
         # Additive: bank revenue-driver breakdown (income-type + business divisions).
         # Present only for banks; non-banks omit the key entirely.
         drivers = data.get("bank_revenue_drivers")
         if drivers:
             resp["revenueDrivers"] = drivers
+            if (industry or "") == "bank":
+                # NIM proxy stays anchored to the ANNUAL metrics the drivers
+                # came from — mixing TTM assets with annual NII would lie.
+                bank_block = _bank_metrics_block(
+                    drivers, data.get("metrics") or {}, data.get("prior_metrics"))
+                if bank_block:
+                    resp["bankMetrics"] = bank_block
         return resp
     except Exception as exc:
         log.warning("Metrics failed for %s: %s", tk, exc)

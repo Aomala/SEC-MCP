@@ -25,9 +25,7 @@ Tables expected (create via Supabase SQL editor):
 
 from __future__ import annotations
 
-import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -38,16 +36,27 @@ log = logging.getLogger(__name__)
 _client = None
 _available: bool | None = None
 
-# Cache TTLs by data type (seconds)
+# Cache TTLs by data type (seconds). Freshness comes from the weekly batch
+# rewrite cadence (batch_cache --refresh-older-than), not TTL expiry — TTLs
+# are the backstop that keeps abandoned entries from serving forever.
 CACHE_TTLS = {
-    "financials": 604800,       # 7 days — SEC filings don't change after filed
+    "financials": 1209600,      # 14 days — a filed document is immutable but the
+                                #   '|latest' key REBINDS at each new filing, so a
+                                #   long TTL serves a superseded fiscal period to
+                                #   out-of-universe tickers the batch never rewrites
     "cross_check": 604800,      # 7 days — Polygon validation
     "geo_segments": 604800,     # 7 days — segments are annual
     "product_segments": 604800, # 7 days
     "income_history": 604800,   # 7 days
     "balance_history": 604800,
     "cashflow_history": 604800,
+    "sec_income_history_v2": 1209600,  # 14 days — was silently falling to the
+                                       #   1h default and re-extracting hourly
+    "ttm_metrics": 1209600,     # 14 days — refreshed by the weekly batch
+    "quarter_metrics": 1209600, # 14 days — latest standalone quarter block
 }
+# Quarterly financial_cache entries refresh faster than annual ones.
+QUARTERLY_FINANCIALS_TTL = 1209600  # 14 days
 # Section text gets 7 day TTL (matched by prefix)
 _SECTION_TTL = 604800
 
@@ -157,6 +166,9 @@ def set_cached(
             "period": period,
             "date_from": date_from or None,
             "date_to": date_to or None,
+            # Explicit so upserts refresh it — batch freshness checks read this
+            # as "last written at" (Postgres DEFAULT only fires on insert).
+            "created_at": datetime.now(timezone.utc).isoformat(),
             "expires_at": expires.isoformat(),
         }, on_conflict="cache_key").execute()
         log.debug("Supabase cache set: %s (TTL %ds)", key, ttl)
@@ -164,6 +176,43 @@ def set_cached(
     except Exception as exc:
         log.debug("Supabase cache write failed: %s", exc)
         return False
+
+
+def cached_age_days(
+    ticker: str,
+    data_type: str,
+    period: str = "annual",
+    date_from: str = "",
+    date_to: str = "",
+) -> float | None:
+    """Days since a live (unexpired) entry was last written; None when absent.
+
+    Rows written before created_at became upsert-refreshed report their
+    original insert time — safe direction: at worst we refresh early.
+    """
+    client = _get_client()
+    if not client:
+        return None
+    key = _cache_key(ticker, data_type, period, date_from, date_to)
+    try:
+        result = (
+            client.table("financial_cache")
+            .select("created_at")
+            .eq("cache_key", key)
+            .gte("expires_at", datetime.now(timezone.utc).isoformat())
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            return None
+        created = result.data[0].get("created_at")
+        if not created:
+            return 0.0
+        dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+        return max((datetime.now(timezone.utc) - dt).total_seconds() / 86400, 0.0)
+    except Exception as exc:
+        log.debug("Supabase cache age read failed: %s", exc)
+        return None
 
 
 def cleanup_expired():

@@ -225,8 +225,12 @@ def phase2_check_filings(limit: int = 0):
 
 def phase3_extract(top: int = 500):
     """Extract financials for top companies and cache in Supabase."""
-    from sec_mcp.financials import extract_financials
     from sec_mcp import supabase_cache
+    from sec_mcp.core.cache_keys import (
+        financials_period_key,
+        legacy_financials_period_key,
+    )
+    from sec_mcp.financials import extract_financials
 
     sb = _get_sb()
 
@@ -267,8 +271,8 @@ def phase3_extract(top: int = 500):
 
         prefix = f"[{i+1}/{len(companies)}]"
 
-        # Skip if already in financial_cache
-        cached = supabase_cache.get_cached(ticker, "financials", "10-K|latest")
+        # Skip if already in financial_cache (v2 key — the serving key)
+        cached = supabase_cache.get_cached(ticker, "financials", financials_period_key())
         if cached and isinstance(cached, dict) and cached.get("metrics"):
             log.debug("%s %s — already cached", prefix, ticker)
             sb.table("company_directory").update({"cached": True}).eq("cik", company["cik"]).execute()
@@ -279,7 +283,10 @@ def phase3_extract(top: int = 500):
         try:
             data = extract_financials(ticker, include_statements=True, include_segments=True)
             if data and data.get("metrics"):
-                supabase_cache.set_cached(ticker, "financials", data, "10-K|latest")
+                supabase_cache.set_cached(ticker, "financials", data, financials_period_key())
+                # Transitional dual-write, matching batch_cache.cache_annual
+                supabase_cache.set_cached(ticker, "financials", data,
+                                          legacy_financials_period_key())
 
                 # Update company_directory with revenue/net_income for screener
                 m = data.get("metrics", {})

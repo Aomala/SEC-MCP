@@ -3061,7 +3061,6 @@ def extract_financials(
     result["metrics"] = metrics
     result["metrics_sourced"] = sourced
     result["confidence_scores"] = confidence
-    result["ratios"] = _compute_ratios(metrics)
     result["validation"] = _validate(metrics, industry, confidence)
 
     # ── Prior-period metrics for YoY comparison ─────────────────────
@@ -3135,6 +3134,12 @@ def extract_financials(
     result["qoq_metrics"] = qoq_metrics
     result["comparison_label"] = "QoQ" if is_quarterly else "YoY"
     result["yoy_label"] = "vs Same Quarter Last Year" if is_quarterly else "vs Prior Year"
+
+    # Ratios computed after prior_metrics (and its USD conversion) so ROE/ROA
+    # can use average balances; nothing between here and the metrics block
+    # reads result["ratios"].
+    result["ratios"] = _compute_ratios(
+        metrics, prior=prior_metrics, industry=result.get("industry_class"))
 
     # ── Segments ──────────────────────────────────────────────────────
     if include_segments:
@@ -3212,40 +3217,19 @@ def _div(a: float | None, b: float | None) -> float | None:
     return a / b
 
 
-def _compute_ratios(m: dict[str, float | None]) -> dict[str, float | None]:
-    """Compute financial ratios from extracted metrics."""
-    rev = m.get("revenue")
-    ni = m.get("net_income")
-    gp = m.get("gross_profit")
-    oi = m.get("operating_income")
-    ta = m.get("total_assets")
-    ca = m.get("current_assets")
-    cl = m.get("current_liabilities")
-    eq = m.get("stockholders_equity")
-    ocf = m.get("operating_cash_flow")
-    ebitda = m.get("ebitda")
-    ltd = m.get("long_term_debt")
-    std = m.get("short_term_debt")
-    fcf = m.get("free_cash_flow")
+def _compute_ratios(
+    m: dict[str, float | None],
+    prior: dict[str, float | None] | None = None,
+    industry: str | None = None,
+) -> dict[str, float | None]:
+    """Compute financial ratios — delegates to core.ratios, the canonical engine.
 
-    total_debt = None
-    if ltd is not None or std is not None:
-        total_debt = (ltd or 0) + (std or 0)
-
-    return {
-        "gross_margin": _div(gp, rev),
-        "operating_margin": _div(oi, rev),
-        "net_margin": _div(ni, rev),
-        "return_on_assets": _div(ni, ta),
-        "return_on_equity": _div(ni, eq),
-        "roe": _div(ni, eq),  # alias used by the UI
-        "current_ratio": _div(ca, cl),
-        "debt_to_equity": _div(total_debt, eq),
-        "debt_to_assets": _div(total_debt, ta),
-        "ebitda_margin": _div(ebitda, rev),
-        "fcf_margin": _div(fcf, rev),
-        "ocf_to_net_income": _div(ocf, ni),
-    }
+    Kept as a thin wrapper so every existing import/caller keeps working.
+    Same fraction units and key names as before, plus roic/roic_basis,
+    effective_tax_rate, liabilities_to_equity, roe_basis.
+    """
+    from sec_mcp.core.ratios import compute_ratios
+    return compute_ratios(m, prior=prior, industry=industry)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -14,9 +14,8 @@ import argparse
 import logging
 import time
 
-from sec_mcp.config import get_config
-from sec_mcp.financials import extract_financials
 from sec_mcp import supabase_cache
+from sec_mcp.financials import extract_financials
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,7 +37,8 @@ def get_cached_tickers() -> list[str]:
 
 def cache_period(ticker: str, form_type: str, year: int | None = None) -> bool:
     """Extract and cache a specific form type/year for a ticker."""
-    period_key = f"{form_type}|{'latest' if not year else year}"
+    from sec_mcp.core.cache_keys import financials_period_key
+    period_key = financials_period_key(form_type, year)
 
     # Skip if already cached
     cached = supabase_cache.get_cached(ticker, "financials", period_key)
@@ -51,7 +51,9 @@ def cache_period(ticker: str, form_type: str, year: int | None = None) -> bool:
             include_statements=True, include_segments=True,
         )
         if data and data.get("metrics"):
-            supabase_cache.set_cached(ticker, "financials", data, period_key)
+            ttl = (supabase_cache.QUARTERLY_FINANCIALS_TTL
+                   if form_type in ("10-Q", "6-K") else None)
+            supabase_cache.set_cached(ticker, "financials", data, period_key, ttl=ttl)
             return True
     except Exception as exc:
         log.debug("  %s %s: %s", ticker, form_type, exc)

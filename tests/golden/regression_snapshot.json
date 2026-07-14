@@ -860,13 +860,13 @@
    "revenue": 5749377000.0,
    "net_income": 1058590000.0,
    "gross_profit": null,
-   "operating_income": 1155129000.0,
+   "operating_income": null,
    "total_assets": 72795612000.0,
    "total_liabilities": 32671644000.0,
    "stockholders_equity": 39438695000.0,
    "operating_cash_flow": 3994754000.0,
-   "capital_expenditures": null,
-   "free_cash_flow": null,
+   "capital_expenditures": 131800000.0,
+   "free_cash_flow": 3862954000.0,
    "eps_diluted": 1.17,
    "ebitda": 3668136000.0
   },
@@ -883,7 +883,7 @@
     "revenue": 1548727000.0,
     "netIncome": 311766000.0,
     "operatingCashFlow": 874502000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 848188000.0
    },
    {
     "date": "2025-12-31",
@@ -891,7 +891,7 @@
     "revenue": 1487942000.0,
     "netIncome": 296085000.0,
     "operatingCashFlow": 1203434000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 1153999000.0
    },
    {
     "date": "2025-09-30",
@@ -899,7 +899,7 @@
     "revenue": 1470552000.0,
     "netIncome": 315771000.0,
     "operatingCashFlow": 943135000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 909946000.0
    },
    {
     "date": "2025-06-30",
@@ -907,7 +907,7 @@
     "revenue": 1410378000.0,
     "netIncome": 196919000.0,
     "operatingCashFlow": 1060669000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 1034393000.0
    }
   ]
  },
@@ -979,8 +979,8 @@
    "total_liabilities": 40970248000.0,
    "stockholders_equity": 53193178000.0,
    "operating_cash_flow": 5008434000.0,
-   "capital_expenditures": null,
-   "free_cash_flow": null,
+   "capital_expenditures": 1800527000.0,
+   "free_cash_flow": 3207907000.0,
    "eps_diluted": 3.56,
    "ebitda": 7160620000.0
   },
@@ -997,7 +997,7 @@
     "revenue": 2297723000.0,
     "netIncome": 981976000.0,
     "operatingCashFlow": 1288136000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 1065083000.0
    },
    {
     "date": "2025-12-31",
@@ -1005,7 +1005,7 @@
     "revenue": 2252712000.0,
     "netIncome": 1399783000.0,
     "operatingCashFlow": 1158236000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 604126000.0
    },
    {
     "date": "2025-09-30",
@@ -1013,7 +1013,7 @@
     "revenue": 2213881000.0,
     "netIncome": 764266000.0,
     "operatingCashFlow": 1447728000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 1354977000.0
    },
    {
     "date": "2025-06-30",
@@ -1021,7 +1021,7 @@
     "revenue": 2183869000.0,
     "netIncome": 571229000.0,
     "operatingCashFlow": 1241717000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 867715000.0
    }
   ]
  },
@@ -1316,7 +1316,7 @@
    "revenue": 332238000000.0,
    "net_income": 28844000000.0,
    "gross_profit": null,
-   "operating_income": 41268000000.0,
+   "operating_income": null,
    "total_assets": 448980000000.0,
    "total_liabilities": 182354000000.0,
    "stockholders_equity": 259386000000.0,
@@ -1373,7 +1373,7 @@
    "revenue": 189031000000.0,
    "net_income": 12299000000.0,
    "gross_profit": 80817000000.0,
-   "operating_income": -88471000000.0,
+   "operating_income": null,
    "total_assets": 324012000000.0,
    "total_liabilities": 131836000000.0,
    "stockholders_equity": 186450000000.0,
@@ -1487,7 +1487,7 @@
    "revenue": 94193000000.0,
    "net_income": 26804000000.0,
    "gross_profit": 63937000000.0,
-   "operating_income": 32581000000.0,
+   "operating_income": null,
    "total_assets": 199210000000.0,
    "total_liabilities": 117666000000.0,
    "stockholders_equity": 81544000000.0,
@@ -1544,13 +1544,13 @@
    "revenue": 65179000000.0,
    "net_income": 20640000000.0,
    "gross_profit": 54127000000.0,
-   "operating_income": 25731000000.0,
+   "operating_income": null,
    "total_assets": 112476000000.0,
    "total_liabilities": 85941000000.0,
    "stockholders_equity": 26535000000.0,
    "operating_cash_flow": 16813000000.0,
-   "capital_expenditures": null,
-   "free_cash_flow": null,
+   "capital_expenditures": 7841000000.0,
+   "free_cash_flow": 8972000000.0,
    "eps_diluted": 22.95,
    "ebitda": 27728000000.0
   },
@@ -1567,7 +1567,7 @@
     "revenue": 19799000000.0,
     "netIncome": 7396000000.0,
     "operatingCashFlow": 5333000000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 3007000000.0
    },
    {
     "date": "2025-12-31",
@@ -1575,7 +1575,7 @@
     "revenue": 19292000000.0,
     "netIncome": 6637700000.0,
     "operatingCashFlow": 3224600000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 677900000.0
    },
    {
     "date": "2025-09-30",
@@ -1583,7 +1583,7 @@
     "revenue": 17600800000.0,
     "netIncome": 5582500000.0,
     "operatingCashFlow": 8835900000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 6748200000.0
    },
    {
     "date": "2025-06-30",
@@ -1591,7 +1591,7 @@
     "revenue": 15557700000.0,
     "netIncome": 5660500000.0,
     "operatingCashFlow": 3086900000.0,
-    "freeCashFlow": null
+    "freeCashFlow": 1389800000.0
    }
   ]
  },
@@ -1777,8 +1777,8 @@
    "total_liabilities": 77267000000.0,
    "stockholders_equity": 21318000000.0,
    "operating_cash_flow": 11739000000.0,
-   "capital_expenditures": 2821000000.0,
-   "free_cash_flow": 8918000000.0,
+   "capital_expenditures": 4286000000.0,
+   "free_cash_flow": 7453000000.0,
    "eps_diluted": 18.81,
    "ebitda": 13914000000.0
   },
@@ -1795,7 +1795,7 @@
     "revenue": 17415000000.0,
     "netIncome": 2549000000.0,
     "operatingCashFlow": 1870000000.0,
-    "freeCashFlow": 1142000000.0
+    "freeCashFlow": 819000000.0
    },
    {
     "date": "2025-12-31",
@@ -1803,7 +1803,7 @@
     "revenue": 19133000000.0,
     "netIncome": 2402000000.0,
     "operatingCashFlow": 3591000000.0,
-    "freeCashFlow": 2693000000.0
+    "freeCashFlow": 2249000000.0
    },
    {
     "date": "2025-09-30",
@@ -1811,7 +1811,7 @@
     "revenue": 17638000000.0,
     "netIncome": 2300000000.0,
     "operatingCashFlow": 3737000000.0,
-    "freeCashFlow": 3079000000.0
+    "freeCashFlow": 2666000000.0
    },
    {
     "date": "2025-06-30",
@@ -1819,7 +1819,7 @@
     "revenue": 16569000000.0,
     "netIncome": 2179000000.0,
     "operatingCashFlow": 3122000000.0,
-    "freeCashFlow": 2567000000.0
+    "freeCashFlow": 2167000000.0
    }
   ]
  },
@@ -1886,7 +1886,7 @@
    "revenue": 45855000000.0,
    "net_income": 8704000000.0,
    "gross_profit": null,
-   "operating_income": 10000000000.0,
+   "operating_income": null,
    "total_assets": 130169000000.0,
    "total_liabilities": 111271000000.0,
    "stockholders_equity": 18677000000.0,
@@ -1940,18 +1940,18 @@
  "ASML": {
   "ticker": "ASML",
   "annual": {
-   "revenue": 37728020114.1,
-   "net_income": 11098059419.8,
-   "gross_profit": 19931557586.0,
-   "operating_income": 13052178983.8,
-   "total_assets": 58400225972.2,
-   "total_liabilities": 35749762784.799995,
-   "stockholders_equity": 22650463187.399998,
-   "operating_cash_flow": 14619516844.5,
-   "capital_expenditures": 1817377391.2,
-   "free_cash_flow": 12802139453.3,
-   "eps_diluted": 28.53799907,
-   "ebitda": 14608198657.9
+   "revenue": 37231901829.0,
+   "net_income": 10952121462.0,
+   "gross_profit": 19669460340.0,
+   "operating_income": 12880544621.999998,
+   "total_assets": 57632271017.99999,
+   "total_liabilities": 35279658312.0,
+   "stockholders_equity": 22352612706.0,
+   "operating_cash_flow": 14427272204.999998,
+   "capital_expenditures": 1793479127.9999998,
+   "free_cash_flow": 12633793076.999998,
+   "eps_diluted": 28.162728299999998,
+   "ebitda": 14416102850.999998
   },
   "annual_meta": {
    "fiscal_year": 2025,
@@ -1963,51 +1963,51 @@
    {
     "date": "2026-04-23",
     "period": "Q4",
-    "revenue": 37728020114.1,
-    "netIncome": 11098059419.8,
-    "operatingCashFlow": 14619516844.5,
-    "freeCashFlow": 12802139453.3
+    "revenue": 37231901829.0,
+    "netIncome": 10952121462.0,
+    "operatingCashFlow": 14427272204.999998,
+    "freeCashFlow": 12633793076.999998
    },
    {
     "date": "2026-03-29",
     "period": "Q4",
-    "revenue": 37728020114.1,
-    "netIncome": 11098059419.8,
-    "operatingCashFlow": 14619516844.5,
-    "freeCashFlow": 12802139453.3
+    "revenue": 37231901829.0,
+    "netIncome": 10952121462.0,
+    "operatingCashFlow": 14427272204.999998,
+    "freeCashFlow": 12633793076.999998
    },
    {
     "date": "2026-03-09",
     "period": "Q4",
-    "revenue": 37728020114.1,
-    "netIncome": 11098059419.8,
-    "operatingCashFlow": 14619516844.5,
-    "freeCashFlow": 12802139453.3
+    "revenue": 37231901829.0,
+    "netIncome": 10952121462.0,
+    "operatingCashFlow": 14427272204.999998,
+    "freeCashFlow": 12633793076.999998
    },
    {
     "date": "2025-12-31",
     "period": "Q4",
-    "revenue": 37728020114.1,
-    "netIncome": 11098059419.8,
-    "operatingCashFlow": 14619516844.5,
-    "freeCashFlow": 12802139453.3
+    "revenue": 37231901829.0,
+    "netIncome": 10952121462.0,
+    "operatingCashFlow": 14427272204.999998,
+    "freeCashFlow": 12633793076.999998
    }
   ]
  },
  "SAP": {
   "ticker": "SAP",
   "annual": {
-   "revenue": 42500945600.0,
-   "net_income": 8460921942.0,
-   "gross_profit": 30967944438.0,
-   "operating_income": 11106836789.0,
-   "total_assets": 81262269954.0,
-   "total_liabilities": 29205541096.0,
-   "stockholders_equity": 52055573941.0,
-   "operating_cash_flow": 10574420052.0,
-   "capital_expenditures": null,
-   "free_cash_flow": null,
-   "eps_diluted": 7.044993699999999,
+   "revenue": 41942064000.0,
+   "net_income": 8349661979.999999,
+   "gross_profit": 30560720219.999996,
+   "operating_income": 10960783410.0,
+   "total_assets": 80193682260.0,
+   "total_liabilities": 28821492239.999996,
+   "stockholders_equity": 51371050289.99999,
+   "operating_cash_flow": 10435367880.0,
+   "capital_expenditures": 842260469.9999999,
+   "free_cash_flow": 9593107410.0,
+   "eps_diluted": 6.952352999999999,
    "ebitda": null
   },
   "annual_meta": {
@@ -2020,51 +2020,51 @@
    {
     "date": "2026-05-08",
     "period": "Q4",
-    "revenue": 42500945600.0,
-    "netIncome": 8460921942.0,
-    "operatingCashFlow": 10574420052.0,
-    "freeCashFlow": null
+    "revenue": 41942064000.0,
+    "netIncome": 8349661979.999999,
+    "operatingCashFlow": 10435367880.0,
+    "freeCashFlow": 9593107410.0
    },
    {
     "date": "2026-04-28",
     "period": "Q4",
-    "revenue": 42500945600.0,
-    "netIncome": 8460921942.0,
-    "operatingCashFlow": 10574420052.0,
-    "freeCashFlow": null
+    "revenue": 41942064000.0,
+    "netIncome": 8349661979.999999,
+    "operatingCashFlow": 10435367880.0,
+    "freeCashFlow": 9593107410.0
    },
    {
     "date": "2026-04-21",
     "period": "Q4",
-    "revenue": 42500945600.0,
-    "netIncome": 8460921942.0,
-    "operatingCashFlow": 10574420052.0,
-    "freeCashFlow": null
+    "revenue": 41942064000.0,
+    "netIncome": 8349661979.999999,
+    "operatingCashFlow": 10435367880.0,
+    "freeCashFlow": 9593107410.0
    },
    {
     "date": "2026-03-06",
     "period": "Q4",
-    "revenue": 42500945600.0,
-    "netIncome": 8460921942.0,
-    "operatingCashFlow": 10574420052.0,
-    "freeCashFlow": null
+    "revenue": 41942064000.0,
+    "netIncome": 8349661979.999999,
+    "operatingCashFlow": 10435367880.0,
+    "freeCashFlow": 9593107410.0
    }
   ]
  },
  "TSM": {
   "ticker": "TSM",
   "annual": {
-   "revenue": 91651147628.2,
-   "net_income": 36654151817.4,
-   "gross_profit": 51436781097.6,
-   "operating_income": 41864130298.0,
-   "total_assets": 211901420990.2,
-   "total_liabilities": 76394006504.6,
-   "stockholders_equity": 135507414485.6,
-   "operating_cash_flow": 57827724048.6,
-   "capital_expenditures": 30272901829.0,
-   "free_cash_flow": 27554822219.6,
-   "eps_diluted": 1.41452022,
+   "revenue": 90102693008.7,
+   "net_income": 36034876530.9,
+   "gross_profit": 50567751921.6,
+   "operating_income": 41156831943.0,
+   "total_assets": 208321326875.69998,
+   "total_liabilities": 75103322696.09999,
+   "stockholders_equity": 133218004179.59999,
+   "operating_cash_flow": 56850719300.1,
+   "capital_expenditures": 29761438351.5,
+   "free_cash_flow": 27089280948.6,
+   "eps_diluted": 1.39062177,
    "ebitda": null
   },
   "annual_meta": {
@@ -2077,10 +2077,10 @@
    {
     "date": "2021-06-30",
     "period": "Q",
-    "revenue": 23260431296.4,
-    "netIncome": 8776007071.4,
-    "operatingCashFlow": 13149471163.2,
-    "freeCashFlow": 8087496.4
+    "revenue": 22827043610.399998,
+    "netIncome": 8612492760.4,
+    "operatingCashFlow": 12904470595.199999,
+    "freeCashFlow": 7936810.399999999
    }
   ]
  },
@@ -2144,26 +2144,34 @@
  "ORCL": {
   "ticker": "ORCL",
   "annual": {
-   "revenue": 57399000000.0,
-   "net_income": 12443000000.0,
+   "revenue": 67357000000.0,
+   "net_income": 17087000000.0,
    "gross_profit": null,
-   "operating_income": 17678000000.0,
-   "total_assets": 168361000000.0,
-   "total_liabilities": 147392000000.0,
-   "stockholders_equity": 20451000000.0,
-   "operating_cash_flow": 20821000000.0,
-   "capital_expenditures": 21215000000.0,
-   "free_cash_flow": -394000000.0,
-   "eps_diluted": 4.34,
-   "ebitda": 23912000000.0
+   "operating_income": 20606000000.0,
+   "total_assets": 261759000000.0,
+   "total_liabilities": 218703000000.0,
+   "stockholders_equity": 42508000000.0,
+   "operating_cash_flow": 31977000000.0,
+   "capital_expenditures": 55663000000.0,
+   "free_cash_flow": -23686000000.0,
+   "eps_diluted": 5.83,
+   "ebitda": 33447000000.0
   },
   "annual_meta": {
-   "fiscal_year": 2025,
-   "report_date": "2025-05-31",
+   "fiscal_year": 2026,
+   "report_date": "2026-05-31",
    "revenue_source": "Total Revenue",
    "industry_class": "standard"
   },
   "quarters": [
+   {
+    "date": "2026-05-31",
+    "period": "Q4",
+    "revenue": 19184000000.0,
+    "netIncome": 4304000000.0,
+    "operatingCashFlow": 14620000000.0,
+    "freeCashFlow": -1873000000.0
+   },
    {
     "date": "2026-02-28",
     "period": "Q3",
@@ -2187,14 +2195,6 @@
     "netIncome": 2927000000.0,
     "operatingCashFlow": 8140000000.0,
     "freeCashFlow": -362000000.0
-   },
-   {
-    "date": "2025-02-28",
-    "period": "Q3",
-    "revenue": 14130000000.0,
-    "netIncome": 2936000000.0,
-    "operatingCashFlow": 5933000000.0,
-    "freeCashFlow": 71000000.0
    }
   ]
  },

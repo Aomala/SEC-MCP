@@ -58,12 +58,21 @@ def compute_ticker_metrics(
     eps = _num(m.get("eps_diluted")) or _num(m.get("eps_basic"))
     shares = shares_override or _num(m.get("shares_outstanding"))
 
-    total_debt = None
-    if ltd is not None or std is not None:
+    # Pre-combined total_debt (TTM builder) wins; else derive from the legs.
+    total_debt = _num(m.get("total_debt"))
+    if total_debt is None and (ltd is not None or std is not None):
         total_debt = (ltd or 0) + (std or 0)
+    # Net debt with either side known (missing side = 0, basis marked) — a
+    # missing debt line was nulling EV and every EV multiple even when
+    # EV ≈ marketCap. Both missing → still None.
     net_debt = None
+    net_debt_basis = None
     if total_debt is not None:
         net_debt = total_debt - (cash or 0)
+        net_debt_basis = "debt_and_cash" if cash is not None else "debt_only"
+    elif cash is not None:
+        net_debt = -cash
+        net_debt_basis = "cash_only"
 
     market_cap = market_cap_override
     if market_cap is None and price and shares:
@@ -80,6 +89,7 @@ def compute_ticker_metrics(
         "marketCap": market_cap,
         "enterpriseValue": ev,
         "netDebt": net_debt,
+        "netDebtBasis": net_debt_basis,
         "totalDebt": total_debt,
         # Valuation multiples
         "peRatio": _div(price, eps) if (eps or 0) > 0 else None,
@@ -96,6 +106,9 @@ def compute_ticker_metrics(
         "fcfMargin": _pct(r.get("fcf_margin")),
         "roe": _pct(r.get("roe") if r.get("roe") is not None else r.get("return_on_equity")),
         "roa": _pct(r.get("return_on_assets")),
+        "roic": _pct(r.get("roic")),
+        "roicBasis": r.get("roic_basis"),
+        "effectiveTaxRate": _pct(r.get("effective_tax_rate")),
         # Balance ratios (raw)
         "currentRatio": _num(r.get("current_ratio")),
         "debtToEquity": _num(r.get("debt_to_equity")),
