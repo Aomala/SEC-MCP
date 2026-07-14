@@ -34,7 +34,6 @@ import re
 from enum import Enum
 from typing import NamedTuple
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 #  Industry classification
 # ═══════════════════════════════════════════════════════════════════════════
@@ -704,6 +703,10 @@ PROVISION_FOR_CREDIT_LOSSES: list[ConceptEntry] = [
 DEPRECIATION_AMORTIZATION: list[ConceptEntry] = [
     ConceptEntry("DepreciationDepletionAndAmortization", "D&A"),
     ConceptEntry("DepreciationAndAmortization", "D&A (alt)"),
+    # Regulated utilities (SO) report their D&A total under the accretion
+    # variant; without it the resolver falls through to the tiny intangibles
+    # line and EBITDA collapses to NI + tax.
+    ConceptEntry("DepreciationAmortizationAndAccretionNet", "D&A incl. Accretion"),
     ConceptEntry("Depreciation", "Depreciation"),
     ConceptEntry("AmortizationOfIntangibleAssets", "Amortization of Intangibles"),
 ]
@@ -795,9 +798,35 @@ LONG_TERM_DEBT: list[ConceptEntry] = [
     ConceptEntry("LongTermDebtNoncurrent", "Long-Term Debt (Noncurrent)"),
     ConceptEntry("LongTermDebtAndCapitalLeaseObligations",
                  "Long-Term Debt & Capital Lease"),
+    # Quarterly-filing variant: CVX 10-Qs (and MET) tag the long-term debt
+    # line ONLY as ...IncludingCurrentMaturities while the 10-K uses the tags
+    # above — without it every CVX 10-Q served long_term_debt=None. Ordered
+    # after the noncurrent-only tags so it never shadows them (which would
+    # double-count the current portion against short_term_debt).
+    ConceptEntry("LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+                 "Long-Term Debt & Capital Lease (incl. Current Maturities)"),
+    # ORCL's FY2026 10-K retagged its "Notes payable, non-current" line from
+    # LongTermDebtNoncurrent to LongTermNotesPayable ($122.3B) — vintage change
+    # that zeroed ORCL's long-term debt (ROIC 88%, netDebt −24B downstream).
+    ConceptEntry("LongTermNotesPayable", "Notes Payable (Noncurrent)"),
+    # Combined ST+LT total — some insurers (MET 10-K) tag this and nothing
+    # broader. Kept LAST among pick-first entries so a true noncurrent tag
+    # always wins first; when it IS the only tag, total_debt may double-count
+    # the separately-tagged short-term line by its small ST share.
+    ConceptEntry("DebtAndCapitalLeaseObligations",
+                 "Debt & Capital Lease Obligations (Total)"),
     # IFRS
     ConceptEntry("NoncurrentPortionOfNoncurrentBorrowings", "IFRS Long-Term Borrowings"),
     ConceptEntry("LongTermBorrowings", "IFRS Long-Term Borrowings (alt)"),
+    # Aggregate fallback — fires ONLY when none of the above resolves.
+    # REITs like O (Realty Income) carry no LongTermDebt-family total at all:
+    # the balance sheet is unsecured notes (NotesPayable $25.0B) + term loans
+    # (LoansPayable $1.7B) + mortgages (SecuredDebt) as separate lines; the
+    # old lists served $0 LTD → EV understated by ~$26B. Distinct face lines,
+    # so summing cannot double-count.
+    ConceptEntry("NotesPayable", "Notes Payable", aggregate=True),
+    ConceptEntry("LoansPayable", "Loans Payable (Term Loans)", aggregate=True),
+    ConceptEntry("SecuredDebt", "Secured Debt (Mortgages Payable)", aggregate=True),
 ]
 
 SHORT_TERM_DEBT: list[ConceptEntry] = [

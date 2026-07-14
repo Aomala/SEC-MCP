@@ -2297,17 +2297,15 @@ def _decumulate_cash_flow(
             cv, pv = cm.get(k), pm.get(k)
             if cv is not None and pv is not None:
                 cm[k] = cv - pv
-        # Recompute free cash flow from the decumulated components.
-        ocf, capex = cm.get("operating_cash_flow"), cm.get("capital_expenditures")
-        if ocf is not None and capex is not None:
-            cm["free_cash_flow"] = ocf - abs(capex)
-        # EPS is per-period, not cumulative — recompute from decumulated net
-        # income over shares outstanding (weighted shares aren't always tagged;
-        # period-end shares are a close proxy and far better than the YTD EPS).
-        ni, shares = cm.get("net_income"), cm.get("shares_outstanding")
-        if ni is not None and shares:
-            cm["eps_basic"] = round(ni / shares, 2)
-            cm["eps_diluted"] = round(ni / shares, 2)
+            elif cv is not None:
+                # Prior YTD never reported this column — a cumulative value
+                # must not survive in a standalone-quarter result.
+                cm[k] = None
+        # Recompute FCF + per-share columns from the decumulated basis
+        # (EPS: NI/shares, else YTD-neighbour diff, else None — never the
+        # cumulative YTD value).
+        _recompute_derived_quarter_metrics(
+            cm, prior_eps={k: pm.get(k) for k in _PER_SHARE_METRICS})
     except Exception as exc:  # never let decumulation break extraction
         log.debug("cash-flow decumulation failed for %s: %s", ticker_or_cik, exc)
 
@@ -2960,15 +2958,26 @@ def extract_financials(
     int_exp = metrics.get("interest_expense")
     tax_exp = metrics.get("income_tax_expense")
 
-    # D&A lookup: try broad totals first, then sum components
-    da_val = None
-    for tag in ("DepreciationDepletionAndAmortization", "DepreciationAndAmortization"):
-        da_val = _lookup_fact(facts_df, tag, period_index,
-                              match_mode="exact", duration_pref=dur_pref,
-                              target_fp=target_fp, target_fy=target_fy)
-        if da_val is not None:
-            break
+    # D&A lookup: take the LARGEST broad total tagged for the period. Filers
+    # can tag several "totals" where one is actually partial — CRM tags
+    # DepreciationDepletionAndAmortization (property-only, 1.0B) NEXT TO the
+    # true total DepreciationAndAmortization (3.5B); SO's utility total lives
+    # under DepreciationAmortizationAndAccretionNet (6.0B) while its only
+    # mapped concept was a 32M intangibles line. The genuine total is always a
+    # superset of a partial line, so max() picks it.
+    da_candidates: list[float] = []
+    for tag in ("DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
+                "DepreciationAmortizationAndAccretionNet"):
+        v = _lookup_fact(facts_df, tag, period_index,
+                         match_mode="exact", duration_pref=dur_pref,
+                         target_fp=target_fp, target_fy=target_fy)
+        if v is not None:
+            da_candidates.append(abs(v))
+    da_val = max(da_candidates) if da_candidates else None
     if da_val is None:
+        # Component fallback: Depreciation + Amortization. Depreciation must be
+        # present — an amortization-of-intangibles line on its own is NOT a
+        # D&A total (SO's 32M) and must not seed the EBITDA add-back.
         dep = _lookup_fact(facts_df, "Depreciation", period_index,
                            match_mode="exact", duration_pref=dur_pref,
                            target_fp=target_fp, target_fy=target_fy)
@@ -2976,12 +2985,22 @@ def extract_financials(
                              period_index, match_mode="exact",
                              duration_pref=dur_pref,
                              target_fp=target_fp, target_fy=target_fy)
-        if dep is not None or amort is not None:
-            da_val = abs(dep or 0) + abs(amort or 0)
+        if dep is not None:
+            da_val = abs(dep) + abs(amort or 0)
+    # Keep the served D&A metric consistent with the total used for EBITDA —
+    # otherwise a partially-resolved D&A (CRM annual = 1.0B vs quarters ≈
+    # 0.87B each) makes synthesized Q4 D&A go NEGATIVE (FY − ΣQ1-3).
+    _da_metric = metrics.get("depreciation_amortization")
+    if da_val is not None and (_da_metric is None or abs(_da_metric) < da_val):
+        metrics["depreciation_amortization"] = da_val
+        sourced["depreciation_amortization"] = "D&A (largest tagged total)"
 
     if ni_val is not None and da_val is not None:
-        # Proper EBITDA: NI + Interest + Tax + D&A
-        ebitda_val = ni_val + abs(int_exp or 0) + abs(tax_exp or 0) + abs(da_val)
+        # Proper EBITDA: NI + Interest + Tax + D&A. Tax must be added back
+        # SIGNED — IncomeTaxExpenseBenefit is negative for a net benefit, and
+        # abs() would add the benefit on top of the NI that already includes
+        # it (QCOM Q2 FY26: −5.1B benefit → EBITDA at 113% of revenue).
+        ebitda_val = ni_val + abs(int_exp or 0) + (tax_exp or 0) + abs(da_val)
         metrics["ebitda"] = ebitda_val
         confidence["ebitda"] = 0.85 if (int_exp is not None and tax_exp is not None) else 0.70
     elif oi is not None and da_val is not None:
@@ -3759,15 +3778,59 @@ def _quarter_rank(result: dict) -> int | None:
     return _FP_RANK.get(fp[0].upper()) if fp else None
 
 
-def _recompute_derived_quarter_metrics(cm: dict) -> None:
-    """Re-derive FCF and EPS after quarter metrics change basis."""
+# Per-share flow columns. Cumulative like the flow metrics, but they can't be
+# decumulated by plain subtraction of the underlying dollars — they must be
+# re-derived (or YTD-neighbour-diffed) after the row changes basis.
+_PER_SHARE_METRICS = ("eps_basic", "eps_diluted")
+
+
+def _recompute_derived_quarter_metrics(cm: dict, prior_eps: dict | None = None) -> None:
+    """Re-derive FCF and per-share columns after quarter metrics change basis.
+
+    EPS priority (a decumulated/synthesized row must NEVER keep the
+    cumulative YTD/FY per-share value it was extracted with):
+      1. row's OWN (already-decumulated/synthesized) net income / shares
+      2. cumulative EPS minus the YTD-neighbour EPS in `prior_eps`
+         (approximation — assumes a stable share count)
+      3. None — better an honest gap than a YTD/FY value on a standalone row
+    """
     ocf, capex = cm.get("operating_cash_flow"), cm.get("capital_expenditures")
     if ocf is not None and capex is not None:
         cm["free_cash_flow"] = ocf - abs(capex)
     ni, sh = cm.get("net_income"), cm.get("shares_outstanding")
-    if ni is not None and sh:
-        cm["eps_basic"] = round(ni / sh, 2)
-        cm["eps_diluted"] = round(ni / sh, 2)
+    for k in _PER_SHARE_METRICS:
+        if ni is not None and sh:
+            cm[k] = round(ni / sh, 2)
+            continue
+        cur, prior = cm.get(k), (prior_eps or {}).get(k)
+        if cur is not None and prior is not None:
+            v = round(cur - prior, 2)
+            # Sign cross-check against the row's own NI — catches stock
+            # splits, where the FY/YTD eps is split-adjusted but the earlier
+            # quarters' filings aren't (WMT 3:1 Feb'24: FY 1.91 − Σ pre-split
+            # 3.7 ⇒ −1.8 on a +5.5B-NI quarter). Better a gap than that.
+            if ni is not None and ni != 0 and v != 0 and (v < 0) != (ni < 0):
+                cm[k] = None
+            else:
+                cm[k] = v
+        else:
+            cm[k] = None
+    # EBITDA: rebuild from the row's OWN (decumulated/synthesized) components
+    # rather than trusting cumulative-EBITDA subtraction. Adjacent filings can
+    # resolve components differently (JPM's Q1 FY24 filing tags interest, the
+    # H1 filing doesn't), and subtracting EBITDAs built on mismatched bases
+    # emits garbage (JPM Q2'24: 1.1B vs ~25B). Same formula + preference
+    # order as the extraction-time builder.
+    da_q = cm.get("depreciation_amortization")
+    if ni is not None and da_q is not None:
+        cm["ebitda"] = (ni + abs(cm.get("interest_expense") or 0)
+                        + (cm.get("income_tax_expense") or 0) + abs(da_q))
+    elif cm.get("operating_income") is not None and da_q is not None:
+        cm["ebitda"] = cm["operating_income"] + abs(da_q)
+    elif cm.get("ebitda") is not None:
+        # No components to rebuild from — a subtracted cumulative EBITDA of
+        # unverifiable basis must not be served on a standalone row.
+        cm["ebitda"] = None
 
 
 def _decumulate_quarters_inmemory(results: list[dict]) -> list[dict]:
@@ -3816,7 +3879,14 @@ def _decumulate_quarters_inmemory(results: list[dict]) -> list[dict]:
             cv, pv = cm.get(k), pm.get(k)
             if cv is not None and pv is not None:
                 cm[k] = cv - pv
-        _recompute_derived_quarter_metrics(cm)
+            elif cv is not None:
+                # Neighbour never reported this column — the YTD value cannot
+                # be decumulated and must NOT survive in a row labelled
+                # standalone_decumulated (JPM's interest_expense served
+                # 9-month cumulative values this way).
+                cm[k] = None
+        _recompute_derived_quarter_metrics(
+            cm, prior_eps={k: pm.get(k) for k in _PER_SHARE_METRICS})
         r["is_ytd"] = False
         r["quarter_label"] = f"Q{min(rk, 4)} (Standalone)"
         r["quality"] = "standalone_decumulated"
@@ -3831,6 +3901,13 @@ def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
     quarters in hand, extract the 10-K (cheap — companyfacts is already
     cached) and derive the fourth. Balance-sheet (instant) metrics come from
     the 10-K directly: the FY-end snapshot IS the Q4-end snapshot.
+
+    The 10-K is matched to the quarter group by REPORT DATE — the annual
+    filing whose period end lands ~one quarter (60-130 days) after the
+    group's Q3 end. Matching on the fiscal-year LABEL breaks for Jan/Feb-FYE
+    filers: HD's FY2025 10-K ends 2026-02-01 (report-date year ≠ label), and
+    CRM's newest 10-K even carries the same DEI fy as its predecessor — those
+    calendars never synthesized a Q4 and lost TTM eligibility.
     """
     by_fy: dict[int, dict[int, dict]] = {}
     for r in results:
@@ -3838,16 +3915,39 @@ def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
         if isinstance(fy, int) and rk and r.get("quality", "").startswith("standalone"):
             by_fy.setdefault(fy, {})[rk] = r
 
+    annual_filings: list | None = None  # lazy — one fetch for all groups
     for fy, ranks in sorted(by_fy.items(), reverse=True):
         if not ({1, 2, 3} <= set(ranks)) or 4 in ranks:
             continue
+        q3_end = pd.to_datetime(
+            (ranks[3].get("filing_info") or {}).get("report_date") or "",
+            errors="coerce")
+        if pd.isna(q3_end):
+            continue
+        if annual_filings is None:
+            try:
+                annual_filings = get_sec_client().get_periodic_filings_smart(
+                    ticker, form_type="10-K", limit=15) or []
+            except Exception as exc:
+                log.debug("Q4 synthesis: 10-K listing failed for %s: %s",
+                          ticker, exc)
+                annual_filings = []
+        acc = None
+        for f in annual_filings:
+            rd = pd.to_datetime(getattr(f, "report_date", "") or "",
+                                errors="coerce")
+            if pd.notna(rd) and 60 <= (rd - q3_end).days <= 130:
+                acc = f.accession_number
+                break
+        if not acc:
+            continue
         try:
-            annual = extract_financials(ticker, year=fy, form_type="10-K")
+            annual = extract_financials(ticker, accession=acc, form_type="10-K")
         except Exception as exc:
             log.debug("Q4 synthesis: annual extract failed for %s FY%s: %s",
                       ticker, fy, exc)
             continue
-        if not annual or annual.get("error") or annual.get("fiscal_year") != fy:
+        if not annual or annual.get("error"):
             continue
         am = annual.get("metrics") or {}
         if not am:
@@ -3858,11 +3958,22 @@ def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
             fyv = am.get(k)
             qs = [ (ranks[i].get("metrics") or {}).get(k) for i in (1, 2, 3) ]
             q4m[k] = fyv - sum(qs) if fyv is not None and None not in qs else None
-        _recompute_derived_quarter_metrics(q4m)
-        if q4m.get("revenue") is None:
+        # Per-share columns: the dict(am) copy carries FULL-YEAR eps. Rebuild
+        # from Q4 NI / shares, else FY eps − Σ(standalone Q1-3 eps), else None
+        # — a q4_synthesized row must never serve the annual eps (META Q4'25
+        # served 23.49 = FY25; standalone is ~8.87).
+        _q4_prior_eps: dict[str, float | None] = {}
+        for k in _PER_SHARE_METRICS:
+            eps_qs = [(ranks[i].get("metrics") or {}).get(k) for i in (1, 2, 3)]
+            _q4_prior_eps[k] = sum(eps_qs) if None not in eps_qs else None
+        _recompute_derived_quarter_metrics(q4m, prior_eps=_q4_prior_eps)
+        if q4m.get("revenue") is None or q4m.get("revenue") <= 0:
+            # No revenue, or the matched 10-K doesn't cover these quarters
+            # (FY − ΣQ1-3 went negative) — don't serve a garbage Q4.
             continue
 
         q4 = {**annual,
+              "fiscal_year": fy,  # group's label (10-K DEI fy can disagree — CRM)
               "metrics": q4m,
               "period_type": "quarterly",
               "quarter_label": "Q4 (Synthesized)",

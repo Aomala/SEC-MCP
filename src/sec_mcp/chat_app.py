@@ -2921,7 +2921,15 @@ async def validate_metric_endpoint(request: Request):
 
 @app.get("/api/cross-check/{ticker}")
 async def cross_check_ticker(ticker: str):
-    """Cross-check SEC XBRL data against Polygon.io standardized financials."""
+    """Cross-check SEC XBRL data against Polygon.io standardized financials.
+
+    The comparison is period-ALIGNED: our SEC annual metrics are compared
+    against the Polygon report of the same timeframe whose end date matches
+    our SEC period end (±14 days). The old newest-row pick compared SEC FY
+    against Polygon TTM, flagging false 8-19% "mismatches" on every
+    non-December-FYE filer (AAPL/MSFT/NVDA...). `basis` names what was
+    compared; all pre-existing response keys are unchanged (additive only).
+    """
     try:
         from sec_mcp.polygon_client import cross_check, get_ticker_details, is_available
         if not is_available():
@@ -2931,16 +2939,25 @@ async def cross_check_ticker(ticker: str):
         sec_result = _handle_financials(ticker.upper(), None)
         sec_data = sec_result.get("data") or {}
         sec_metrics = sec_data.get("metrics") or {}
+        filing_info = sec_data.get("filing_info") or {}
+        period_end = filing_info.get("report_date") or filing_info.get("period_end")
 
-        # Cross-check against Polygon
-        validation = cross_check(ticker.upper(), sec_metrics)
+        # Cross-check against Polygon on the SAME period basis
+        validation = cross_check(
+            ticker.upper(), sec_metrics,
+            sec_period_end=period_end,
+            sec_fiscal_year=sec_data.get("fiscal_year"),
+            timeframe="annual",
+        )
         details = get_ticker_details(ticker.upper())
 
         return {
             "ticker": ticker.upper(),
             "validation": validation,
+            "basis": validation.get("basis"),          # additive
+            "sec_period_end": period_end,              # additive
             "polygon_details": details,
-            "sec_filing": (sec_data.get("filing_info") or {}).get("accession_number"),
+            "sec_filing": filing_info.get("accession_number"),
         }
     except Exception as e:
         log.exception("Cross-check failed for %s", ticker)

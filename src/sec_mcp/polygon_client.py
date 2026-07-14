@@ -7,6 +7,7 @@ compares against SEC-extracted values to flag discrepancies.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -19,6 +20,23 @@ log = logging.getLogger(__name__)
 _BASE = "https://api.polygon.io"
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_TTL = 300  # 5 minutes
+
+# SEC/yfinance class-share notation ("BRK-B", "BF-B") → Polygon's dot
+# notation ("BRK.B"). Polygon 400s the dash form, which nulled every
+# market-cap/shares/financials lookup for dash-class tickers.
+_CLASS_SHARE_RE = re.compile(r"^([A-Z]{1,6})-([A-Z]{1,2})$")
+
+
+def normalize_ticker(ticker: str) -> str:
+    """Normalize a ticker to Polygon's notation (class shares use dots).
+
+    Lives in the request layer so EVERY caller (details, news, financials,
+    cross-check) benefits. Index symbols ("I:SPX") and plain tickers pass
+    through untouched.
+    """
+    t = (ticker or "").strip().upper()
+    m = _CLASS_SHARE_RE.match(t)
+    return f"{m.group(1)}.{m.group(2)}" if m else t
 
 
 def _api_key() -> str:
@@ -54,7 +72,7 @@ def _get(path: str, params: dict | None = None) -> Any:
 
 def get_ticker_details(ticker: str) -> dict | None:
     """Fetch company overview from Polygon (name, market cap, SIC, description, etc.)."""
-    data = _get(f"/v3/reference/tickers/{ticker.upper()}")
+    data = _get(f"/v3/reference/tickers/{normalize_ticker(ticker)}")
     if not data or not isinstance(data, dict):
         return None
     return data.get("results")
@@ -66,7 +84,8 @@ def get_ticker_news(ticker: str, limit: int = 12) -> list[dict]:
     description, insights[] (per-ticker sentiment)."""
     data = _get(
         "/v2/reference/news",
-        {"ticker": ticker.upper(), "limit": limit, "order": "desc", "sort": "published_utc"},
+        {"ticker": normalize_ticker(ticker), "limit": limit,
+         "order": "desc", "sort": "published_utc"},
     )
     if not isinstance(data, dict):
         return []
@@ -147,7 +166,7 @@ def get_financials(ticker: str, limit: int = 4) -> list[dict] | None:
     cash_flow_statement, comprehensive_income), newest first.
     """
     data = _get("/vX/reference/financials", {
-        "ticker": ticker.upper(),
+        "ticker": normalize_ticker(ticker),
         "limit": limit,
     })
     if not data or not isinstance(data, dict):
@@ -158,14 +177,13 @@ def get_financials(ticker: str, limit: int = 4) -> list[dict] | None:
     return results
 
 
-def _extract_polygon_value(financials: list[dict], statement: str, tag: str) -> float | None:
-    """Pull a single value from the most recent Polygon financial report."""
-    if not financials:
+def _report_value(report: dict | None, statement: str, tag: str) -> float | None:
+    """Pull a single value from one Polygon financial report."""
+    if not report:
         return None
-    latest = financials[0]
-    stmt = latest.get("financials", {}).get(statement, {})
+    stmt = report.get("financials", {}).get(statement, {})
     entry = stmt.get(tag, {})
-    return entry.get("value") if entry else None
+    return entry.get("value") if isinstance(entry, dict) else None
 
 
 def _pct_diff(a: float, b: float) -> float:
@@ -176,15 +194,56 @@ def _pct_diff(a: float, b: float) -> float:
 
 
 _MATCH_TOLERANCE = 5.0  # percent
+_ALIGN_WINDOW_DAYS = 14  # SEC vs Polygon period-end alignment tolerance
 
 
-def cross_check(ticker: str, sec_data: dict) -> dict:
+def _pick_aligned_report(rows: list[dict], sec_period_end: str | None,
+                         timeframe: str) -> tuple[dict | None, bool]:
+    """Pick the Polygon report on the same basis as our SEC period.
+
+    Returns (report, aligned). Alignment = requested timeframe AND period end
+    within ±14 days of the SEC period end (mirrors the MCP surface layer's
+    fundamentals._cross_check). Non-December-FYE filers made the old
+    "newest row" pick (a TTM row) flag 8-19% false mismatches on every
+    annual comparison.
+    """
+    from datetime import date as _date
+    want_end = str(sec_period_end or "")[:10]
+    tf_rows = [r for r in rows if (r.get("timeframe") or "").lower() == timeframe]
+    if want_end:
+        for r in tf_rows:
+            r_end = str(r.get("end_date") or "")[:10]
+            try:
+                delta = abs((_date.fromisoformat(want_end)
+                             - _date.fromisoformat(r_end)).days)
+            except ValueError:
+                continue
+            if delta <= _ALIGN_WINDOW_DAYS:
+                return r, True
+    # No aligned row — the newest row of the right TIMEFRAME still beats the
+    # legacy any-row pick (which grabbed TTM against annual SEC data).
+    if tf_rows:
+        return tf_rows[0], False
+    return (rows[0], False) if rows else (None, False)
+
+
+def cross_check(ticker: str, sec_data: dict, *,
+                sec_period_end: str | None = None,
+                sec_fiscal_year: int | str | None = None,
+                timeframe: str = "annual") -> dict:
     """Compare SEC XBRL extracted values against Polygon standardized financials.
 
     Args:
         ticker: Stock ticker symbol.
         sec_data: Dict of SEC-extracted metrics. Expected keys:
-            revenue, net_income, total_assets, eps (values as floats).
+            revenue, net_income, total_assets (floats), plus
+            eps / eps_diluted / eps_basic for the EPS comparison.
+        sec_period_end: SEC period end date (ISO) — enables period ALIGNMENT:
+            the Polygon report with the requested timeframe whose end date is
+            within ±14 days is compared. Without it, the newest report of the
+            requested timeframe is used.
+        sec_fiscal_year: SEC fiscal year, echoed into the basis label.
+        timeframe: Polygon timeframe to compare against ("annual"/"quarterly"/"ttm").
 
     Returns:
         Dict keyed by metric name, each containing:
@@ -192,21 +251,35 @@ def cross_check(ticker: str, sec_data: dict) -> dict:
             polygon: Polygon value (or None)
             diff_pct: percentage difference
             match: True if within 5% tolerance
+        Plus an additive "basis" key (str) naming what was compared, e.g.
+        "annual_fy2025_vs_polygon_annual_2025-09-27". Existing consumers doing
+        keyed metric lookups are unaffected.
     """
-    financials = get_financials(ticker, limit=1)
+    rows = get_financials(ticker, limit=8) or []
+    report, aligned = _pick_aligned_report(rows, sec_period_end, timeframe)
 
-    # Polygon tag mappings: (statement, tag)
-    metric_map: dict[str, tuple[str, str]] = {
-        "revenue": ("income_statement", "revenues"),
-        "net_income": ("income_statement", "net_income_loss"),
-        "total_assets": ("balance_sheet", "assets"),
-        "eps": ("income_statement", "basic_earnings_per_share"),
+    # SEC EPS was historically never populated (extraction emits
+    # eps_diluted/eps_basic, not "eps") — pick diluted first and compare it
+    # against Polygon's matching diluted tag.
+    sec_eps = sec_data.get("eps")
+    eps_tag = "basic_earnings_per_share"
+    if sec_eps is None:
+        if sec_data.get("eps_diluted") is not None:
+            sec_eps, eps_tag = sec_data.get("eps_diluted"), "diluted_earnings_per_share"
+        else:
+            sec_eps = sec_data.get("eps_basic")
+
+    # Polygon tag mappings: (statement, tag, sec value)
+    metric_map: dict[str, tuple[str, str, float | None]] = {
+        "revenue": ("income_statement", "revenues", sec_data.get("revenue")),
+        "net_income": ("income_statement", "net_income_loss", sec_data.get("net_income")),
+        "total_assets": ("balance_sheet", "assets", sec_data.get("total_assets")),
+        "eps": ("income_statement", eps_tag, sec_eps),
     }
 
-    result: dict[str, dict] = {}
-    for metric, (statement, tag) in metric_map.items():
-        sec_val = sec_data.get(metric)
-        poly_val = _extract_polygon_value(financials, statement, tag) if financials else None
+    result: dict[str, Any] = {}
+    for metric, (statement, tag, sec_val) in metric_map.items():
+        poly_val = _report_value(report, statement, tag)
 
         if sec_val is not None and poly_val is not None:
             diff = _pct_diff(float(sec_val), float(poly_val))
@@ -221,6 +294,16 @@ def cross_check(ticker: str, sec_data: dict) -> dict:
             "diff_pct": round(diff, 2),
             "match": match,
         }
+
+    # Additive basis label — names the two periods actually compared.
+    sec_side = timeframe + (f"_fy{sec_fiscal_year}" if sec_fiscal_year else "")
+    if report:
+        poly_side = (f"polygon_{(report.get('timeframe') or 'unknown')}"
+                     f"_{report.get('end_date') or 'unknown'}")
+        result["basis"] = (f"{sec_side}_vs_{poly_side}"
+                           + ("" if aligned else "_unaligned"))
+    else:
+        result["basis"] = f"{sec_side}_vs_polygon_none"
 
     return result
 
