@@ -2518,6 +2518,17 @@ async def get_ticker_metrics(ticker: str, period: str = "annual") -> dict:
                         or "No standalone quarter — served annual.")
                 period_basis = "annual_fallback"
 
+        # EPS backfill for derived periods: the TTM/quarter builders leave
+        # eps_diluted None when the history rows can't be trusted (YTD-leaked
+        # EPS columns); NI / live share count restores an honest P/E.
+        if (resolved in ("ttm", "quarterly")
+                and period_basis in ("ttm", "quarterly")
+                and metrics_src.get("eps_diluted") is None):
+            ni = metrics_src.get("net_income")
+            sh = shares_override or metrics_src.get("shares_outstanding")
+            if isinstance(ni, (int, float)) and isinstance(sh, (int, float)) and sh > 0:
+                metrics_src = {**metrics_src, "eps_diluted": ni / sh}
+
         # Serve-time ratio recompute — never trust the frozen cached `ratios`
         # dict, so new ratio fields appear without invalidating warm entries.
         ratios = compute_ratios(metrics_src, prior=ratio_prior, industry=industry)

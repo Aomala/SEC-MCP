@@ -95,3 +95,25 @@ def test_precombined_total_debt_wins():
     out = compute_ticker_metrics("T", {"total_debt": 600.0}, {})
     assert out["totalDebt"] == 600.0
     assert out["netDebt"] == 600.0
+
+
+def test_pe_falls_back_to_mcap_ni_on_adr_share_basis_mismatch():
+    # TSM-style: EPS per ordinary share, price/shares ADR-basis (5:1)
+    out = compute_ticker_metrics(
+        "ADR", {"eps_diluted": 1.39, "net_income": 36_000_000_000.0}, {},
+        price=421.58, market_cap_override=2_186_000_000_000.0)
+    assert out["peBasis"] == "mcap_ni"
+    assert out["peRatio"] == pytest.approx(2_186_000_000_000.0 / 36_000_000_000.0)
+
+
+def test_pe_from_mcap_ni_when_eps_missing():
+    out = compute_ticker_metrics(
+        "T", {"net_income": 100.0}, {}, market_cap_override=2000.0)
+    assert out["peRatio"] == pytest.approx(20.0)
+    assert out["peBasis"] == "mcap_ni"
+
+
+def test_pe_keeps_eps_basis_when_consistent(sample_financial_metrics):
+    out = compute_ticker_metrics("AAPL", sample_financial_metrics, {}, price=200.0)
+    assert out["peBasis"] == "eps"
+    assert abs(out["peRatio"] - 200.0 / 6.13) < 1e-9

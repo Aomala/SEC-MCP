@@ -121,6 +121,29 @@ def test_eps_falls_back_to_summed_quarterly_eps(mock_periods):
     assert m["eps_diluted"] == pytest.approx((50 + 48 + 46 + 44) / 100.0)
 
 
+def test_eps_never_summed_from_decumulated_rows(mock_periods):
+    # Decumulated/synthesized rows carry YTD or full-year EPS — summing them
+    # inflated TTM P/E 2-3x (JPM, META, WMT, LLY...). Without shares, honest None.
+    qs = _eight_quarters()
+    qs[1]["quality"] = "standalone_decumulated"
+    for q in qs:
+        q["metrics"]["sharesOutstanding"] = None
+    mock_periods(qs)
+    m = build_ttm_metrics("TEST")["metrics"]
+    assert m["eps_diluted"] is None
+    assert m["net_income"] is not None  # NI itself is decumulated-correct
+
+
+def test_quarter_eps_ignores_row_eps_on_decumulated_rows(mock_periods):
+    from sec_mcp.core.ttm import build_latest_quarter_metrics
+    qs = _eight_quarters()
+    qs[0]["quality"] = "standalone_decumulated"
+    qs[0]["metrics"]["epsDiluted"] = 1.5   # YTD value — must be ignored
+    mock_periods(qs)
+    m = build_latest_quarter_metrics("TEST")["metrics"]
+    assert m["eps_diluted"] == pytest.approx(50.0 / 100.0)  # NI / shares instead
+
+
 def test_prior_balances_from_year_ago_quarter(mock_periods):
     mock_periods(_eight_quarters())
     out = build_ttm_metrics("TEST")

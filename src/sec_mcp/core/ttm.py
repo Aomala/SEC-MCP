@@ -146,9 +146,17 @@ def build_latest_quarter_metrics(ticker: str,
                          "verify it is a standalone quarter",
                 "hint": "Fall back to period=annual."}
     metrics = _snake_metrics(q)
+    # Row epsDiluted is only trustworthy on plain standalone rows — the eps
+    # column skips decumulation/Q4-synthesis, so decumulated rows carry
+    # YTD/full-year EPS. Otherwise derive from NI / share count.
     ni, shares = metrics.get("net_income"), metrics.get("shares_outstanding")
-    metrics["eps_diluted"] = (_num(q["metrics"].get("epsDiluted"))
-                              or (ni / shares if (ni is not None and shares) else None))
+    if (q.get("quality") or "standalone") == "standalone":
+        eps = _num(q["metrics"].get("epsDiluted"))
+    else:
+        eps = None
+    if eps is None and ni is not None and shares:
+        eps = ni / shares
+    metrics["eps_diluted"] = eps
 
     return {
         "metrics": metrics,
@@ -201,11 +209,15 @@ def build_ttm_metrics(ticker: str,
         metrics["capital_expenditures"] = abs(metrics["capital_expenditures"])
     _add_aliases(metrics)
 
-    # TTM EPS: prefer NI_ttm / latest diluted share count, else sum quarterly EPS
+    # TTM EPS: NI_ttm / latest share count. Summing quarterly epsDiluted rows
+    # is only safe when every row is plain "standalone" — decumulated and
+    # q4_synthesized rows carry YTD/full-year EPS (the eps column skips
+    # decumulation), which inflated TTM P/E 2-3x across the panel. Callers
+    # backfill from NI / live share count when this stays None.
     ni = metrics.get("net_income")
     shares = metrics.get("shares_outstanding")
     eps = ni / shares if (ni is not None and shares) else None
-    if eps is None:
+    if eps is None and all((q.get("quality") or "standalone") == "standalone" for q in qs):
         q_eps = [_num(q["metrics"].get("epsDiluted")) for q in qs]
         eps = sum(q_eps) if all(v is not None for v in q_eps) else None
     metrics["eps_diluted"] = eps

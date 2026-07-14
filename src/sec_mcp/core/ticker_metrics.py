@@ -82,6 +82,17 @@ def compute_ticker_metrics(
     if market_cap is not None and net_debt is not None:
         ev = market_cap + net_debt
 
+    # P/E: price/EPS when the two are on the same share basis; market-cap /
+    # net-income otherwise. Cross-listed filers break the eps path — TSM's
+    # XBRL EPS is per ordinary Taiwan share while price/shares are ADR-basis
+    # (5:1), serving P/E 5x too high — and the two bases disagreeing by >1.8x
+    # is the tell (normal diluted-vs-weighted drift is far smaller).
+    pe = _div(price, eps) if (eps or 0) > 0 else None
+    pe_basis = "eps" if pe is not None else None
+    pe_mcap = _div(market_cap, net_income) if (net_income or 0) > 0 else None
+    if pe_mcap is not None and (pe is None or pe / pe_mcap > 1.8 or pe_mcap / pe > 1.8):
+        pe, pe_basis = pe_mcap, "mcap_ni"
+
     out: dict[str, Any] = {
         "ticker": ticker.upper(),
         "price": price,
@@ -92,7 +103,8 @@ def compute_ticker_metrics(
         "netDebtBasis": net_debt_basis,
         "totalDebt": total_debt,
         # Valuation multiples
-        "peRatio": _div(price, eps) if (eps or 0) > 0 else None,
+        "peRatio": pe,
+        "peBasis": pe_basis,
         "psRatio": _div(market_cap, revenue) if (revenue or 0) > 0 else None,
         "pbRatio": _div(market_cap, equity) if (equity or 0) > 0 else None,
         "evEbitda": _div(ev, ebitda) if (ebitda or 0) > 0 else None,
@@ -119,5 +131,6 @@ def compute_ticker_metrics(
         "ebitda": ebitda,
         "freeCashFlow": fcf,
         "eps": eps,
+        "epsDiluted": _num(m.get("eps_diluted")),
     }
     return out
