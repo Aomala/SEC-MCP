@@ -2280,27 +2280,33 @@ async def etf_comps(req: EtfCompsRequest) -> dict:
 #  Index instruments + market overview — real levels (not ETF proxies)
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _json_safe(payload: dict) -> dict:
+    """Round-trip through json with default=str — a numpy/pandas/Path value
+    surviving into a response body turns FastAPI's serializer into a plaintext
+    500 that bypasses the handler's own try/except."""
+    import json as _json
+    return _json.loads(_json.dumps(payload, default=str))
+
+
 @app.get("/api/index/{symbol}")
 async def get_index_route(symbol: str, history: bool = True, window: str = "1M") -> dict:
     """Real index level + history: I:SPX / SPX / ^GSPC, I:NDX, I:DJI, I:RUT, I:VIX."""
-    from sec_mcp.surface.indices import get_index_impl
-
     try:
-        return get_index_impl(symbol, include_history=history, history_window=window)
+        from sec_mcp.surface.indices import get_index_impl
+        return _json_safe(get_index_impl(symbol, include_history=history, history_window=window))
     except Exception as exc:  # noqa: BLE001 — surface layer already structures ToolError
-        log.warning("Index fetch failed for %s: %s", symbol, exc)
+        log.warning("Index fetch failed for %s: %s", symbol, exc, exc_info=True)
         return {"error": str(exc), "code": "INTERNAL", "symbol": symbol.upper()}
 
 
 @app.get("/api/market/overview")
 async def get_market_overview_route() -> dict:
     """One-call market dashboard: index tape + breadth + cap-weighted sectors."""
-    from sec_mcp.surface.indices import get_market_overview_impl
-
     try:
-        return get_market_overview_impl()
+        from sec_mcp.surface.indices import get_market_overview_impl
+        return _json_safe(get_market_overview_impl())
     except Exception as exc:  # noqa: BLE001
-        log.warning("Market overview failed: %s", exc)
+        log.warning("Market overview failed: %s", exc, exc_info=True)
         return {"error": str(exc), "code": "INTERNAL"}
 
 
