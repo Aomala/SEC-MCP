@@ -5,7 +5,7 @@ info: SEC filings, fundamentals, prices, ownership, insider activity —
 queryable 24/7 with rich filters.
 
 **Server:** `python -m sec_mcp.server` (STDIO) or `--sse` (remote).
-**Surface:** exactly 9 tools, defined in `src/sec_mcp/server.py`, implemented in `src/sec_mcp/surface/`.
+**Surface:** 11 tools, defined in `src/sec_mcp/server.py`, implemented in `src/sec_mcp/surface/`.
 
 ## Universal contract
 
@@ -256,6 +256,49 @@ compare(["AAPL", "MSFT"], metrics=["revenue", "netMargin", "freeCashFlow"])
 ```
 
 Per-ticker failures are reported in `failures` without killing the call.
+
+---
+
+## 10. get_index(symbol, include_history?, history_window?)
+
+Real index level + history from Polygon's Indices feed — **not** an ETF proxy.
+`symbol` accepts `I:SPX`/`SPX`/`^GSPC`, `I:NDX`, `I:DJI`, `I:RUT`, `I:VIX`/`VIX`.
+`history_window`: `5D|1M|3M|6M|1Y|5Y` (default `1M`). Same 24/7 contract as
+`get_quote` — a closed market returns the last level with `session: "closed"`,
+never an error. Missing Polygon Indices entitlement → `code: "UNAVAILABLE"`.
+
+```python
+get_index("SPX", history_window="1M")
+```
+```json
+{ "symbol": "I:SPX", "name": "S&P 500", "level": 6284.65, "change": 12.30,
+  "changePct": 0.20, "session": "regular", "provider": "polygon",
+  "chartSeries": { "labels": ["2026-06-08", "…"], "levels": [6180.1, "…"] },
+  "meta": { "source": "polygon:indices", ... } }
+```
+
+## 11. get_market_overview()
+
+One-call market dashboard: the five-index tape + market breadth + a
+cap-weighted S&P 500 sector rollup. Index levels are live; **breadth and the
+constituent rollup are read from the scheduled `ingest_indices` worker's cache**
+(never recomputed on the request path), so this stays fast and never blocks on
+~500 quotes. Missing cache → `breadth`/`sectors` are `null` but the tape answers.
+
+```python
+get_market_overview()
+```
+```json
+{ "indices": [ { "symbol": "I:SPX", "name": "S&P 500", "level": 6284.65, "changePct": 0.20 }, "…VIX" ],
+  "breadth": { "advancers": 331, "decliners": 168, "advDecRatio": 1.97,
+               "newHighs": 42, "newLows": 9, "pctAbove50dma": 63.4, "window": "60D", "coverage": 0.99 },
+  "sectors": [ { "sector": "technology", "weightPct": 31.8, "count": 68, "avgChangePct": 0.41 }, "…" ],
+  "session": "regular", "constituentsAsOf": "2026-07-08T13:00:00+00:00",
+  "meta": { "source": "polygon:indices", "cacheHit": true, ... } }
+```
+
+Fed by `python -m sec_mcp.ingest_indices` (or `POST /api/ingest/indices`), run
+on a schedule. REST mirrors: `GET /api/index/{symbol}`, `GET /api/market/overview`.
 
 ---
 

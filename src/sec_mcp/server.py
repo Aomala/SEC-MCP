@@ -3,7 +3,7 @@
 The single source of truth for company info: SEC filings, fundamentals,
 prices, ownership, insider activity — queryable 24/7 with rich filters.
 
-Tool surface (exactly 9 tools)
+Tool surface (11 tools)
 ──────────────────────────────
   1. search_companies      — ranked company search with rich filters
   2. get_filings           — filings index + EDGAR full-text search
@@ -14,6 +14,8 @@ Tool surface (exactly 9 tools)
   7. get_ownership         — 13F holders + 13D/G blockholders
   8. screen                — composable valuation/growth/quality/event screener
   9. compare               — side-by-side fundamentals, normalized periods
+ 10. get_index             — real index level + history (SPX/NDX/DJI/RUT/VIX)
+ 11. get_market_overview   — index tape + breadth + cap-weighted sectors
 
 Contract (enforced by sec_mcp.surface.meta.tool_guard on every tool):
   - every response carries meta = {source, asOf, cacheHit, latencyMs}
@@ -33,6 +35,7 @@ from fastmcp import FastMCP
 from sec_mcp.surface.company_search import search_companies_impl
 from sec_mcp.surface.filings import get_filing_section_impl, get_filings_impl
 from sec_mcp.surface.fundamentals import compare_impl, get_fundamentals_impl
+from sec_mcp.surface.indices import get_index_impl, get_market_overview_impl
 
 # response contract wrapper — meta injection + structured errors
 from sec_mcp.surface.meta import tool_guard
@@ -209,6 +212,43 @@ def compare(tickers: list[str], metrics: list[str] | None = None,
     explicit; failures for individual tickers are reported, not fatal.
     """
     return compare_impl(tickers, metrics, period)
+
+
+@mcp.tool()
+@tool_guard("polygon:indices")
+def get_index(symbol: str, include_history: bool = True,
+              history_window: str = "1M") -> dict:
+    """Real index level + history — S&P 500, Nasdaq 100, Dow, Russell, VIX.
+
+    Args:
+        symbol: index ticker or alias — 'I:SPX'/'SPX'/'^GSPC', 'I:NDX', 'I:DJI',
+            'I:RUT', 'I:VIX'/'VIX'.
+        include_history: attach a chartSeries {labels, levels} for the window.
+        history_window: 5D | 1M | 3M | 6M | 1Y | 5Y (default 1M).
+
+    Returns { symbol, name, level, change, changePct, session, chartSeries }.
+    A closed market is NEVER an error — the last level is labeled
+    session='closed'. Backed by Polygon's Indices feed (real levels, not ETF
+    proxies).
+    """
+    return get_index_impl(symbol, include_history, history_window)
+
+
+@mcp.tool()
+@tool_guard("polygon:indices")
+def get_market_overview() -> dict:
+    """One-call market dashboard: index tape + breadth + cap-weighted sectors.
+
+    Returns { indices: [SPX, NDX, DJI, RUT, VIX], breadth: {advancers,
+    decliners, advDecRatio, newHighs, newLows, pctAbove50dma}, sectors:
+    [{sector, weightPct, count, avgChangePct}], session }.
+
+    Index levels are live; breadth and the S&P 500 constituent cap-weight
+    rollup come from the scheduled ingest worker's cache (never recomputed on
+    the request path). Missing cache → breadth/sectors are null but the index
+    tape still answers.
+    """
+    return get_market_overview_impl()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
