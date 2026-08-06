@@ -7,10 +7,27 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <style>
   :root {
-    --bg: #0b0d10; --panel: #12151a; --panel2: #161a20; --line: #1f242c;
-    --text: #f2f4f7; --dim: #9aa3af; --accent: #4f82f3;
-    --green: #34c08b; --red: #e5634c; --gold: #d9a441;
+    /* zinc tokens — one design language across /, /filings, /explorer */
+    --bg: #09090b; --panel: #18181b; --panel2: #1f1f23; --line: #27272a;
+    --text: #f4f4f5; --dim: #a1a1aa; --accent: #3b82f6;
+    --green: #10b981; --red: #ef4444; --gold: #f59e0b;
   }
+  /* ── persistent app sidebar (same nav on every page) ── */
+  #appnav { position: fixed; inset: 0 auto 0 0; width: 184px; z-index: 20;
+            border-right: 1px solid var(--line); background: var(--bg);
+            display: flex; flex-direction: column; padding: 14px 10px; gap: 2px; }
+  #appnav .brand { display: flex; align-items: center; gap: 8px; padding: 2px 10px 14px;
+                   font-weight: 700; font-size: 14px; }
+  #appnav .brand img { border-radius: 50%; }
+  #appnav a { display: block; padding: 7px 10px; border-radius: 8px; color: var(--dim);
+              text-decoration: none; font-size: 13px; }
+  #appnav a:hover { background: #ffffff08; color: var(--text); }
+  #appnav a.on { background: var(--panel); color: var(--text); font-weight: 500;
+                 box-shadow: inset 0 0 0 1px var(--line); }
+  #appnav .grow { flex: 1; }
+  #appnav .foot { color: #71717a; font-size: 11px; padding: 8px 10px; }
+  header, main { margin-left: 184px; }
+  @media (max-width: 900px) { #appnav { display: none; } header, main { margin-left: 0; } }
   * { box-sizing: border-box; margin: 0; }
   body { background: var(--bg); color: var(--text);
          font: 15px/1.6 -apple-system, "Inter", "Segoe UI", sans-serif;
@@ -100,6 +117,15 @@
 </style>
 </head>
 <body>
+<aside id="appnav">
+  <div class="brand"><img src="/static/logo-32.png" width="20" height="20" alt=""> Fineas</div>
+  <a href="/">Dashboard</a>
+  <a href="/filings">Filings Reader</a>
+  <a href="/explorer" class="on">Data Explorer</a>
+  <a href="/docs" target="_blank">API Docs</a>
+  <div class="grow"></div>
+  <div class="foot">fineasmcp · SEC-native data</div>
+</aside>
 <header>
   <h1>SEC Data Explorer</h1>
   <span class="sub">every number traceable to its filing</span>

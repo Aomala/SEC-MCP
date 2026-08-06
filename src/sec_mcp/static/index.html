@@ -6,7 +6,7 @@
   <title>Fineas.ai — SEC Financial Intelligence</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700;800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet"/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="icon" type="image/png" href="/static/logo-32.png"/>
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
-  <link rel="stylesheet" href="/static/app.css?v=58"/>
+  <link rel="stylesheet" href="/static/app.css?v=59"/>
 </head>
 <body>
 <div class="app">
@@ -49,6 +49,13 @@
       </a>
       <a href="#" class="nav-item" data-view="screener">
         <i data-lucide="filter"></i> Screener
+      </a>
+      <div class="section-title" style="padding:10px 12px 4px">PAGES</div>
+      <a href="/filings" class="nav-item">
+        <i data-lucide="file-text"></i> Filings Reader
+      </a>
+      <a href="/explorer" class="nav-item">
+        <i data-lucide="bar-chart-3"></i> Data Explorer
       </a>
       <a href="/docs" class="nav-item" target="_blank">
         <i data-lucide="code"></i> API Docs
@@ -98,15 +105,9 @@
           </button>
         </div>
       </div>
+      <!-- Nav lives in the sidebar only — this row is data controls, not a
+           second navigation. (The duplicated view-tab strip is gone.) -->
       <div class="header-tabs">
-        <div class="view-tabs">
-          <button class="view-tab active" data-view="dashboard"><i data-lucide="layout-dashboard"></i> Dashboard</button>
-          <button class="view-tab" data-view="statements"><i data-lucide="table"></i> Statements</button>
-          <button class="view-tab" data-view="comps"><i data-lucide="git-compare"></i> Comparables</button>
-          <button class="view-tab" data-view="filings"><i data-lucide="book-open"></i> 10-K Explorer</button>
-          <button class="view-tab" data-view="insights"><i data-lucide="zap"></i> AI Insights</button>
-          <button class="view-tab" data-view="screener"><i data-lucide="filter"></i> Screener</button>
-        </div>
         <div class="header-controls">
           <div class="toggle-group">
             <button class="toggle-btn active" data-period="annual">Annual</button>

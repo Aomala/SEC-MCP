@@ -15,39 +15,39 @@
    Near-black ink, hairline structure, ONE deep-sapphire accent.
    Depth comes from shadow, never glow — the data is the light.   */
 :root {
-  /* Backgrounds — true noir, barely-separated planes */
-  --bg-primary: #050608;
-  --bg-secondary: #0a0c10;
-  --bg-tertiary: #12151b;
-  --bg-elevated: #0d1015;
-  --bg-hover: rgba(79, 130, 243, 0.05);
+  /* Backgrounds — zinc planes (matches the /filings reader design language) */
+  --bg-primary: #09090b;
+  --bg-secondary: #0e0e10;
+  --bg-tertiary: #18181b;
+  --bg-elevated: #121215;
+  --bg-hover: rgba(255, 255, 255, 0.04);
 
-  /* Text — cool paper-white on ink */
-  --text-primary: #e8ebf0;
-  --text-secondary: #98a1b0;
-  --text-tertiary: #697382;
-  --text-muted: #49515f;
+  /* Text — zinc hierarchy */
+  --text-primary: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --text-tertiary: #71717a;
+  --text-muted: #52525b;
 
   /* Borders — hairlines are the structural language of the UI */
-  --border: rgba(165, 184, 212, 0.10);
-  --border-light: rgba(165, 184, 212, 0.05);
+  --border: #27272a;
+  --border-light: #1f1f23;
 
-  /* Brand — deep sapphire, the single light source */
-  --brand: #4f82f3;
-  --brand-light: #82a8f7;
-  --brand-dark: #2554c7;
-  --brand-bg: rgba(79, 130, 243, 0.08);
-  --brand-bg-strong: rgba(79, 130, 243, 0.16);
+  /* Brand — one blue, used sparingly */
+  --brand: #3b82f6;
+  --brand-light: #60a5fa;
+  --brand-dark: #2563eb;
+  --brand-bg: rgba(59, 130, 246, 0.08);
+  --brand-bg-strong: rgba(59, 130, 246, 0.16);
 
-  /* Semantic — desaturated to sit inside the noir palette */
-  --success: #4ade80;
-  --success-bg: rgba(74, 222, 128, 0.08);
-  --danger: #f87171;
-  --danger-bg: rgba(248, 113, 113, 0.08);
-  --warning: #fbbf24;
-  --warning-bg: rgba(251, 191, 36, 0.08);
-  --info: #4f82f3;
-  --info-bg: rgba(79, 130, 243, 0.08);
+  /* Semantic — emerald / red / amber, desaturated on ink */
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.08);
+  --danger: #ef4444;
+  --danger-bg: rgba(239, 68, 68, 0.08);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.08);
+  --info: #3b82f6;
+  --info-bg: rgba(59, 130, 246, 0.08);
 
   /* Effects — shadow for depth; glows retired */
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.45);
@@ -64,8 +64,8 @@
   --radius-lg: 12px;
   --radius-sm: 5px;
 
-  /* Typography — Schibsted Grotesk (UI) / Spline Sans Mono (figures) */
-  --font-sans: 'Schibsted Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Typography — Inter (UI) / Spline Sans Mono (figures) */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'Spline Sans Mono', 'JetBrains Mono', 'Courier New', monospace;
 
   /* Transitions */

@@ -25,7 +25,16 @@
   button{cursor:pointer;color:var(--t2)} button:hover{color:var(--t1);border-color:var(--border2)}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
   button.on{color:var(--t1);border-color:var(--accent)}
-  main{display:grid;grid-template-columns:260px 1fr 320px;flex:1;min-height:0}
+  main{display:grid;grid-template-columns:184px 260px 1fr 320px;flex:1;min-height:0}
+  /* ── app sidebar: persistent nav, same on every page ── */
+  #appnav{border-right:1px solid var(--border);display:flex;flex-direction:column;padding:14px 10px;gap:2px}
+  #appnav .brand{display:flex;align-items:center;gap:8px;padding:2px 10px 14px;font-weight:700;font-size:14px;letter-spacing:-.01em}
+  #appnav .brand img{border-radius:50%}
+  #appnav a{display:block;padding:7px 10px;border-radius:8px;color:var(--t2);text-decoration:none;font-size:13px}
+  #appnav a:hover{background:#ffffff08;color:var(--t1)}
+  #appnav a.on{background:var(--panel);color:var(--t1);font-weight:500;box-shadow:inset 0 0 0 1px var(--border)}
+  #appnav .grow{flex:1}
+  #appnav .foot{color:var(--t3);font-size:11px;padding:8px 10px}
   /* ── left: filing list ── */
   #rail{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
   #rail .filters{display:flex;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
@@ -64,7 +73,8 @@
   .empty{color:var(--t3);text-align:center;padding:48px 24px;font-size:13px}
   .err{color:var(--red);padding:12px;font-size:13px}
   .err button{margin-left:8px}
-  @media (max-width:1100px){main{grid-template-columns:220px 1fr}#insights{display:none}}
+  @media (max-width:1250px){main{grid-template-columns:184px 220px 1fr}#insights{display:none}}
+  @media (max-width:900px){main{grid-template-columns:200px 1fr}#appnav{display:none}}
 </style>
 </head>
 <body>
@@ -75,9 +85,17 @@
   <span class="co" id="coname"></span>
   <span class="chip" id="quote" hidden></span>
   <span style="flex:1"></span>
-  <a href="/explorer" style="color:var(--t3);font-size:13px;text-decoration:none">Explorer →</a>
 </header>
 <main>
+  <aside id="appnav">
+    <div class="brand"><img src="/static/logo-32.png" width="20" height="20" alt=""> Fineas</div>
+    <a href="/">Dashboard</a>
+    <a href="/filings" class="on">Filings Reader</a>
+    <a href="/explorer">Data Explorer</a>
+    <a href="/docs" target="_blank">API Docs</a>
+    <div class="grow"></div>
+    <div class="foot">fineasmcp · SEC-native data</div>
+  </aside>
   <aside id="rail">
     <div class="filters" id="formFilters">
       <button data-f="" class="on">All</button>
