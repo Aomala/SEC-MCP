@@ -3,7 +3,7 @@
 The single source of truth for company info: SEC filings, fundamentals,
 prices, ownership, insider activity — queryable 24/7 with rich filters.
 
-Tool surface (11 tools)
+Tool surface (18 tools)
 ──────────────────────────────
   1. search_companies      — ranked company search with rich filters
   2. get_filings           — filings index + EDGAR full-text search
@@ -16,6 +16,14 @@ Tool surface (11 tools)
   9. compare               — side-by-side fundamentals, normalized periods
  10. get_index             — real index level + history (SPX/NDX/DJI/RUT/VIX)
  11. get_market_overview   — index tape + breadth + cap-weighted sectors
+ 12. get_price_history     — OHLCV bars + chartSeries (Polygon → yfinance)
+ 13. get_news              — per-ticker news with publisher provenance
+ 14. get_corporate_actions — dividends + splits + forward yield
+ 15. find_peers            — comparable companies (PEER_MAP → SIC)
+ 16. get_etf_profile       — fund detection + expense ratio/AUM profile
+ 17. diff_fundamentals     — YoY metric deltas with significance flags
+ 18. get_valuation         — P/E, EV/EBITDA, ROE/ROIC (TTM-first, same
+                             engine as the REST dashboard)
 
 Contract (enforced by sec_mcp.surface.meta.tool_guard on every tool):
   - every response carries meta = {source, asOf, cacheHit, latencyMs}
@@ -32,16 +40,23 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 # one implementation module per tool (all logic lives there, not here)
+from sec_mcp.surface.actions import get_corporate_actions_impl
 from sec_mcp.surface.company_search import search_companies_impl
+from sec_mcp.surface.diff import diff_fundamentals_impl
+from sec_mcp.surface.etf import get_etf_profile_impl
 from sec_mcp.surface.filings import get_filing_section_impl, get_filings_impl
 from sec_mcp.surface.fundamentals import compare_impl, get_fundamentals_impl
+from sec_mcp.surface.history import get_price_history_impl
 from sec_mcp.surface.indices import get_index_impl, get_market_overview_impl
 
 # response contract wrapper — meta injection + structured errors
 from sec_mcp.surface.meta import tool_guard
+from sec_mcp.surface.news import get_news_impl
 from sec_mcp.surface.ownership import get_insider_activity_impl, get_ownership_impl
+from sec_mcp.surface.peers import find_peers_impl
 from sec_mcp.surface.quotes import get_quote_impl
 from sec_mcp.surface.screen import screen_impl
+from sec_mcp.surface.valuation import get_valuation_impl
 
 # The MCP server instance Claude Desktop / Cursor / Fineas connect to
 mcp = FastMCP(name="fineasmcp")
@@ -249,6 +264,127 @@ def get_market_overview() -> dict:
     tape still answers.
     """
     return get_market_overview_impl()
+
+
+@mcp.tool()
+@tool_guard("polygon:aggs+yfinance")
+def get_price_history(ticker: str, window: str = "1Y",
+                      timespan: str = "day") -> dict:
+    """OHLCV price history for a stock or ETF, chart-ready.
+
+    Args:
+        ticker: equity or fund ticker ('AAPL', 'SPY', 'BRK-B').
+        window: 5D | 1M | 3M | 6M | 1Y | 5Y (default 1Y).
+        timespan: bar size — day | week | month (default day).
+
+    Returns bars (oldest first, split-adjusted) plus chartSeries
+    {labels, closes} and a summary {changePct, high, low}. Polygon aggs
+    first, yfinance fallback for daily bars.
+    """
+    return get_price_history_impl(ticker, window, timespan)
+
+
+@mcp.tool()
+@tool_guard("polygon:news")
+def get_news(ticker: str, limit: int = 10) -> dict:
+    """Recent news for a ticker, each article with publisher provenance.
+
+    Args:
+        ticker: company or fund ticker.
+        limit: max articles (default 10, max 50).
+
+    Each article: title, publisher, publishedUtc, url, description, and
+    Polygon's per-ticker sentiment when available. Always cite the
+    publisher when repeating a headline — items are provider-supplied,
+    not verified facts.
+    """
+    return get_news_impl(ticker, limit)
+
+
+@mcp.tool()
+@tool_guard("polygon:reference")
+def get_corporate_actions(ticker: str, limit: int = 20) -> dict:
+    """Dividend and stock-split history with a forward-yield estimate.
+
+    Args:
+        ticker: company or fund ticker.
+        limit: max rows per action type (default 20, max 100).
+
+    Dividends carry the full date chain (declaration → ex-date → record →
+    pay), frequency, and type; splits carry from/to ratios. Includes
+    forwardAnnualDividend (latest amount × frequency) and forwardYieldPct
+    against a live quote when available.
+    """
+    return get_corporate_actions_impl(ticker, limit)
+
+
+@mcp.tool()
+@tool_guard("peer_map+sic")
+def find_peers(ticker: str, max_peers: int = 5,
+               custom_peers: list[str] | None = None) -> dict:
+    """Comparable companies for a ticker, with relevance scores.
+
+    Args:
+        ticker: company ticker.
+        max_peers: max peers to return (default 5, max 10).
+        custom_peers: optional explicit list — returned scored instead of
+            discovered.
+
+    Curated industry groups first, same-SIC lookup as fallback. Feed the
+    result into compare() for side-by-side fundamentals.
+    """
+    return find_peers_impl(ticker, max_peers, custom_peers)
+
+
+@mcp.tool()
+@tool_guard("seed+polygon")
+def get_etf_profile(ticker: str) -> dict:
+    """Detect whether a ticker is a fund and return its profile.
+
+    Args:
+        ticker: any ticker — equities return isEtf=false (not an error).
+
+    Fund profiles include asset class, expense ratio, AUM, and issuer when
+    known. Use for SPY/QQQ/VOO-style tickers where XBRL fundamentals don't
+    apply.
+    """
+    return get_etf_profile_impl(ticker)
+
+
+@mcp.tool()
+@tool_guard("edgar:xbrl_companyfacts")
+def diff_fundamentals(ticker: str, year1: int, year2: int,
+                      form_type: str = "10-K") -> dict:
+    """Year-over-year fundamental deltas with significance labels.
+
+    Args:
+        ticker: company ticker.
+        year1 / year2: two distinct fiscal years (order-agnostic).
+        form_type: 10-K (annual, default) or 10-Q.
+
+    Each metric row: both years' values, absolute + percent change, and a
+    minor/moderate/major significance flag, plus a one-line summary.
+    """
+    return diff_fundamentals_impl(ticker, year1, year2, form_type)
+
+
+@mcp.tool()
+@tool_guard("edgar:xbrl+price")
+def get_valuation(ticker: str, period: str = "ttm") -> dict:
+    """Valuation multiples and return ratios for one ticker.
+
+    Args:
+        ticker: company ticker (funds have no XBRL valuation — use
+            get_etf_profile for those).
+        period: ttm (default) | annual | quarterly. Quarterly borrows flow
+            multiples from TTM (single-quarter P/E is meaningless).
+
+    Returns marketCap, enterpriseValue, netDebt, peRatio (+peBasis),
+    psRatio, pbRatio, evEbitda, priceToFcf, roe, roa, roic, margins —
+    same engine as the REST dashboard, with not-applicable fields nulled
+    per industry (banks have no EV/EBITDA).
+    """
+    return get_valuation_impl(ticker, period)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

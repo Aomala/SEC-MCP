@@ -92,6 +92,33 @@ def get_ticker_news(ticker: str, limit: int = 12) -> list[dict]:
     return data.get("results") or []
 
 
+def get_dividends(ticker: str, limit: int = 20) -> list[dict]:
+    """Dividend history from Polygon reference data, newest first. Each row:
+    cash_amount, currency, declaration_date, ex_dividend_date, pay_date,
+    record_date, frequency (4 = quarterly), dividend_type."""
+    data = _get(
+        "/v3/reference/dividends",
+        {"ticker": normalize_ticker(ticker), "limit": limit,
+         "order": "desc", "sort": "ex_dividend_date"},
+    )
+    if not isinstance(data, dict):
+        return []
+    return data.get("results") or []
+
+
+def get_splits(ticker: str, limit: int = 20) -> list[dict]:
+    """Stock split history from Polygon reference data, newest first. Each row:
+    execution_date, split_from, split_to (e.g. 1→10 for SMCI's 10:1)."""
+    data = _get(
+        "/v3/reference/splits",
+        {"ticker": normalize_ticker(ticker), "limit": limit,
+         "order": "desc", "sort": "execution_date"},
+    )
+    if not isinstance(data, dict):
+        return []
+    return data.get("results") or []
+
+
 def get_index_snapshot(symbols: list[str]) -> dict[str, dict] | None:
     """Live snapshot for one or more index instruments (I:SPX, I:VIX, …).
 

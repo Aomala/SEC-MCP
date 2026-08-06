@@ -34,7 +34,7 @@ from sec_mcp.surface.meta import (
 )
 
 # session classification + session-aware TTLs (indices track the equity session)
-from sec_mcp.surface.session import market_session, quote_ttl
+from sec_mcp.surface.session import ET, market_session, quote_ttl
 
 # ── Index registry ──────────────────────────────────────────────────────────
 # The five instruments the dashboard shows. Keys are Polygon index tickers.
@@ -220,7 +220,24 @@ def get_index_impl(symbol, include_history: bool = True,
 
     out = dict(payload)
     if include_history:
-        out["chartSeries"] = _history(sym, history_window)
+        series = _history(sym, history_window)
+        # History providers lag the live snapshot by a session — without this
+        # stitch the chart's last point disagrees with the headline level
+        # (audit caught NDX 29733 on the chart vs 29488 live). The level's
+        # date is ET-based: overnight (closed, pre-open) it is the PRIOR
+        # trading day even though UTC has already rolled over.
+        if series and series.get("labels"):
+            now_et = datetime.now(ET)
+            level_day = now_et.date()
+            if session == "closed" and now_et.hour < 9:
+                level_day -= timedelta(days=1)
+            while level_day.weekday() >= 5:                # never label a weekend
+                level_day -= timedelta(days=1)
+            label = level_day.isoformat()
+            if series["labels"][-1] < label and payload["level"] is not None:
+                series["labels"].append(label)
+                series["levels"].append(payload["level"])
+        out["chartSeries"] = series
     out["meta"] = build_meta(f"{provider}:indices", t0, cache_hit=False, as_of=as_of)
     return out
 
@@ -271,6 +288,14 @@ def get_market_overview_impl() -> dict:
         "session": session,
         "provider": provider,
         "constituentsAsOf": blob.get("cached_at_iso"),
+        # Breadth/sectors come only from the scheduled ingest worker — when the
+        # blob is missing or past TTL, say WHY those blocks are null instead of
+        # letting a dead worker look like graceful degradation.
+        "breadthStatus": "ok" if blob else
+                         "stale_or_missing — run `python -m sec_mcp.ingest_indices` "
+                         "(the scheduled worker hasn't written a fresh blob)",
         "asOf": as_of,
-        "meta": build_meta(f"{provider}:indices", t0, cache_hit=bool(blob), as_of=as_of),
+        # cacheHit describes the INDEX snapshot path (always live here); the
+        # blob's freshness is reported via breadthStatus/constituentsAsOf.
+        "meta": build_meta(f"{provider}:indices", t0, cache_hit=False, as_of=as_of),
     }

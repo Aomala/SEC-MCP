@@ -151,6 +151,15 @@ def _safe_int(val: str | None) -> int | None:
         return None
 
 
+def _safe_shares(val: str | None) -> float | int | None:
+    """Share counts as filed — Form 4s legally carry fractional shares
+    (DRIP/401k grants like 122.2008); int only when the value is whole."""
+    f = _safe_float(val)
+    if f is None:
+        return None
+    return int(f) if float(f).is_integer() else f
+
+
 def _safe_float(val: str | None) -> float | None:
     """Parse string to float, returning None on failure."""
     if not val:
@@ -194,15 +203,18 @@ def _parse_form4_xml(xml_text_content: str, accession: str, filing_date: str) ->
                 owner_title = title_elems[0].text.strip()
                 break
         # If no officer title, check if director
+        # Filer software emits either "1" or "true" for these booleans
+        # (Apple's agent uses "true") — accept both, case-insensitive.
+        def _flag(tag: str) -> bool:
+            elems = _find_all_ns(owner, tag)
+            return bool(elems) and (elems[0].text or "").strip().lower() in ("1", "true")
+
         if not owner_title:
-            is_director = _find_all_ns(owner, "isDirector")
-            if is_director and (is_director[0].text or "").strip() == "1":
+            if _flag("isDirector"):
                 owner_title = "Director"
-            is_officer = _find_all_ns(owner, "isOfficer")
-            if is_officer and (is_officer[0].text or "").strip() == "1" and not owner_title:
+            elif _flag("isOfficer"):
                 owner_title = "Officer"
-            is_ten_pct = _find_all_ns(owner, "isTenPercentOwner")
-            if is_ten_pct and (is_ten_pct[0].text or "").strip() == "1" and not owner_title:
+            elif _flag("isTenPercentOwner"):
                 owner_title = "10% Owner"
 
     # Parse non-derivative transactions
@@ -224,7 +236,7 @@ def _parse_form4_xml(xml_text_content: str, accession: str, filing_date: str) ->
         for s in shares_elems:
             val_elems = _find_all_ns(s, "value")
             if val_elems and val_elems[0].text:
-                shares_val = _safe_int(val_elems[0].text.strip())
+                shares_val = _safe_shares(val_elems[0].text.strip())
                 break
 
         price_elems = _find_all_ns(txn, "transactionPricePerShare")
@@ -241,7 +253,7 @@ def _parse_form4_xml(xml_text_content: str, accession: str, filing_date: str) ->
         for ps in post_elems:
             val_elems = _find_all_ns(ps, "value")
             if val_elems and val_elems[0].text:
-                post_shares = _safe_int(val_elems[0].text.strip())
+                post_shares = _safe_shares(val_elems[0].text.strip())
                 break
 
         total_value = None
@@ -259,6 +271,7 @@ def _parse_form4_xml(xml_text_content: str, accession: str, filing_date: str) ->
             "shares_owned_after": post_shares,
             "filing_date": filing_date,
             "accession": accession,
+            "table": "non_derivative",
         })
 
     # Parse derivative transactions (options, etc.)
@@ -280,7 +293,7 @@ def _parse_form4_xml(xml_text_content: str, accession: str, filing_date: str) ->
         for s in shares_elems:
             val_elems = _find_all_ns(s, "value")
             if val_elems and val_elems[0].text:
-                shares_val = _safe_int(val_elems[0].text.strip())
+                shares_val = _safe_shares(val_elems[0].text.strip())
                 break
 
         price_elems = _find_all_ns(txn, "transactionPricePerShare")
@@ -306,6 +319,9 @@ def _parse_form4_xml(xml_text_content: str, accession: str, filing_date: str) ->
             "shares_owned_after": None,
             "filing_date": filing_date,
             "accession": accession,
+            # Table II leg — an option exercise appears in BOTH tables with the
+            # same share count; consumers summing shares must filter on this.
+            "table": "derivative",
         })
 
     return transactions

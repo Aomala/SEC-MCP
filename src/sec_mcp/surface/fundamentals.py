@@ -121,7 +121,11 @@ def _build_periods(ticker: str, period: str, periods_back: int) -> list[dict]:
             "endDate": inc.get("date"),                    # period end (report date)
             "fiscalYear": inc.get("fiscalYear"),
             "fiscalPeriod": inc.get("period"),             # FY / Q1..Q4
-            "currency": inc.get("reportedCurrency") or "USD",  # filing currency (FPIs ≠ USD)
+            # currency of the VALUES (FPIs are fx-converted to USD upstream;
+            # the filing's native currency travels in filingCurrency/fxRate)
+            "currency": inc.get("reportedCurrency") or "USD",
+            "filingCurrency": (inc.get("_meta") or {}).get("filingCurrency"),
+            "fxRate": (inc.get("_meta") or {}).get("fxRate"),
             "accession": (inc.get("_meta") or {}).get("accession"),
             # Source filing form (10-K/10-Q/20-F/6-K) so callers can label the period
             "formType": (inc.get("_meta") or {}).get("formType"),
@@ -146,6 +150,17 @@ def _ttm_from_quarters(periods: list[dict]) -> dict:
         else:
             # Stocks (balance items, shares) take the most recent quarter
             ttm_metrics[name] = vals[0]
+    # Per-share metrics are NEITHER flows nor stocks: taking the latest
+    # quarter reports one quarter's EPS as "TTM" (4x too small). Sum the
+    # four quarterly figures; fall back to NI_ttm / latest share count.
+    for eps_key in ("eps", "epsDiluted"):
+        q_eps = [q["metrics"].get(eps_key) for q in qs]
+        if all(v is not None for v in q_eps):
+            ttm_metrics[eps_key] = round(sum(q_eps), 2)
+        else:
+            ni, shares = ttm_metrics.get("netIncome"), ttm_metrics.get("sharesOutstanding")
+            ttm_metrics[eps_key] = round(ni / shares, 2) if (ni is not None and shares) else None
+
     # Re-derive margins from the summed flows for consistency
     rev = ttm_metrics.get("revenue")
     for num, key in (("grossProfit", "grossMargin"), ("operatingIncome", "operatingMargin"),

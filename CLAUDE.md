@@ -14,6 +14,7 @@ python -m sec_mcp.server
 
 # Web dashboard
 python -m sec_mcp.chat_app  # http://localhost:8877
+# /explorer = data-QA dashboard · /filings/{ticker} = inline searchable filing reader
 
 # CLI testing
 python test_tools.py search "Apple"
@@ -24,7 +25,7 @@ python test_tools.py financials AAPL 2024
 
 ```
 src/sec_mcp/
-├── server.py              # MCP v2 surface (exactly 9 tools) — MAIN ENTRY POINT
+├── server.py              # MCP v2 surface (exactly 18 tools) — MAIN ENTRY POINT
 ├── server_legacy.py       # pre-2026-06 22-tool surface (kept importable, not served)
 ├── surface/               # v2 tool implementations + response contract
 │   ├── meta.py            #   {source, asOf, cacheHit, latencyMs} meta + {error, code, hint} errors
@@ -32,9 +33,18 @@ src/sec_mcp/
 │   ├── company_search.py  #   search_companies (filters: sector/cap/exchange/country/ipo/sp500)
 │   ├── filings.py         #   get_filings (EFTS full-text) + get_filing_section (8-K item_X)
 │   ├── fundamentals.py    #   get_fundamentals (TTM, cross-check, chartSeries, segments) + compare
-│   ├── quotes.py          #   get_quote (session-aware TTL, never silently stale)
-│   ├── ownership.py       #   get_insider_activity (Form 4) + get_ownership (13F + 13D/G)
-│   └── screen.py          #   composable screener (valuation/growth/quality/events)
+│   ├── quotes.py          #   get_quote (session-aware TTL, never silently stale;
+│   │                      #   marketCap/52w gap-filled from reference data, daily cache)
+│   ├── ownership.py       #   get_insider_activity (Form 4) + get_ownership (13F + 13D/G + families)
+│   ├── screen.py          #   composable screener (valuation/growth/quality/events; GICS aliases)
+│   ├── indices.py         #   get_index + get_market_overview (chart stitched to live level)
+│   ├── history.py         #   get_price_history (Polygon aggs → yfinance, OHLCV + chartSeries)
+│   ├── news.py            #   get_news (Polygon news, publisher provenance + sentiment)
+│   ├── actions.py         #   get_corporate_actions (dividends + splits + forward yield)
+│   ├── peers.py           #   find_peers (PEER_MAP → classify+SECTOR_UNIVERSE fallback)
+│   ├── etf.py             #   get_etf_profile (fund detection, expense ratio/AUM)
+│   ├── diff.py            #   diff_fundamentals (YoY deltas, significance flags)
+│   └── valuation.py       #   get_valuation (delegates to /api/metrics engine — TTM-first)
 ├── config.py              # Pydantic settings from .env
 ├── models.py              # Pydantic data models
 │
@@ -99,6 +109,11 @@ src/sec_mcp/
   `standalone_decumulated`, `ytd_fallback` (neighbour missing — value stays YTD),
   `q4_synthesized` (Q4 = FY − ΣQ1-3). Fineas consumes `/api/financials-history` on
   chat_app — its shape is a frozen contract; only add keys, never change them.
+- **FPI currency**: metrics are fx-converted to USD; `reportedCurrency` describes
+  the VALUES (USD when converted), the filing's native currency + rate live in
+  `_meta.filingCurrency` / `_meta.fxRate`. Known limitation: conversion uses
+  today's spot rate for every historical period (not period-average) — ~3-6%
+  distortion on multi-year FPI trends.
 - **Query endpoints**: `/api/v1/metrics/{ticker}/{metric}`, `/api/v1/chart-data/{ticker}`,
   `/api/v1/concepts/{ticker}/{accession}` (the filing's calc tree — bad-match debugging).
   `/explorer` is the ECharts data-QA dashboard.

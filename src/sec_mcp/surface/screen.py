@@ -180,6 +180,29 @@ def _passes_events(row: dict, f: dict) -> bool:
     return True
 
 
+# GICS sector name → curated universe groups (the universe keys are finer-
+# grained than GICS; "financials" was a hard INVALID_INPUT before this map)
+_GICS_ALIASES: dict[str, list[str]] = {
+    "technology": ["mega_tech", "semiconductors", "enterprise_software",
+                   "cybersecurity", "it_services"],
+    "information_technology": ["mega_tech", "semiconductors",
+                               "enterprise_software", "cybersecurity", "it_services"],
+    "financials": ["banks_mega", "banks_regional", "insurance", "fintech_payments"],
+    "health_care": ["pharma_large", "biotech", "healthcare_services", "medtech"],
+    "healthcare": ["pharma_large", "biotech", "healthcare_services", "medtech"],
+    "energy": ["energy_majors", "energy_ep"],
+    "consumer_discretionary": ["retail_broadline", "retail_specialty",
+                               "restaurants", "auto"],
+    "consumer_staples": ["consumer_staples"],
+    "industrials": ["aerospace_defense", "industrials", "airlines", "logistics"],
+    "materials": ["materials_mining"],
+    "real_estate": ["reits"],
+    "communication_services": ["telecom", "media_entertainment"],
+    "communications": ["telecom", "media_entertainment"],
+    "utilities": ["utilities"],
+}
+
+
 def screen_impl(filters, limit=None) -> dict:
     """Core implementation for the screen tool."""
     t0 = time.time()                                       # latency clock
@@ -209,11 +232,22 @@ def screen_impl(filters, limit=None) -> dict:
     # ── build the candidate universe (sector scoping first) ─────────────
     sector = filters.get("sector")
     if sector is not None:
-        sector_key = str(sector).strip().lower()
-        if sector_key not in SECTOR_UNIVERSE:
+        sector_key = str(sector).strip().lower().replace(" ", "_")
+        # GICS-style names map onto our finer-grained universe groups —
+        # callers say "financials", the universe says banks_mega/insurance/…
+        groups = ([sector_key] if sector_key in SECTOR_UNIVERSE
+                  else _GICS_ALIASES.get(sector_key))
+        if not groups:
             raise ToolError(INVALID_INPUT, f"Unknown sector {sector!r}.",
-                            f"Available sectors: {sorted(SECTOR_UNIVERSE)}.")
-        candidates = list(SECTOR_UNIVERSE[sector_key])
+                            f"Available: {sorted(SECTOR_UNIVERSE)} or GICS names "
+                            f"{sorted(_GICS_ALIASES)}.")
+        seen_s: set[str] = set()
+        candidates = []
+        for g in groups:
+            for tk in SECTOR_UNIVERSE.get(g, ()):
+                if tk not in seen_s:
+                    seen_s.add(tk)
+                    candidates.append(tk)
     else:
         # Flatten all sectors, dedupe, keep deterministic order
         seen: set[str] = set()

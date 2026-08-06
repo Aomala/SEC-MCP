@@ -77,6 +77,9 @@ def get_insider_activity_impl(ticker, date_from=None, limit=None) -> dict:
             "sharesOwnedAfter": r.get("shares_owned_after"),  # post-transaction holdings
             "filingDate": r.get("filing_date"),
             "accession": r.get("accession"),
+            # Option exercises appear in BOTH Form 4 tables with the same
+            # share count — filter table='derivative' before summing shares.
+            "table": r.get("table"),
         })
         if len(txns) >= limit:
             break
@@ -90,6 +93,9 @@ def get_insider_activity_impl(ticker, date_from=None, limit=None) -> dict:
         "summary": {
             "buyCount": len(buys),
             "sellCount": len(sells),
+            # grants/exercises/gifts/withholds — without this, a window full
+            # of option activity reads as "no insider activity at all"
+            "otherCount": len(txns) - len(buys) - len(sells),
             "netShares": sum(t["shares"] or 0 for t in buys)
                        - sum(t["shares"] or 0 for t in sells),
         },
@@ -123,6 +129,31 @@ def _institutional_13f(ticker: str) -> tuple[list[dict], str]:
     except Exception as exc:
         log.debug("13F holders via yfinance failed for %s: %s", ticker, exc)
         return [], "unavailable"
+
+
+def _holder_families(holders: list[dict]) -> list[dict]:
+    """Combine sibling 13F entities into manager families for honest ranking.
+
+    yfinance's aggregate splits some managers into multiple filers
+    ("Vanguard Capital Management LLC" + "Vanguard Portfolio Management
+    LLC"), which can misrank the true top holder. Grouped on the leading
+    word of the institution name — crude but right for the majors.
+    """
+    groups: dict[str, dict] = {}
+    for h in holders:
+        name = (h.get("institution") or "").strip()
+        if not name:
+            continue
+        key = name.split()[0].lower().rstrip(".,")
+        g = groups.setdefault(key, {"family": name.split()[0], "entities": [],
+                                    "pctHeld": 0.0, "shares": 0})
+        g["entities"].append(name)
+        if h.get("pctHeld") is not None:
+            g["pctHeld"] = round(g["pctHeld"] + h["pctHeld"], 2)
+        if h.get("shares"):
+            g["shares"] += h["shares"]
+    fams = sorted(groups.values(), key=lambda g: g["pctHeld"], reverse=True)
+    return [f for f in fams if f["pctHeld"] > 0]
 
 
 def _activist_13dg(cik: str, limit: int = 20) -> list[dict]:
@@ -187,6 +218,9 @@ def get_ownership_impl(ticker) -> dict:
             "status": holders_status,
             "source": "yfinance(13F aggregate)",
             "holders": holders,
+            # ranked with sibling entities combined (Vanguard's two LLCs
+            # are one family) — use THIS for "top holder" claims
+            "families": _holder_families(holders),
         },
         "beneficialOwners": {                              # 13D/G blockholders
             "source": "edgar:subject-company SC 13D/G index",

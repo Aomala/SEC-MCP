@@ -341,43 +341,46 @@ class PeerEngine:
         # Strategy 3: SIC Code Lookup (fallback if PEER_MAP empty)
         # ─────────────────────────────────────────────────────────────────
         
-        # Try SIC lookup if we don't have peers from PEER_MAP yet
-        # This provides fallback coverage for companies not in PEER_MAP
+        # Classify the ticker (SIC → canonical GICS industry) and pull peers
+        # from the curated SECTOR_UNIVERSE group that matches the industry.
+        # (The previous per-SIC scan relied on a SECClient method that never
+        # existed — this path returned [] for every unmapped ticker.)
         if len(peers) == 0:
             try:
-                # Import SEC client to get SIC code
+                from sec_mcp.chat_app import SECTOR_UNIVERSE
+                from sec_mcp.classify import classify
                 from sec_mcp.sec_client import get_sec_client
-                # Get client singleton
-                client = get_sec_client()
-                # Fetch company info to get SIC code
-                info = client.get_company_info(ticker_upper)
+
+                info = get_sec_client().get_company_info(ticker_upper)
                 sic_code = info.sic_code
-                
-                # If we have a SIC code, try to find other companies with same SIC
-                if sic_code:
-                    # Get all company tickers from SEC
-                    all_tickers = client.get_all_tickers()
-                    
-                    # Filter for companies with matching SIC code
-                    # Note: get_all_tickers returns simplified data; SIC may not be present
-                    # This is a best-effort fallback
-                    for other_info in all_tickers:
-                        # Check if this company has same SIC code
-                        if other_info.sic_code == sic_code and other_info.ticker != ticker_upper:
-                            # Add as peer with moderate relevance (0.7)
-                            peers[other_info.ticker] = {
-                                "ticker": other_info.ticker,
-                                "name": other_info.name or "",
-                                "sic": sic_code,
-                                "relevance_score": 0.70,  # Moderate relevance (same SIC)
-                                "reason": f"Same SIC code ({sic_code})",
-                            }
-                            # Stop collecting after reaching limit
-                            if len(peers) >= max_peers * 2:  # Collect 2x limit, will filter later
-                                break
+                cls = classify(sic_code=sic_code, ticker=ticker_upper)
+                industry = (cls.industry or "").strip()
+                ind_key = industry.lower().replace(" ", "_").replace("-", "_")
+
+                # exact group match first ('Restaurants' → 'restaurants'),
+                # then any group key sharing a token with the industry name
+                candidates: list[str] = list(SECTOR_UNIVERSE.get(ind_key) or [])
+                if not candidates and ind_key:
+                    tokens = set(ind_key.split("_"))
+                    for key, ticks in SECTOR_UNIVERSE.items():
+                        if tokens & set(key.split("_")):
+                            candidates.extend(ticks)
+
+                for other in candidates:
+                    if other == ticker_upper:
+                        continue
+                    peers[other] = {
+                        "ticker": other,
+                        "name": "",
+                        "sic": sic_code,
+                        "relevance_score": 0.70,  # same industry group, not curated
+                        "reason": f"Same industry group ({industry or 'unclassified'}, SIC {sic_code})",
+                    }
+                    if len(peers) >= max_peers * 2:  # collect 2x limit, filtered later
+                        break
             except Exception as e:
-                # SIC lookup failed (network error, missing data, etc.)
-                log.warning("find_peers(%s): SIC lookup failed: %s", ticker_upper, e)
+                # classification lookup failed (network error, missing data, etc.)
+                log.warning("find_peers(%s): industry fallback failed: %s", ticker_upper, e)
         
         # ─────────────────────────────────────────────────────────────────
         # Filter by relevance threshold if specified in criteria

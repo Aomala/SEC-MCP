@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Filings — fineasmcp</title>
+<link rel="icon" href="/static/favicon.svg">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<style>
+  :root{
+    --bg:#09090b; --panel:#18181bcc; --border:#27272a; --border2:#3f3f46;
+    --t1:#f4f4f5; --t2:#a1a1aa; --t3:#71717a; --accent:#3b82f6;
+    --green:#10b981; --red:#ef4444; --amber:#f59e0b; --mark:#3b82f640; --markActive:#f59e0b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--t1);font:14px/1.6 Inter,system-ui,-apple-system,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  header{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--border);flex-shrink:0}
+  header h1{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  header .co{color:var(--t2);font-size:13px}
+  .chip{padding:2px 10px;border:1px solid var(--border);border-radius:999px;font-size:12px;color:var(--t2);white-space:nowrap}
+  .chip b{color:var(--t1);font-weight:600}
+  .chip.up b{color:var(--green)} .chip.down b{color:var(--red)}
+  input,button,select{font:inherit;color:inherit;background:none;border:1px solid var(--border);border-radius:8px;padding:6px 10px;outline:none}
+  input:focus{border-color:var(--accent)}
+  button{cursor:pointer;color:var(--t2)} button:hover{color:var(--t1);border-color:var(--border2)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:500}
+  button.on{color:var(--t1);border-color:var(--accent)}
+  main{display:grid;grid-template-columns:260px 1fr 320px;flex:1;min-height:0}
+  /* ── left: filing list ── */
+  #rail{border-right:1px solid var(--border);display:flex;flex-direction:column;min-height:0}
+  #rail .filters{display:flex;gap:6px;padding:10px 12px;border-bottom:1px solid var(--border)}
+  #rail .filters button{padding:3px 10px;font-size:12px;border-radius:999px}
+  #list{overflow-y:auto;flex:1}
+  .frow{padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+  .frow:hover{background:#ffffff08}
+  .frow.sel{background:#3b82f614;box-shadow:inset 2px 0 0 var(--accent)}
+  .frow .form{font-weight:600;font-size:13px}
+  .frow .date{color:var(--t3);font-size:12px;font-variant-numeric:tabular-nums}
+  /* ── center: reader ── */
+  #reader{display:flex;flex-direction:column;min-width:0;min-height:0}
+  #toolbar{display:flex;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+  #tabs{display:flex;gap:4px}
+  #tabs button{border:none;padding:5px 12px;border-radius:8px;font-size:13px}
+  #tabs button.on{background:#27272a;color:var(--t1)}
+  #findwrap{margin-left:auto;display:flex;gap:6px;align-items:center}
+  #find{width:220px}
+  #matchinfo{color:var(--t3);font-size:12px;min-width:64px;text-align:right;font-variant-numeric:tabular-nums}
+  #doc{overflow-y:auto;flex:1;padding:24px 32px;max-width:860px}
+  #doc p{margin:0 0 14px;color:#d4d4d8;font-size:14.5px}
+  #doc .docmeta{color:var(--t3);font-size:12px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+  mark{background:var(--mark);color:var(--t1);border-radius:2px;padding:0 1px}
+  mark.active{background:var(--markActive);color:#000}
+  /* ── right: insights ── */
+  #insights{border-left:1px solid var(--border);overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px}
+  .card h3{font-size:12px;font-weight:500;color:var(--t2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+  .kv{display:grid;grid-template-columns:1fr auto;gap:4px 12px;font-size:13px}
+  .kv span{color:var(--t2)} .kv b{font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+  .delta{font-size:12px;font-variant-numeric:tabular-nums}
+  .delta.up{color:var(--green)} .delta.down{color:var(--red)}
+  .chart{height:180px}
+  .skel{background:linear-gradient(90deg,#18181b 25%,#27272a 50%,#18181b 75%);background-size:200% 100%;animation:sh 1.4s infinite;border-radius:8px}
+  @keyframes sh{to{background-position:-200% 0}}
+  .empty{color:var(--t3);text-align:center;padding:48px 24px;font-size:13px}
+  .err{color:var(--red);padding:12px;font-size:13px}
+  .err button{margin-left:8px}
+  @media (max-width:1100px){main{grid-template-columns:220px 1fr}#insights{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Filings</h1>
+  <input id="ticker" placeholder="Ticker — e.g. AAPL" size="12" autocapitalize="characters">
+  <button class="primary" id="load">Open</button>
+  <span class="co" id="coname"></span>
+  <span class="chip" id="quote" hidden></span>
+  <span style="flex:1"></span>
+  <a href="/explorer" style="color:var(--t3);font-size:13px;text-decoration:none">Explorer →</a>
+</header>
+<main>
+  <aside id="rail">
+    <div class="filters" id="formFilters">
+      <button data-f="" class="on">All</button>
+      <button data-f="10-K">10-K</button>
+      <button data-f="10-Q">10-Q</button>
+    </div>
+    <div id="list"><div class="empty">Enter a ticker to load its filings.</div></div>
+  </aside>
+  <section id="reader">
+    <div id="toolbar">
+      <nav id="tabs">
+        <button data-s="risk_factors">Risk Factors</button>
+        <button data-s="mdna" class="on">MD&amp;A</button>
+        <button data-s="business">Business</button>
+        <button data-s="financial_statements">Financials</button>
+      </nav>
+      <div id="findwrap">
+        <input id="find" placeholder="Search in document…">
+        <span id="matchinfo"></span>
+        <button id="prev" title="Previous match">↑</button>
+        <button id="next" title="Next match">↓</button>
+      </div>
+    </div>
+    <article id="doc"><div class="empty">Pick a filing on the left — the section renders inline, searchable, no PDF round-trips.</div></article>
+  </section>
+  <aside id="insights">
+    <div class="card"><h3>Valuation</h3><div class="kv" id="val"><div class="skel" style="height:72px;grid-column:1/-1"></div></div></div>
+    <div class="card"><h3>Revenue &amp; net margin</h3><div class="chart" id="chRev"></div></div>
+    <div class="card"><h3>Free cash flow</h3><div class="chart" id="chFcf"></div></div>
+    <div class="card"><h3>YoY moves</h3><div class="kv" id="yoy"><div class="empty" style="padding:12px">Loads with fundamentals.</div></div></div>
+  </aside>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const S = { tk:"", filings:[], sel:null, section:"mdna", form:"", matches:[], mi:-1, raw:"" };
+
+const fmtB = v => v==null ? "—" : (Math.abs(v)>=1e12 ? (v/1e12).toFixed(2)+"T" : Math.abs(v)>=1e9 ? (v/1e9).toFixed(1)+"B" : Math.abs(v)>=1e6 ? (v/1e6).toFixed(0)+"M" : (+v).toFixed(0));
+const fmtX = v => v==null ? "—" : (+v).toFixed(1)+"×";
+const pct  = v => v==null ? "—" : (v>0?"+":"")+(+v).toFixed(1)+"%";
+const esc  = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+async function j(url){ const r = await fetch(url); if(!r.ok) throw new Error(r.status); return r.json(); }
+
+/* ── load a ticker ─────────────────────────────────────────────── */
+async function load(){
+  const tk = $("ticker").value.trim().toUpperCase();
+  if(!tk) return;
+  S.tk = tk; S.sel = null;
+  $("list").innerHTML = '<div style="padding:12px"><div class="skel" style="height:200px"></div></div>';
+  $("coname").textContent = ""; $("quote").hidden = true;
+  try{
+    const d = await j(`/api/filings/${tk}?limit=40`);
+    S.filings = d.filings || [];
+    renderList();
+    if(S.filings.length) select(S.filings[0]);
+  }catch(e){
+    $("list").innerHTML = `<div class="err">Couldn't load filings for ${esc(tk)}. <button onclick="load()">Retry</button></div>`;
+  }
+  loadQuote(tk); loadInsights(tk);   // parallel, independent
+}
+
+function renderList(){
+  const rows = S.filings.filter(f => !S.form || (f.form_type||"").startsWith(S.form));
+  $("list").innerHTML = rows.length ? rows.map(f => `
+    <div class="frow ${S.sel && S.sel.accession===f.accession ? "sel":""}" data-a="${f.accession}">
+      <span class="form">${esc(f.form_type||"")}</span>
+      <span class="date">${esc(f.filing_date||"")}</span>
+    </div>`).join("") : '<div class="empty">No filings match this filter.</div>';
+  [...$("list").querySelectorAll(".frow")].forEach(el =>
+    el.onclick = () => select(S.filings.find(f => f.accession===el.dataset.a)));
+}
+
+function select(f){
+  S.sel = f; renderList(); loadSection();
+}
+
+/* ── section reader + inline search ────────────────────────────── */
+async function loadSection(){
+  if(!S.sel) return;
+  $("doc").innerHTML = '<div class="skel" style="height:60vh"></div>';
+  try{
+    const d = await j(`/api/filing-text/${S.tk}/${S.section}?accession=${S.sel.accession}&form_type=${encodeURIComponent(S.sel.form_type||"")}`);
+    S.raw = d.text || "";
+    if(!S.raw){ $("doc").innerHTML = '<div class="empty">This section wasn\'t found in the selected filing — try another tab (8-Ks and older FPI filings segment differently).</div>'; return; }
+    renderDoc();
+  }catch(e){
+    $("doc").innerHTML = `<div class="err">Section failed to load. <button onclick="loadSection()">Retry</button></div>`;
+  }
+}
+
+function renderDoc(){
+  const meta = `<div class="docmeta">${esc(S.sel.form_type||"")} · filed ${esc(S.sel.filing_date||"")} · acc ${esc(S.sel.accession||"")} · ${S.raw.length.toLocaleString()} chars${S.sel.edgar_url?` · <a href="${S.sel.edgar_url}" target="_blank" style="color:var(--accent)">EDGAR ↗</a>`:""}</div>`;
+  const q = $("find").value.trim();
+  // Drop XBRL/Workiva header artifacts and non-prose junk the segmenter
+  // sometimes leaks at the top of a section
+  const junk = /^(xml version|<\?xml|XBRL Document Created|Copyright \d{4} Workiva|r:[0-9a-f-]{8,})/i;
+  const paras = S.raw.split(/\n{2,}|(?<=\.)\s{2,}/)
+    .map(p => p.trim())
+    .filter(p => p.length > 1 && !junk.test(p));
+  let html = "", n = 0;
+  const rx = q ? new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"), "gi") : null;
+  for(const p of paras){
+    let e = esc(p.trim());
+    if(rx) e = e.replace(rx, m => `<mark data-i="${n++}">${m}</mark>`);
+    html += `<p>${e}</p>`;
+  }
+  $("doc").innerHTML = meta + html;
+  S.matches = [...$("doc").querySelectorAll("mark")];
+  S.mi = -1;
+  $("matchinfo").textContent = q ? `${S.matches.length} match${S.matches.length===1?"":"es"}` : "";
+  if(S.matches.length) go(1);
+}
+
+function go(dir){
+  if(!S.matches.length) return;
+  if(S.mi >= 0) S.matches[S.mi].classList.remove("active");
+  S.mi = (S.mi + dir + S.matches.length) % S.matches.length;
+  const m = S.matches[S.mi];
+  m.classList.add("active");
+  m.scrollIntoView({block:"center", behavior:"smooth"});
+  $("matchinfo").textContent = `${S.mi+1} / ${S.matches.length}`;
+}
+
+/* ── quote + insights ──────────────────────────────────────────── */
+async function loadQuote(tk){
+  try{
+    const q = await j(`/v1/price/${tk}`).catch(() => null);
+    const p = q && (q.price ?? q.data?.price);
+    if(p==null) return;
+    const ch = q.change_pct ?? q.changePct ?? q.data?.change_pct;
+    $("quote").innerHTML = `<b>$${(+p).toFixed(2)}</b> ${ch!=null?pct(ch):""}`;
+    $("quote").className = "chip " + (ch>0?"up":ch<0?"down":"");
+    $("quote").hidden = false;
+  }catch(e){}
+}
+
+async function loadInsights(tk){
+  $("val").innerHTML = '<div class="skel" style="height:72px;grid-column:1/-1"></div>';
+  try{
+    const m = await j(`/api/metrics/${tk}?period=ttm`);
+    const v = m.metrics || {};
+    $("coname").textContent = m.companyName || "";
+    $("val").innerHTML = `
+      <span>Market cap</span><b>${fmtB(v.marketCap)}</b>
+      <span>P/E (${esc(v.peBasis||"ttm")})</span><b>${v.peRatio?(+v.peRatio).toFixed(1):"—"}</b>
+      <span>EV/EBITDA</span><b>${fmtX(v.evEbitda)}</b>
+      <span>P/S</span><b>${fmtX(v.psRatio)}</b>
+      <span>Net debt</span><b>${fmtB(v.netDebt)}</b>`;
+  }catch(e){ $("val").innerHTML = '<div class="empty" style="padding:8px">Valuation unavailable (fund or recent IPO).</div>'; }
+  try{
+    const h = await j(`/api/financials-history/${tk}?period=annual&limit=8`);
+    const inc = (h.income||[]).slice().reverse(), cf = (h.cashflow||[]).slice().reverse();
+    const yrs = inc.map(r => r.fiscalYear || (r.date||"").slice(0,4));
+    chart("chRev", {
+      tooltip:{trigger:"axis"}, grid:{left:44,right:34,top:8,bottom:22},
+      xAxis:{type:"category",data:yrs,axisLine:{lineStyle:{color:"#3f3f46"}},axisLabel:{color:"#a1a1aa",fontSize:11}},
+      yAxis:[{type:"value",axisLabel:{color:"#71717a",fontSize:10,formatter:v=>fmtB(v)},splitLine:{lineStyle:{color:"#27272a"}}},
+             {type:"value",axisLabel:{color:"#71717a",fontSize:10,formatter:"{value}%"},splitLine:{show:false}}],
+      series:[
+        {type:"bar",name:"Revenue",data:inc.map(r=>r.revenue),itemStyle:{color:"#3b82f6",borderRadius:[3,3,0,0]},barWidth:"55%"},
+        {type:"line",name:"Net margin",yAxisIndex:1,data:inc.map(r=>r.revenue&&r.netIncome!=null?+(r.netIncome/r.revenue*100).toFixed(1):null),itemStyle:{color:"#10b981"},lineStyle:{width:2},symbolSize:5}]
+    });
+    chart("chFcf", {
+      tooltip:{trigger:"axis"}, grid:{left:44,right:12,top:8,bottom:22},
+      xAxis:{type:"category",data:yrs,axisLine:{lineStyle:{color:"#3f3f46"}},axisLabel:{color:"#a1a1aa",fontSize:11}},
+      yAxis:{type:"value",axisLabel:{color:"#71717a",fontSize:10,formatter:v=>fmtB(v)},splitLine:{lineStyle:{color:"#27272a"}}},
+      series:[{type:"bar",name:"FCF",data:cf.map(r=>r.freeCashFlow),itemStyle:{color:"#8b5cf6",borderRadius:[3,3,0,0]},barWidth:"55%"}]
+    });
+    const a = inc[inc.length-1], b = inc[inc.length-2];
+    if(a && b){
+      const row = (label, x, y) => {
+        if(x==null||y==null||!y) return "";
+        const d = (x-y)/Math.abs(y)*100;
+        return `<span>${label}</span><b class="delta ${d>=0?"up":"down"}">${pct(d)}</b>`;
+      };
+      $("yoy").innerHTML =
+        row("Revenue", a.revenue, b.revenue) +
+        row("Net income", a.netIncome, b.netIncome) +
+        row("Operating income", a.operatingIncome, b.operatingIncome) +
+        (row("EPS (dil.)", a.epsdiluted ?? a.epsDiluted, b.epsdiluted ?? b.epsDiluted) || "") ||
+        '<div class="empty" style="padding:8px">Not enough history.</div>';
+    }
+  }catch(e){}
+}
+
+const charts = {};
+function chart(id, opt){
+  if(!charts[id]) charts[id] = echarts.init($(id), null, {renderer:"canvas"});
+  charts[id].setOption(opt, true);
+}
+addEventListener("resize", () => Object.values(charts).forEach(c => c.resize()));
+
+/* ── wiring ────────────────────────────────────────────────────── */
+$("load").onclick = load;
+$("ticker").addEventListener("keydown", e => { if(e.key==="Enter") load(); });
+[...$("formFilters").children].forEach(b => b.onclick = () => {
+  [...$("formFilters").children].forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); S.form = b.dataset.f; renderList();
+});
+[...$("tabs").children].forEach(b => b.onclick = () => {
+  [...$("tabs").children].forEach(x => x.classList.remove("on"));
+  b.classList.add("on"); S.section = b.dataset.s; loadSection();
+});
+let findT;
+$("find").addEventListener("input", () => { clearTimeout(findT); findT = setTimeout(renderDoc, 250); });
+$("find").addEventListener("keydown", e => {
+  if(e.key==="Enter") go(e.shiftKey ? -1 : 1);
+  if(e.key==="Escape"){ $("find").value=""; renderDoc(); }
+});
+$("prev").onclick = () => go(-1);
+$("next").onclick = () => go(1);
+
+// deep link: /filings/AAPL
+const seg = location.pathname.split("/").filter(Boolean);
+if(seg[0]==="filings" && seg[1]){ $("ticker").value = seg[1].toUpperCase(); load(); }
+</script>
+</body>
+</html>

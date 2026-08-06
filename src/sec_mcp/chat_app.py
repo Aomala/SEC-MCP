@@ -154,6 +154,15 @@ async def explorer_page():
     return HTMLResponse((_STATIC_DIR / "explorer.html").read_text())
 
 
+@app.get("/filings")
+@app.get("/filings/{ticker}")
+async def filings_page(ticker: str = ""):
+    """Inline filings reader: filing picker, section tabs rendered as clean
+    text in-page, live in-document search with match cycling, and a side
+    insights rail (valuation + revenue/margin/FCF charts + YoY deltas)."""
+    return HTMLResponse((_STATIC_DIR / "filings.html").read_text())
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -1660,6 +1669,14 @@ async def get_financials_history(ticker: str, bg: BackgroundTasks,
     Used by the frontend for date-range chart rendering.
     """
     tk = ticker.upper()
+    # Unvalidated period values passed straight through — "bogus" served a
+    # full annual payload labeled period="bogus" AND polluted the cache key
+    # namespace with one entry per typo.
+    if period not in ("annual", "quarter", "quarterly", "ttm"):
+        return {"error": f"Invalid period '{period}'", "code": "BAD_PERIOD",
+                "ticker": tk, "hint": "Use period=annual|quarter|ttm."}
+    if period == "quarterly":                    # alias — history builder wants "quarter"
+        period = "quarter"
 
     from sec_mcp import supabase_cache
     # ONE full-depth (12-period) entry per (ticker, period) — requests slice it.

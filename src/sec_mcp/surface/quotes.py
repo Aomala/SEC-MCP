@@ -26,6 +26,39 @@ from sec_mcp.surface.meta import (
 # session classification + session-aware TTLs
 from sec_mcp.surface.session import market_session, quote_ttl
 
+# Daily context cache: {ticker: (fetched_unix, {marketCap, high52w, low52w})}.
+# The Polygon snapshot path answers fastest but never carries market cap or
+# the 52-week range — without this fill, those fields were null on every
+# Polygon-served quote. Reference data moves slowly; one fetch a day is fine.
+_CTX_TTL = 86400.0
+_ctx_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _quote_context(ticker: str) -> dict:
+    """Best-effort {marketCap, high52w, low52w} — never raises, never blocks
+    the quote on failure."""
+    with _lock:
+        hit = _ctx_cache.get(ticker)
+    if hit and (time.time() - hit[0]) < _CTX_TTL:
+        return hit[1]
+    ctx: dict = {}
+    try:
+        from sec_mcp import polygon_client
+        details = polygon_client.get_ticker_details(ticker)
+        if details and details.get("market_cap"):
+            ctx["marketCap"] = details["market_cap"]
+    except Exception:
+        pass
+    try:
+        from sec_mcp.surface.history import get_price_history_impl
+        hist = get_price_history_impl(ticker, "1Y", "day")["summary"]
+        ctx["high52w"], ctx["low52w"] = hist.get("high"), hist.get("low")
+    except Exception:
+        pass
+    with _lock:
+        _ctx_cache[ticker] = (time.time(), ctx)
+    return ctx
+
 # Surface-level quote cache: {ticker: (fetched_unix, payload)} — TTL depends
 # on the session at READ time, so a quote cached during "regular" expires in
 # 30s but the same entry read while "closed" can serve for an hour.
@@ -80,6 +113,15 @@ def get_quote_impl(ticker) -> dict:
         "marketCap": raw.get("market_cap"),                # when provider supplies it
         "high52w": raw.get("high_52w"),                    # 52-week range context
         "low52w": raw.get("low_52w"),
+    }
+    # Fill provider gaps from reference data (Polygon snapshot path carries
+    # neither market cap nor 52w range) — cached daily, never fatal
+    if any(payload[k] is None for k in ("marketCap", "high52w", "low52w")):
+        ctx = _quote_context(tk)
+        for k in ("marketCap", "high52w", "low52w"):
+            if payload[k] is None:
+                payload[k] = ctx.get(k)
+    payload |= {
         "asOf": as_of,                                     # mandatory metadata
         "session": session,                                # "closed" off-hours — never an error
         "provider": raw.get("source"),                     # which provider answered

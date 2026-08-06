@@ -3693,7 +3693,11 @@ def sec_to_fmp_statements(result: dict) -> dict:
     fi = result.get("filing_info") or {}
     date, fy, period = _period_label(result)
     sym = result.get("ticker_or_cik", "")
-    ccy = result.get("reporting_currency") or "USD"
+    filing_ccy = result.get("reporting_currency") or "USD"
+    # reportedCurrency must describe the VALUES: when fx conversion ran the
+    # metrics are USD even though the filing was EUR/GBP/… — labeling them
+    # with the filing currency overstated ASML by the full EURUSD rate.
+    ccy = "USD" if result.get("fx_rate") else filing_ccy
     cik = result.get("cik")
     fd = fi.get("filing_date", "")
     base = {"date": date, "symbol": sym, "reportedCurrency": ccy, "cik": cik,
@@ -3709,6 +3713,10 @@ def sec_to_fmp_statements(result: dict) -> dict:
                 "confidence": result.get("confidence_scores") or {},
                 "sources": result.get("metrics_sourced") or {},
                 "validation": result.get("validation") or [],
+                # FPI provenance: the filing's native currency + the rate used
+                # to express the values in USD (null for US filers).
+                "filingCurrency": filing_ccy,
+                "fxRate": result.get("fx_rate"),
             }}
 
     def neg(v):
