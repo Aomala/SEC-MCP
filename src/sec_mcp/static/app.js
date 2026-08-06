@@ -59,6 +59,63 @@ const API_BASE = (function() {
   return 'https://sec-mcp-production.up.railway.app';
 })();
 
+/**
+ * Demo budget: a persistent per-browser id lets the API meter public demo
+ * usage (20 queries/day). All API fetches carry it via a global wrapper so
+ * the 27 call sites stay untouched; a 429 with code "demo_limit" shows the
+ * limit banner.
+ */
+const DEMO_ID = (function() {
+  try {
+    let id = localStorage.getItem('fineas_demo_id');
+    if (!id) {
+      id = (crypto.randomUUID && crypto.randomUUID()) ||
+        Date.now().toString(36) + Math.random().toString(36).slice(2);
+      localStorage.setItem('fineas_demo_id', id);
+    }
+    return id;
+  } catch (e) { return ''; }
+})();
+
+const _origFetch = window.fetch.bind(window);
+window.fetch = function(input, init) {
+  const url = typeof input === 'string' ? input : ((input && input.url) || '');
+  const isApi = API_BASE
+    ? url.indexOf(API_BASE) === 0
+    : url.indexOf('/api/') === 0;
+  if (DEMO_ID && isApi) {
+    init = init || {};
+    init.headers = Object.assign({}, init.headers || {}, { 'X-Demo-Id': DEMO_ID });
+  }
+  return _origFetch(input, init).then(function(res) {
+    if (res.status === 429 && isApi) {
+      res.clone().json().then(function(body) {
+        if (body && body.code === 'demo_limit') showDemoLimitBanner();
+      }).catch(function() {});
+    }
+    return res;
+  });
+};
+
+function showDemoLimitBanner() {
+  if (document.getElementById('demo-limit-banner')) return;
+  const el = document.createElement('div');
+  el.id = 'demo-limit-banner';
+  el.style.cssText =
+    'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;' +
+    'max-width:520px;width:calc(100% - 32px);padding:14px 18px;border-radius:12px;' +
+    'background:#0d1420;border:1px solid #2a3b55;color:#dbe6f5;font-size:13px;' +
+    'line-height:1.5;box-shadow:0 8px 32px rgba(0,0,0,.5);display:flex;gap:12px;align-items:center;';
+  el.innerHTML =
+    '<div style="flex:1"><strong>Demo limit reached.</strong> You’ve used today’s ' +
+    'free queries. This is the live data engine behind Fineas — see it in production at ' +
+    '<a href="https://fineas.ai" style="color:#6ea8ff;text-decoration:none;font-weight:600" ' +
+    'target="_blank" rel="noopener">fineas.ai</a>. Come back tomorrow for more.</div>' +
+    '<button onclick="this.parentNode.remove()" style="background:none;border:none;' +
+    'color:#8fa3bf;font-size:16px;cursor:pointer;padding:2px 6px">×</button>';
+  document.body.appendChild(el);
+}
+
 /** Current main view ('dashboard', 'compare', 'filing') */
 let _activeView = 'dashboard';
 

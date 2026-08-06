@@ -75,6 +75,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Daily usage budget for the public demo site (fineasmcp.vercel.app only —
+# Fineas prod traffic is never metered). See demo_limiter.py.
+from sec_mcp.demo_limiter import install_demo_limiter  # noqa: E402
+
+install_demo_limiter(app)
+
 
 # ── Hot tickers for pre-warming cache ──
 _HOT_TICKERS = ["AAPL", "MSFT", "GOOG", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "JNJ"]
