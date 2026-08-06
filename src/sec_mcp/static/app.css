@@ -928,18 +928,77 @@ a:hover { color: var(--brand); }
 .dashboard { animation: fadeIn 0.3s var(--ease); }
 
 /* KPI Cards */
+/* Hero row: FOUR big cards. Everything else lives in the compact chip
+   strip below — the old 13-tile wall read as clutter. */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 14px;
-  margin-bottom: 24px;
+  margin-bottom: 12px;
 }
 
+/* Secondary metrics: one quiet row of stat chips, click to drill */
+.kpi-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.stat-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color var(--t-fast), background var(--t-fast);
+}
+.stat-chip:hover { border-color: var(--brand); background: var(--bg-hover); }
+.stat-chip .c-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary);
+                      text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-chip .c-value { font-family: var(--font-mono); font-size: 14px; font-weight: 600;
+                      color: var(--text-primary); }
+.stat-chip .c-delta { font-family: var(--font-mono); font-size: 11px; font-weight: 600; }
+.stat-chip .c-delta.positive { color: var(--success); }
+.stat-chip .c-delta.negative { color: var(--danger); }
+
+/* Drill-down drawer: one metric, full history, provenance — opened by
+   clicking any card or chip */
+#kpi-drill {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+  animation: fadeInUp 0.3s var(--ease) backwards;
+}
+#kpi-drill .drill-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+#kpi-drill .drill-title { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+#kpi-drill .drill-meta { color: var(--text-tertiary); font-size: 12px; margin-right: auto; }
+#kpi-drill .drill-close {
+  background: none; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text-secondary); padding: 4px 10px; cursor: pointer; font-size: 12px;
+}
+#kpi-drill .drill-close:hover { color: var(--text-primary); border-color: var(--brand); }
+#kpi-drill .drill-chart-wrap { height: 260px; }
+#kpi-drill .drill-prov { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 12px;
+                         font-size: 12px; color: var(--text-tertiary); }
+#kpi-drill .drill-prov code { color: var(--text-secondary); background: var(--bg-tertiary);
+                              padding: 1px 6px; border-radius: 5px; font-size: 11px; }
+
 .kpi-card {
-  background: linear-gradient(135deg, var(--bg-secondary) 0%, rgba(26, 35, 50, 0.8) 100%);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius);
-  padding: 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  cursor: pointer;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
@@ -1024,7 +1083,7 @@ a:hover { color: var(--brand); }
 
 .kpi-value {
   font-family: var(--font-mono);
-  font-size: 26px;
+  font-size: 32px;
   font-weight: 700;
   color: var(--text-primary);
   margin-bottom: 4px;
@@ -3401,8 +3460,8 @@ html:not([data-theme="light"]) [class*="price"] {
 .kpi-spark {
   display: block;
   width: 100%;
-  height: 22px;
-  margin: 4px 0 2px;
+  height: 36px;
+  margin: 8px 0 4px;
 }
 
 /* Rich tooltip: hidden until card hover; sits above the card */

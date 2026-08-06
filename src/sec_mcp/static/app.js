@@ -1523,19 +1523,26 @@ function renderKPIs(m, r, pm, crossCheck) {
     },
   ];
   
+  // Hero metrics get big cards; everything else becomes a quiet stat chip.
+  // (The old layout was 13 equal tiles — cluttered, nothing had hierarchy.)
+  const HERO = new Set(['Revenue', 'Net Income', 'EPS', 'Free Cash Flow']);
+
+  const fmtKpi = (kpi) =>
+    kpi.fmt === 'pct'
+      ? kpi.value.toFixed(1) + '%'
+      : kpi.fmt === 'eps'
+        ? '$' + kpi.value.toFixed(2)
+        : kpi.fmt === 'ratio'
+          ? kpi.value.toFixed(2) + 'x'
+          : fmtN(kpi.value);
+
   let h = '';
+  let chips = '';
   kpis.forEach((kpi, i) => {
     if (kpi.value == null) return;
 
     const change = calcChange(kpi.value, kpi.prior);
-    const fmtVal =
-      kpi.fmt === 'pct'
-        ? kpi.value.toFixed(1) + '%'
-        : kpi.fmt === 'eps'
-          ? '$' + kpi.value.toFixed(2)
-          : kpi.fmt === 'ratio'
-            ? kpi.value.toFixed(2) + 'x'
-            : fmtN(kpi.value);
+    const fmtVal = fmtKpi(kpi);
 
     // Source badge: SEC always, verified if Polygon cross-check matched this metric
     const metricKey = kpi.key || kpi.label.toLowerCase().replace(/\s+/g, '_');
@@ -1548,11 +1555,109 @@ function renderKPIs(m, r, pm, crossCheck) {
     const periodType = _d.period_type === 'quarterly' ? 'Q' : 'FY';
     const pLabel = curYear ? (periodType + curYear + ' vs ' + periodType + priorYear) : '';
 
-    h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i, verified, pLabel);
+    if (HERO.has(kpi.label)) {
+      h += buildKpiCard(kpi.label, fmtVal, change, kpi.icon, kpi.color, i, verified, pLabel);
+    } else {
+      const deltaHtml = change != null
+        ? '<span class="c-delta ' + (change >= 0 ? 'positive' : 'negative') + '">' +
+          (change >= 0 ? '+' : '') + change.toFixed(1) + '%</span>'
+        : '';
+      const drillable = !!KPI_META[kpi.label];
+      chips +=
+        '<div class="stat-chip" ' +
+        (drillable ? 'onclick="kpiDrill(\'' + kpi.label.replace(/'/g, "\\'") + '\')" ' : '') +
+        'title="' + esc(KPI_TOOLTIPS[kpi.label] || kpi.label) + '">' +
+        '<span class="c-label">' + kpi.label + '</span>' +
+        '<span class="c-value">' + fmtVal + '</span>' + deltaHtml +
+        '</div>';
+    }
   });
 
   grid.innerHTML = h;
+  const chipRow = document.getElementById('kpi-chips');
+  if (chipRow) chipRow.innerHTML = chips;
   lucide.createIcons();
+}
+
+/**
+ * Drill-down drawer: click any KPI card/chip → full multi-period history
+ * chart for that one metric with provenance, inline under the grid.
+ */
+let _drillChart = null;
+function kpiDrill(label) {
+  const meta = KPI_META[label];
+  const drawer = document.getElementById('kpi-drill');
+  if (!meta || !drawer) return;
+  const rows = ((_fmpHistory && _fmpHistory[meta.stmt]) || []).slice(0, 12);
+  const usable = rows
+    .map((r) => ({
+      label: r.period && r.period !== 'FY' ? r.period + " '" + String(r.fiscalYear || '').slice(-2)
+                                           : 'FY' + (r.fiscalYear || (r.date || '').slice(0, 4)),
+      value: r[meta.field],
+    }))
+    .filter((p) => p.value != null && isFinite(p.value))
+    .reverse(); // oldest → newest
+  if (usable.length < 2) return; // no history yet — nothing to drill into
+
+  const d = _curData || {};
+  const src = (d.metrics_sourced || {})[meta.key];
+  const conf = (d.confidence_scores || {})[meta.key];
+  const fi = d.filing_info || {};
+  const isEps = label === 'EPS';
+
+  drawer.style.display = 'block';
+  drawer.innerHTML =
+    '<div class="drill-head">' +
+    '<span class="drill-title">' + esc(label) + ' — ' + usable.length + ' periods</span>' +
+    '<span class="drill-meta">' + esc(fi.form_type || '') + ' history · SEC XBRL</span>' +
+    '<button class="drill-close" onclick="kpiDrillClose()">Close ✕</button>' +
+    '</div>' +
+    '<div class="drill-chart-wrap"><canvas id="kpi-drill-canvas"></canvas></div>' +
+    '<div class="drill-prov">' +
+    (src ? '<span>Source tag <code>' + esc(String(src)) + '</code></span>' : '') +
+    (conf != null && conf > 0 ? '<span>Confidence <b>' + Math.round(conf * 100) + '%</b></span>' : '') +
+    (fi.filing_date ? '<span>Latest filing ' + esc(fi.form_type || '') + ' · ' + esc(fi.filing_date) + '</span>' : '') +
+    '</div>';
+
+  if (_drillChart) { _drillChart.destroy(); _drillChart = null; }
+  const ctx = document.getElementById('kpi-drill-canvas').getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  const brand = css.getPropertyValue('--brand').trim() || '#3b82f6';
+  const grid = css.getPropertyValue('--border').trim() || '#27272a';
+  const dim = css.getPropertyValue('--text-tertiary').trim() || '#71717a';
+  _drillChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: usable.map((p) => p.label),
+      datasets: [{
+        data: usable.map((p) => p.value),
+        backgroundColor: usable.map((_, i) => (i === usable.length - 1 ? brand : brand + '66')),
+        borderRadius: 4,
+        maxBarThickness: 46,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        datalabels: { display: false },
+        tooltip: { callbacks: { label: (c) => (isEps ? '$' + (+c.raw).toFixed(2) : fmtN(c.raw)) } },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: dim, font: { size: 11 } } },
+        y: { grid: { color: grid }, ticks: { color: dim, font: { size: 11 },
+             callback: (v) => (isEps ? '$' + v : fmtN(v)) } },
+      },
+    },
+  });
+  drawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function kpiDrillClose() {
+  const drawer = document.getElementById('kpi-drill');
+  if (_drillChart) { _drillChart.destroy(); _drillChart = null; }
+  if (drawer) { drawer.style.display = 'none'; drawer.innerHTML = ''; }
 }
 
 const KPI_TOOLTIPS = {
@@ -1686,10 +1791,14 @@ function buildKpiCard(label, value, change, icon, color, index, verified, period
   // replaces the lossy native title attribute.
   const spark = kpiSparkline(label);
   const tip = kpiProvenanceTip(label, verified);
+  // Click → drill-down history drawer (when we can chart this metric)
+  const drill = KPI_META[label]
+    ? ' onclick="kpiDrill(\'' + label.replace(/'/g, "\\'") + '\')"'
+    : '';
   return (
     '<div class="kpi-card animate-in" style="animation-delay:' +
     index * 0.05 +
-    's">' +
+    's"' + drill + '>' +
     tip +
     '<div class="kpi-top">' +
     '<div class="kpi-icon ' +

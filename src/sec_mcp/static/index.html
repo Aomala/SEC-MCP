@@ -16,7 +16,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="icon" type="image/png" href="/static/logo-32.png"/>
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
-  <link rel="stylesheet" href="/static/app.css?v=59"/>
+  <link rel="stylesheet" href="/static/app.css?v=60"/>
 </head>
 <body>
 <div class="app">
@@ -153,8 +153,10 @@
 
       <!-- ═══ DASHBOARD VIEW ═══ -->
       <div class="dashboard" id="dashboard" style="display:none">
-        <!-- KPI Cards -->
+        <!-- KPI hero cards (4 big) + secondary stat chips + drill drawer -->
         <div class="kpi-grid" id="kpi-grid"></div>
+        <div class="kpi-chips" id="kpi-chips"></div>
+        <div id="kpi-drill" style="display:none"></div>
 
         <!-- Date Range Controls -->
         <div class="date-range-bar" id="date-range-bar" style="display:none">
@@ -674,6 +676,6 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=58"></script>
+<script src="/static/app.js?v=60"></script>
 </body>
 </html>
