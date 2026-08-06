@@ -114,6 +114,19 @@
   @media (prefers-reduced-motion: reduce) {
     .rrow, .rrow .r-fill { transition: none; }
   }
+
+  /* ── deep-link focus ────────────────────────────────────────────────
+     fineas.ai links a figure straight here (?ticker=NVDA&focus=trend).
+     The visitor arrives mid-page looking for ONE number, so the target
+     announces itself for a beat instead of making them hunt. */
+  .focus-hit { animation: focus-pulse 2.4s ease-out 1; border-radius: 12px; }
+  @keyframes focus-pulse {
+    0%, 55% { box-shadow: 0 0 0 2px var(--accent), 0 0 26px -4px var(--accent); }
+    100%    { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .focus-hit { animation: none; box-shadow: 0 0 0 2px var(--accent); }
+  }
 </style>
 </head>
 <body>
@@ -141,14 +154,14 @@
 <main>
   <!-- KPI strip -->
   <section id="kpis">
-    <div class="kpi"><div class="k-label"><span class="dot" id="dot-price"></span>
+    <div class="kpi" id="card-price"><div class="k-label"><span class="dot" id="dot-price"></span>
       <span id="lbl-price">Price</span></div>
       <div class="k-value" id="kpi-price">—</div><div class="k-sub" id="sub-price"></div></div>
-    <div class="kpi"><div class="k-label">Revenue <span id="lbl-rev-period"></span></div>
+    <div class="kpi" id="card-revenue"><div class="k-label">Revenue <span id="lbl-rev-period"></span></div>
       <div class="k-value" id="kpi-rev">—</div><div class="k-sub" id="sub-rev"></div></div>
-    <div class="kpi"><div class="k-label">Net margin</div>
+    <div class="kpi" id="card-margin"><div class="k-label">Net margin</div>
       <div class="k-value" id="kpi-margin">—</div><div class="k-sub" id="sub-margin"></div></div>
-    <div class="kpi"><div class="k-label">Free cash flow</div>
+    <div class="kpi" id="card-fcf"><div class="k-label">Free cash flow</div>
       <div class="k-value" id="kpi-fcf">—</div><div class="k-sub" id="sub-fcf"></div></div>
   </section>
 
@@ -156,13 +169,13 @@
   <section id="prov"></section>
 
   <!-- Revenue & margins (the headline trend) -->
-  <section>
+  <section id="sec-trend">
     <div class="section-title">Revenue &amp; Margins</div>
     <div class="card"><div id="c-trend" class="chart"></div></div>
   </section>
 
   <!-- Geographic revenue (the hero) -->
-  <section>
+  <section id="sec-geo">
     <div class="section-title" id="t-geo">Geographic Revenue</div>
     <div class="card"><div class="split">
       <div id="c-geo" class="pane-chart"></div>
@@ -171,7 +184,7 @@
   </section>
 
   <!-- Revenue by segment -->
-  <section>
+  <section id="sec-seg">
     <div class="section-title" id="t-seg">Revenue by Segment</div>
     <div class="card"><div class="split">
       <div id="c-seg" class="pane-chart"></div>
@@ -510,7 +523,65 @@ async function loadAll() {
 $("ticker").addEventListener("keydown", e => { if (e.key === "Enter") loadAll(); });
 $("period").addEventListener("change", loadAll);       // toggle re-pulls the filing
 window.addEventListener("resize", () => Object.values(charts).forEach(c => c.resize()));
-loadAll();
+
+/* ── deep links ───────────────────────────────────────────────────────────
+   fineas.ai links each figure on its landing page straight to this explorer:
+   /explorer?ticker=NVDA&period=annual&focus=trend. Without this the link
+   dumped everyone on AAPL and made them retype the ticker they'd just
+   clicked, which is the opposite of "click the number to see the source".
+
+   focus names a PANEL, not a raw element id, so the landing page never has
+   to know this page's markup. Unknown values are ignored, not fatal. */
+const FOCUS_TARGETS = {
+  price: "card-price",
+  revenue: "card-revenue",
+  margin: "card-margin",
+  netmargin: "card-margin",
+  fcf: "card-fcf",
+  freecashflow: "card-fcf",
+  trend: "sec-trend",
+  grossmargin: "sec-trend",
+  operatingmargin: "sec-trend",
+  geo: "sec-geo",
+  geographic: "sec-geo",
+  segments: "sec-seg",
+  segment: "sec-seg",
+};
+
+function applyFocus(focus) {
+  const el = $(FOCUS_TARGETS[String(focus || "").toLowerCase().replace(/[^a-z]/g, "")]);
+  if (!el) return;
+  el.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "center" });
+  el.classList.remove("focus-hit");
+  void el.offsetWidth;                                 // restart the animation
+  el.classList.add("focus-hit");
+  setTimeout(() => el.classList.remove("focus-hit"), 2600);
+}
+
+const params = new URLSearchParams(location.search);
+const qTicker = (params.get("ticker") || "").trim().toUpperCase();
+const qPeriod = (params.get("period") || "").trim().toLowerCase();
+const qFocus = params.get("focus");
+if (/^[A-Z.\-]{1,10}$/.test(qTicker)) $("ticker").value = qTicker;
+// The link vocabulary is the API's ("quarterly"); the <select>'s is "quarter".
+if (qPeriod === "quarter" || qPeriod === "quarterly") $("period").value = "quarter";
+else if (qPeriod === "annual") $("period").value = "annual";
+
+// Keep the address bar honest as the visitor changes ticker/period, so the URL
+// they copy out is the view they're actually looking at.
+function syncUrl() {
+  const u = new URL(location.href);
+  u.searchParams.set("ticker", $("ticker").value.trim().toUpperCase());
+  u.searchParams.set("period", $("period").value === "quarter" ? "quarterly" : "annual");
+  u.searchParams.delete("focus");
+  history.replaceState(null, "", u);
+}
+$("ticker").addEventListener("change", syncUrl);
+$("period").addEventListener("change", syncUrl);
+
+// Focus only after the data lands — scrolling to an empty card is worse than
+// not scrolling at all.
+loadAll().then(() => { if (qFocus) applyFocus(qFocus); });
 </script>
 </body>
 </html>
