@@ -228,9 +228,29 @@ const BASE = {
   legend: { top: 0, right: 0, textStyle: { color: "#9aa3af", fontSize: 11.5 }, icon: "roundRect" },
 };
 
+/* ── where the data comes from ─────────────────────────────────────────────
+   This page is served from TWO places:
+
+     Railway  — the FastAPI app. Static page and /api/* on one origin.
+     Vercel   — fineasmcp.vercel.app. A CDN copy of this file and nothing else;
+                there is no Python there, so every /api/* path 404s.
+
+   The Vercel copy was therefore a shell that rendered "error: 404" for every
+   panel. Resolving the API host at runtime instead of assuming same-origin
+   makes the pretty URL a fully working page, and CORS is already open. */
+const API_BASE = (() => {
+  const h = location.hostname;
+  // Same-origin wherever the backend actually is: Railway, or a local dev run.
+  if (h.endsWith("railway.app") || h === "localhost" || h === "127.0.0.1") return "";
+  // ?api= lets a preview deployment aim at a branch backend without a rebuild.
+  const override = new URLSearchParams(location.search).get("api");
+  if (override && /^https:\/\/[\w.-]+$/.test(override)) return override.replace(/\/+$/, "");
+  return "https://sec-mcp-production.up.railway.app";
+})();
+
 async function getJSON(url) {
-  const r = await fetch(url);
-  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  const r = await fetch(url.startsWith("/api/") ? API_BASE + url : url);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 }
 

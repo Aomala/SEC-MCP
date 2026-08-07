@@ -1,12 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "buildCommand": "mkdir -p public/static && cp -R src/sec_mcp/static/. public/static/ && cp src/sec_mcp/static/index.html public/index.html && cp src/sec_mcp/static/docs.html public/docs.html && cp src/sec_mcp/static/explorer.html public/explorer.html",
+  "buildCommand": "mkdir -p public/static && cp -R src/sec_mcp/static/. public/static/ && cp src/sec_mcp/static/index.html public/index.html && cp src/sec_mcp/static/docs.html public/docs.html && cp src/sec_mcp/static/explorer.html public/explorer.html && cp src/sec_mcp/static/filings.html public/filings.html",
   "outputDirectory": "public",
   "installCommand": "echo 'skip install'",
   "rewrites": [
     { "source": "/docs", "destination": "/docs.html" },
-    { "source": "/explorer", "destination": "/explorer.html" }
+    { "source": "/explorer", "destination": "/explorer.html" },
+    { "source": "/filings", "destination": "/filings.html" },
+    { "source": "/filings/:ticker", "destination": "/filings.html" }
   ],
   "headers": [
     {
