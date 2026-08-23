@@ -102,14 +102,20 @@ def _cache_key(ticker: str, data_type: str, period: str = "annual",
     return f"{ticker.upper()}|{data_type}|{period}|{date_from}|{date_to}"
 
 
-def get_cached(
+def get_entry(
     ticker: str,
     data_type: str,
     period: str = "annual",
     date_from: str = "",
     date_to: str = "",
-) -> Any | None:
-    """Retrieve cached data if not expired."""
+) -> dict | None:
+    """Fetch a cache row REGARDLESS of expiry: {data, stale, age_days} or None.
+
+    This is the stale-while-revalidate primitive. `get_cached` (fresh-only) is
+    a thin wrapper over it, so existing callers keep their exact semantics
+    while hot paths can opt into serving a stale row and refreshing behind the
+    response — see core/refresh.py for why hard expiry is wrong for SEC data.
+    """
     client = _get_client()
     if not client:
         return None
@@ -118,18 +124,47 @@ def get_cached(
     try:
         result = (
             client.table("financial_cache")
-            .select("data, expires_at")
+            .select("data, expires_at, created_at")
             .eq("cache_key", key)
-            .gte("expires_at", datetime.now(timezone.utc).isoformat())
             .limit(1)
             .execute()
         )
-        if result.data:
-            log.debug("Supabase cache hit: %s", key)
-            return result.data[0]["data"]
+        if not result.data:
+            return None
+        row = result.data[0]
+        now = datetime.now(timezone.utc)
+        stale = True
+        try:
+            expires = datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00"))
+            stale = expires <= now
+        except (ValueError, TypeError, KeyError):
+            pass  # unparseable expiry → treat as stale, which only costs a refresh
+        age_days = None
+        created = row.get("created_at")
+        if created:
+            try:
+                dt = datetime.fromisoformat(str(created).replace("Z", "+00:00"))
+                age_days = max((now - dt).total_seconds() / 86400, 0.0)
+            except (ValueError, TypeError):
+                pass
+        log.debug("Supabase cache %s: %s", "stale hit" if stale else "hit", key)
+        return {"data": row["data"], "stale": stale, "age_days": age_days}
     except Exception as exc:
         log.debug("Supabase cache read failed: %s", exc)
+        return None
 
+
+def get_cached(
+    ticker: str,
+    data_type: str,
+    period: str = "annual",
+    date_from: str = "",
+    date_to: str = "",
+) -> Any | None:
+    """Retrieve cached data if not expired."""
+    entry = get_entry(ticker, data_type, period, date_from, date_to)
+    if entry and not entry["stale"]:
+        return entry["data"]
     return None
 
 

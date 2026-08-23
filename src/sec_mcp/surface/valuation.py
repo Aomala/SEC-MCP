@@ -8,7 +8,6 @@ cross-listing-safe P/E basis, bank/REIT not-applicable handling.
 from __future__ import annotations
 
 # stdlib
-import asyncio
 import time
 
 # response contract helpers
@@ -35,9 +34,12 @@ def get_valuation_impl(ticker, period: str = "ttm") -> dict:
     period = require_choice(period, "period", ("annual", "quarterly", "ttm"),
                             default="ttm")
 
-    # chat_app's handler is async-declared but does sync work — run it here
+    # chat_app's handler is a plain `def` (it does blocking work, so FastAPI
+    # runs it on the threadpool — see the concurrency contract in chat_app's
+    # module docstring). Call it directly; it used to be async-declared and this
+    # line used to wrap it in asyncio.run().
     from sec_mcp.chat_app import get_ticker_metrics
-    result = asyncio.run(get_ticker_metrics(tk, period=period))
+    result = get_ticker_metrics(tk, period=period)
 
     if isinstance(result, dict) and result.get("error"):
         code = _ERROR_CODE_MAP.get(result.get("code"), INTERNAL)

@@ -27,7 +27,8 @@ RUN pip install --no-cache-dir \
     "yfinance>=0.2.30" \
     "python-dotenv>=1.0" \
     "supabase>=2.0" \
-    "edgartools>=5.16"
+    "edgartools>=5.16" \
+    "stripe>=9.0"
 
 # Copy source code
 COPY src/ src/
@@ -40,7 +41,7 @@ ENV PYTHONUNBUFFERED=1
 # dimensional segment extractor (graph/segments.py) lazy-imports it, so a
 # missing edgartools doesn't fail startup — it silently degrades segments
 # to fallback sources. Catch that here instead.
-RUN python -c "import edgar; from sec_mcp.chat_app import app; print('imports OK')"
+RUN python -c "import edgar, stripe; from sec_mcp.chat_app import app; print('imports OK')"
 
 # Railway sets PORT dynamically — app reads os.environ["PORT"] with fallback to 8877
 CMD ["python", "-m", "sec_mcp.chat_app"]

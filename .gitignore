@@ -31,7 +31,6 @@ htmlcov/
 # Vercel build output
 public/
 .vercel
-.github/
 
 # batch run logs
 batch_top1000.log

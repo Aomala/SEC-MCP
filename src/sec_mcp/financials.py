@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -4028,7 +4029,19 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
                 log.debug("history extract failed for %s/%s: %s", tk, acc, exc)
                 return None
 
-        with ThreadPoolExecutor(max_workers=min(8, max(1, len(accs)))) as ex:
+        # Fanning this out is COUNTERPRODUCTIVE, which is unintuitive enough to
+        # be worth writing down. Each worker calls extract_financials, which
+        # calls get_company_info -> sec_client._get_submissions — a lockless
+        # 120s dict cache. Cold, all N workers miss it simultaneously and then
+        # serialize behind the 8 req/s rate lock, so the fan-out buys N
+        # duplicate SEC round trips and no parallelism. Measured on a genuinely
+        # cold build (disk cache stubbed): 1 worker 9.3-10.0s, 8 workers
+        # 12.5-14.5s — 25-35% SLOWER.
+        #
+        # Default 1. Raise SEC_HISTORY_WORKERS only after adding a single-flight
+        # lock to the submissions cache, which is what would make >1 pay off.
+        workers = max(1, int(os.environ.get("SEC_HISTORY_WORKERS", "1")))
+        with ThreadPoolExecutor(max_workers=min(workers, max(1, len(accs)))) as ex:
             results = [r for r in ex.map(_ex, accs)
                        if r and (r.get("metrics") or {}).get("revenue") is not None]
 
