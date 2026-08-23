@@ -119,6 +119,18 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # Starlette defaults max_age to 600, so every browser re-ran the OPTIONS
+    # preflight every 10 minutes — one wasted round trip per ticker click.
+    # max_age lands only in preflight_headers, never on the GET response, so
+    # this cannot touch the frozen /api/financials-history contract.
+    max_age=7200,
+    # Clients cannot read a custom header unless it is exposed. Without these
+    # the whole rate-limit protocol is invisible to browser callers.
+    expose_headers=[
+        "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset",
+        "X-RateLimit-Limit-Minute", "X-RateLimit-Remaining-Minute",
+        "X-Plan", "X-Demo-Remaining", "Retry-After", "ETag",
+    ],
 )
 
 # Compression + ETag/304 + Cache-Control. Installed BEFORE the demo limiter so
@@ -1829,14 +1841,24 @@ def get_financials_history(ticker: str, bg: BackgroundTasks,
             supabase_cache.set_cached(tk, cache_type, full, period)
         return full
 
-    cached = supabase_cache.get_cached(tk, cache_type, period)
+    # Read past the hard expiry. The 24h `_cached_at` marker below sets the
+    # REFRESH cadence, but the row's 14-day expires_at used to delete it from
+    # view entirely, dropping the request onto the 20.9s inline extraction —
+    # and 2,224 of 2,262 rows were expired. A filed statement does not stop
+    # being true on day 15, so serve it and refresh underneath.
+    entry = supabase_cache.get_entry(tk, cache_type, period)
+    cached = entry["data"] if entry else None
     if cached:
-        # Stale-while-revalidate: serve instantly; if the entry is >24h old,
-        # refresh in the background so new filings appear without ever making
-        # a user wait on extraction.
         cached_at = cached.get("_cached_at") or 0
-        if time.time() - cached_at > 24 * 3600:
-            bg.add_task(_compute_and_cache)
+        # Refresh on EITHER trigger — a stale row past expiry AND a row older
+        # than a day both want rebuilding; using expiry alone would stretch the
+        # refresh cadence from 24h out to 14d.
+        if entry["stale"] or (time.time() - cached_at > 24 * 3600):
+            # refresh.spawn, not bg.add_task: BackgroundTasks has no
+            # single-flight, so a popular stale ticker would launch one full
+            # extraction per concurrent request.
+            from sec_mcp.core import refresh
+            refresh.spawn(f"history|{tk}|{period}", _compute_and_cache)
         return _slice(cached)
 
     try:
@@ -3353,14 +3375,19 @@ async def run_screener(request: Request):
     filters = body.get("filters", {})
     limit = body.get("limit", 50)
 
-    # screen() walks the cached universe synchronously — threadpool it so a slow
-    # screen can't stall the event loop. See the module docstring on concurrency.
-    results = await run_in_threadpool(screen, filters, limit=limit)
+    # ALL THREE of these block. get_cached_ticker_count() in particular issues a
+    # live Supabase query on a cold memo, so leaving it on the event loop after
+    # hand-off would keep exactly the stall the threadpool was meant to remove.
+    # See the module docstring on concurrency.
+    def _work():
+        return screen(filters, limit=limit), get_available_sectors(), get_cached_ticker_count()
+
+    results, sectors, cached_tickers = await run_in_threadpool(_work)
     return {
         "matches": results,
         "count": len(results),
-        "sectors": get_available_sectors(),
-        "cached_tickers": get_cached_ticker_count(),
+        "sectors": sectors,
+        "cached_tickers": cached_tickers,
     }
 
 
@@ -3749,4 +3776,12 @@ if __name__ == "__main__":
     # Read PORT from environment (Railway sets this) or default to 8877
     port = int(os.environ.get("PORT", "8877"))
     print(f"\n  SEC Terminal \u2192 http://localhost:{port}\n")
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    # limit_concurrency sheds load instead of queueing it. Without a bound, a
+    # burst larger than the threadpool piles up in memory until the container
+    # OOMs; with one, the overflow gets a fast 503 it can retry. Sized just
+    # above the threadpool so the pool, not the queue, is the binding limit.
+    uvicorn.run(
+        app, host="0.0.0.0", port=port, log_level="info",
+        limit_concurrency=int(os.environ.get("LIMIT_CONCURRENCY", "120")),
+        timeout_keep_alive=int(os.environ.get("KEEPALIVE", "15")),
+    )

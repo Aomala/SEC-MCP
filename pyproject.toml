@@ -34,6 +34,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Stripe checkout + webhook. Optional: commerce/billing.py imports it lazily and
+# every billing endpoint returns a clean 503 when it is absent.
+billing = [
+    "stripe>=9.0",
+]
 # MCP protocol server — only needed for Claude Desktop integration, not web dashboard
 mcp = [
     "fastmcp>=2.0",
@@ -70,4 +75,14 @@ select = ["E", "F", "I", "W", "UP", "B", "SIM"]
 ignore = [
     "E501",   # line too long (handled by formatter)
     "SIM108", # ternary operator (readability preference)
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom REQUIRES calls in parameter defaults
+# (`x: T = Depends(...)`, `q: str = Query(...)`). B008 exists to catch mutable
+# defaults, which these are not — without this every route is a false positive.
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Query", "fastapi.Path", "fastapi.Body",
+    "fastapi.Header", "fastapi.Form", "fastapi.File", "fastapi.Cookie",
+    "fastapi.Security",
 ]

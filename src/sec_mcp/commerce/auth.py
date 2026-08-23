@@ -24,6 +24,7 @@ Design decisions worth knowing:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -230,14 +231,13 @@ def install_rate_headers(app) -> None:
         if caller is not None:
             for k, v in caller.rate_headers().items():
                 response.headers[k] = v
-            # Latency is recorded here, where we actually know it.
-            try:
+            # Latency is recorded here, where we actually know it. Metering
+            # must never be able to break a response that already succeeded.
+            with contextlib.suppress(Exception):
                 usage.record(
                     caller.key_id, _endpoint_label(request),
                     duration_ms=(time.monotonic() - caller.started) * 1000,
                     error=response.status_code >= 500,
                     consume=False,
                 )
-            except Exception:  # noqa: BLE001 — metering must never break a response
-                pass
         return response

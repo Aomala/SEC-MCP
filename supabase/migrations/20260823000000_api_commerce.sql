@@ -5,6 +5,39 @@
 --
 -- Safe to re-run: every statement is guarded.
 
+-- ── Collision guard ─────────────────────────────────────────────────────────
+-- An abandoned `api_keys` table already exists in this project from an earlier
+-- attempt, with an INCOMPATIBLE and insecure shape:
+--     (id bigint, key text, email, tier, calls_today, daily_limit, active)
+-- It stores the API key in PLAINTEXT and has none of the columns this code
+-- writes. `create table if not exists` would silently skip and leave it in
+-- place, so every insert would then fail on a missing column.
+--
+-- It is empty (verified 0 rows on 2026-08-23), so dropping it loses nothing.
+-- The row-count guard makes that assumption enforce itself: if anyone has
+-- since written a row, this migration aborts loudly instead of destroying data.
+do $$
+declare
+    n bigint;
+begin
+    if to_regclass('public.api_keys') is not null
+       and not exists (
+           select 1 from information_schema.columns
+           where table_schema = 'public' and table_name = 'api_keys'
+             and column_name = 'key_hash')
+    then
+        execute 'select count(*) from public.api_keys' into n;
+        if n > 0 then
+            raise exception
+                'Legacy api_keys has % row(s) — migrate them by hand before rerunning. '
+                'Note the legacy `key` column is PLAINTEXT: re-issue those keys rather '
+                'than copying them across.', n;
+        end if;
+        raise notice 'Dropping empty legacy api_keys (plaintext schema)';
+        execute 'drop table public.api_keys';
+    end if;
+end $$;
+
 -- ── API keys ────────────────────────────────────────────────────────────────
 -- The secret itself is NEVER stored. `key_hash` is sha256(full_key) and
 -- `key_prefix` is the non-secret display fragment ("fin_live_7Kq2c8Zx").

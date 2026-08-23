@@ -35,6 +35,18 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["v1"])
 
+# One dependency object per scope, built at import. Beyond satisfying B008, this
+# names the gate at each route ("this endpoint is ownership data") instead of
+# repeating a string literal 25 times.
+NeedsSearch = Depends(require("search"))
+NeedsFundamentals = Depends(require("fundamentals"))
+NeedsFilings = Depends(require("filings"))
+NeedsMarket = Depends(require("market"))
+NeedsOwnership = Depends(require("ownership"))
+NeedsSegments = Depends(require("segments"))
+NeedsScreen = Depends(require("screen"))
+NeedsBulk = Depends(require("bulk"))
+
 
 def _err(message: str, code: str, hint: str, status: int = 400) -> JSONResponse:
     return JSONResponse(status_code=status,
@@ -115,7 +127,7 @@ def v1_plans() -> dict:
 
 
 @router.get("/me", summary="Your key, plan, and current usage")
-def v1_me(request: Request, caller: Caller = Depends(require("search"))) -> dict:
+def v1_me(request: Request, caller: Caller = NeedsSearch) -> dict:
     body = {
         "authenticated": caller.authenticated,
         "plan": caller.plan_name,
@@ -149,7 +161,7 @@ def v1_company_search(
     exchange: str | None = None,
     country: str | None = None,
     sp500: bool | None = None,
-    caller: Caller = Depends(require("search")),
+    caller: Caller = NeedsSearch,
 ):
     from sec_mcp.surface.company_search import search_companies_impl
     filters = {k: v for k, v in
@@ -165,7 +177,7 @@ def v1_filings(
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = Query(20, ge=1, le=200),
-    caller: Caller = Depends(require("filings")),
+    caller: Caller = NeedsFilings,
 ):
     from sec_mcp.surface.filings import get_filings_impl
     return _respond(get_filings_impl(ticker, form_type, date_from, date_to, limit=limit))
@@ -178,7 +190,7 @@ def v1_filing_section(
     section: str,
     accession: str = Query(..., description="Accession number of the filing"),
     max_length: int = Query(50_000, ge=1_000, le=500_000),
-    caller: Caller = Depends(require("filings")),
+    caller: Caller = NeedsFilings,
 ):
     from sec_mcp.surface.filings import get_filing_section_impl
     return _respond(get_filing_section_impl(accession, section, ticker, max_length))
@@ -196,7 +208,7 @@ def v1_fundamentals(
     periods_back: int = Query(4, ge=1, le=12),
     metrics: str | None = Query(None, description="Comma-separated metric subset"),
     include_segments: bool = True,
-    caller: Caller = Depends(require("fundamentals")),
+    caller: Caller = NeedsFundamentals,
 ):
     from sec_mcp.surface.fundamentals import get_fundamentals_impl
     metric_list = [m.strip() for m in metrics.split(",") if m.strip()] if metrics else None
@@ -205,11 +217,41 @@ def v1_fundamentals(
     return _respond(_trim_history(payload, caller))
 
 
+# ── Back-compat aliases ─────────────────────────────────────────────────────
+# The pre-existing /v1/financials and /v1/search shipped before this router and
+# are still called by static/app.js (peer comps panel, lines 2590 + 3572) and by
+# the docs "try it" console. Renaming without these would 404 the live frontend.
+# Hidden from the schema so new integrations use the canonical names.
+
+@router.get("/financials/{ticker}", include_in_schema=False)
+def v1_financials_alias(
+    ticker: str,
+    period: str = Query("annual", pattern="^(annual|quarterly|ttm)$"),
+    periods_back: int = Query(4, ge=1, le=12),
+    caller: Caller = NeedsFundamentals,
+):
+    """Deprecated alias for /v1/fundamentals/{ticker}."""
+    from sec_mcp.surface.fundamentals import get_fundamentals_impl
+    payload = get_fundamentals_impl(ticker, period, None, periods_back, True)
+    return _respond(_trim_history(payload, caller))
+
+
+@router.get("/search", include_in_schema=False)
+def v1_search_alias(
+    q: str = Query(...),
+    limit: int = Query(10, ge=1, le=100),
+    caller: Caller = NeedsSearch,
+):
+    """Deprecated alias for /v1/companies/search."""
+    from sec_mcp.surface.company_search import search_companies_impl
+    return _respond(search_companies_impl(q, None, limit))
+
+
 @router.get("/metrics/{ticker}", summary="Valuation multiples and return ratios")
 def v1_metrics(
     ticker: str,
     period: str = Query("ttm", pattern="^(annual|quarterly|ttm)$"),
-    caller: Caller = Depends(require("fundamentals")),
+    caller: Caller = NeedsFundamentals,
 ):
     from sec_mcp.surface.valuation import get_valuation_impl
     return _respond(get_valuation_impl(ticker, period))
@@ -221,7 +263,7 @@ def v1_diff(
     year1: int = Query(..., description="Earlier fiscal year"),
     year2: int = Query(..., description="Later fiscal year"),
     form_type: str = "10-K",
-    caller: Caller = Depends(require("fundamentals")),
+    caller: Caller = NeedsFundamentals,
 ):
     from sec_mcp.surface.diff import diff_fundamentals_impl
     return _respond(diff_fundamentals_impl(ticker, year1, year2, form_type))
@@ -232,7 +274,7 @@ def v1_compare(
     tickers: str = Query(..., description="Comma-separated, 2-8 symbols"),
     metrics: str | None = None,
     period: str = Query("annual", pattern="^(annual|ttm)$"),
-    caller: Caller = Depends(require("fundamentals")),
+    caller: Caller = NeedsFundamentals,
 ):
     from sec_mcp.surface.fundamentals import compare_impl
     tk = [t.strip().upper() for t in tickers.split(",") if t.strip()]
@@ -247,7 +289,7 @@ def v1_compare(
 def v1_segments(
     ticker: str,
     period: str = Query("annual", pattern="^(annual|quarterly)$"),
-    caller: Caller = Depends(require("segments")),
+    caller: Caller = NeedsSegments,
 ):
     from sec_mcp.surface.fundamentals import _segments_block
     return _respond({"ticker": ticker.upper(), "period": period,
@@ -259,7 +301,7 @@ def v1_segments(
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.get("/quotes/{ticker}", summary="Latest quote (session-aware)")
-def v1_quote(ticker: str, caller: Caller = Depends(require("market"))):
+def v1_quote(ticker: str, caller: Caller = NeedsMarket):
     from sec_mcp.surface.quotes import get_quote_impl
     return _respond(get_quote_impl(ticker))
 
@@ -269,7 +311,7 @@ def v1_prices(
     ticker: str,
     window: str = Query("1Y", description="1D, 5D, 1M, 6M, 1Y, 5Y, MAX"),
     timespan: str = Query("day", description="minute, hour, day, week, month"),
-    caller: Caller = Depends(require("market")),
+    caller: Caller = NeedsMarket,
 ):
     from sec_mcp.surface.history import get_price_history_impl
     return _respond(get_price_history_impl(ticker, window, timespan))
@@ -277,33 +319,33 @@ def v1_prices(
 
 @router.get("/news/{ticker}", summary="Company news with publisher provenance")
 def v1_news(ticker: str, limit: int = Query(10, ge=1, le=50),
-            caller: Caller = Depends(require("market"))):
+            caller: Caller = NeedsMarket):
     from sec_mcp.surface.news import get_news_impl
     return _respond(get_news_impl(ticker, limit))
 
 
 @router.get("/actions/{ticker}", summary="Dividends, splits, and forward yield")
 def v1_actions(ticker: str, limit: int = Query(20, ge=1, le=100),
-               caller: Caller = Depends(require("market"))):
+               caller: Caller = NeedsMarket):
     from sec_mcp.surface.actions import get_corporate_actions_impl
     return _respond(get_corporate_actions_impl(ticker, limit))
 
 
 @router.get("/indices/{symbol}", summary="Index level and history")
 def v1_index(symbol: str, include_history: bool = True,
-             window: str = "1Y", caller: Caller = Depends(require("market"))):
+             window: str = "1Y", caller: Caller = NeedsMarket):
     from sec_mcp.surface.indices import get_index_impl
     return _respond(get_index_impl(symbol, include_history, window))
 
 
 @router.get("/market/overview", summary="Breadth and sector performance")
-def v1_market_overview(caller: Caller = Depends(require("market"))):
+def v1_market_overview(caller: Caller = NeedsMarket):
     from sec_mcp.surface.indices import get_market_overview_impl
     return _respond(get_market_overview_impl())
 
 
 @router.get("/etf/{ticker}", summary="ETF profile — expense ratio, AUM, holdings")
-def v1_etf(ticker: str, caller: Caller = Depends(require("market"))):
+def v1_etf(ticker: str, caller: Caller = NeedsMarket):
     from sec_mcp.surface.etf import get_etf_profile_impl
     return _respond(get_etf_profile_impl(ticker))
 
@@ -317,7 +359,7 @@ def v1_insiders(
     ticker: str,
     date_from: str | None = None,
     limit: int = Query(50, ge=1, le=500),
-    caller: Caller = Depends(require("ownership")),
+    caller: Caller = NeedsOwnership,
 ):
     from sec_mcp.surface.ownership import get_insider_activity_impl
     return _respond(get_insider_activity_impl(ticker, date_from, limit))
@@ -325,7 +367,7 @@ def v1_insiders(
 
 @router.get("/ownership/{ticker}/institutional",
             summary="13F holders, activist 13D/G, and holder families")
-def v1_institutional(ticker: str, caller: Caller = Depends(require("ownership"))):
+def v1_institutional(ticker: str, caller: Caller = NeedsOwnership):
     from sec_mcp.surface.ownership import get_ownership_impl
     return _respond(get_ownership_impl(ticker))
 
@@ -335,7 +377,7 @@ def v1_institutional(ticker: str, caller: Caller = Depends(require("ownership"))
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.post("/screen", summary="Composable screener over the covered universe")
-async def v1_screen(request: Request, caller: Caller = Depends(require("screen"))):
+async def v1_screen(request: Request, caller: Caller = NeedsScreen):
     from starlette.concurrency import run_in_threadpool
 
     from sec_mcp.surface.screen import screen_impl
@@ -351,7 +393,7 @@ async def v1_screen(request: Request, caller: Caller = Depends(require("screen")
 
 @router.get("/peers/{ticker}", summary="Comparable companies")
 def v1_peers(ticker: str, max_peers: int = Query(5, ge=1, le=25),
-             caller: Caller = Depends(require("screen"))):
+             caller: Caller = NeedsScreen):
     from sec_mcp.surface.peers import find_peers_impl
     return _respond(find_peers_impl(ticker, max_peers))
 
@@ -373,7 +415,7 @@ def v1_bulk_fundamentals(
     period: str = Query("annual", pattern="^(annual|quarterly|ttm)$"),
     tickers: str | None = Query(None, description="Explicit comma-separated list (overrides universe)"),
     limit: int = Query(1000, ge=1, le=5000),
-    caller: Caller = Depends(require("bulk")),
+    caller: Caller = NeedsBulk,
 ):
     if not caller.plan.get("bulk"):
         return _err("Bulk download requires a Pro plan or higher.", "plan_required",
@@ -429,7 +471,7 @@ def v1_bulk_fundamentals(
 @router.get("/bulk/universe", summary="The full covered ticker universe")
 def v1_bulk_universe(
     universe: str = Query("covered", description=f"One of {', '.join(_UNIVERSES)}"),
-    caller: Caller = Depends(require("bulk")),
+    caller: Caller = NeedsBulk,
 ):
     if not caller.plan.get("bulk"):
         return _err("Bulk download requires a Pro plan or higher.", "plan_required",
@@ -440,7 +482,7 @@ def v1_bulk_universe(
 
 
 @router.get("/coverage", summary="What this API currently has warm")
-def v1_coverage(caller: Caller = Depends(require("search"))):
+def v1_coverage(caller: Caller = NeedsSearch):
     """Honest coverage reporting — a buyer's first question is always 'how many
     tickers do you actually have, and how fresh is it?'"""
     from sec_mcp.commerce.bulk import coverage_report

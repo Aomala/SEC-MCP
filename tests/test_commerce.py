@@ -310,3 +310,69 @@ def test_no_route_handler_blocks_the_event_loop():
     assert not offenders, (
         "These handlers are `async def` but do blocking work — they will stall "
         f"the whole server: {offenders}")
+
+
+# ── Regressions found by audit — each of these shipped broken once ─────────
+
+def test_legacy_v1_paths_still_resolve(client):
+    """/v1/financials and /v1/search predate the router and are still called by
+    static/app.js (peer comps) and the docs console. Renaming them 404'd the
+    live frontend."""
+    assert client.get("/v1/search?q=apple").status_code == 200
+    # Route must EXIST (not 404); data availability is a separate concern.
+    assert client.get("/v1/financials/AAPL").status_code != 404
+
+
+def test_304_preserves_cors_headers(client):
+    """CORSMiddleware is installed inside the ETag layer, so it stamps ACAO
+    downstream. A keep-list without it strips ACAO from every 304, the browser
+    rejects the revalidation, and the caching layer becomes a no-op for every
+    cross-origin caller."""
+    origin = {"Origin": "https://fineas.ai"}
+    first = client.get("/v1/plans", headers=origin)
+    assert "access-control-allow-origin" in first.headers
+
+    second = client.get("/v1/plans",
+                        headers={**origin, "If-None-Match": first.headers["etag"]})
+    assert second.status_code == 304
+    assert "access-control-allow-origin" in second.headers, \
+        "304 dropped ACAO — cross-origin revalidation will fail"
+
+
+def test_rate_limit_headers_are_exposed_to_browsers(client):
+    """A custom header a browser cannot read is a header that does not exist."""
+    exposed = client.get("/v1/plans", headers={"Origin": "https://fineas.ai"}) \
+        .headers.get("access-control-expose-headers", "")
+    for header in ("X-RateLimit-Remaining", "X-Plan", "Retry-After"):
+        assert header in exposed, f"{header} not exposed to cross-origin JS"
+
+
+def test_alias_writes_survive_concurrent_handlers(tmp_path, monkeypatch):
+    """Handlers run on a 96-thread pool, and learn_company does a
+    read-modify-write on one JSON file. Unserialized, that loses entries — it
+    wiped 293 aliases in a single local run."""
+    import concurrent.futures as cf
+
+    from sec_mcp import intent_parser
+
+    target = tmp_path / "aliases.json"
+    target.write_text('{"seed": "SEED"}')
+    monkeypatch.setattr(intent_parser, "_ALIASES_PATH", target)
+
+    with cf.ThreadPoolExecutor(max_workers=32) as ex:
+        list(ex.map(lambda i: intent_parser._save_alias(f"co{i}", f"T{i}"), range(200)))
+
+    final = intent_parser._load_aliases()
+    assert len(final) == 201, f"lost entries under concurrency: {len(final)} != 201"
+    assert final["seed"] == "SEED"
+
+
+def test_history_worker_default_is_one():
+    """Fanning out the history build is slower, not faster: workers stampede a
+    lockless submissions cache and then serialize behind the SEC rate lock
+    (measured 1w 9.3-10.0s vs 8w 12.5-14.5s)."""
+    import os
+
+    from sec_mcp import financials
+    assert hasattr(financials, "os"), "financials.py must import os"
+    assert int(os.environ.get("SEC_HISTORY_WORKERS", "1")) == 1

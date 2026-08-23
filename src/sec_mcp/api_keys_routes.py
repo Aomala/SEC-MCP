@@ -22,10 +22,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from sec_mcp.commerce import billing
+from sec_mcp.commerce import billing, usage
 from sec_mcp.commerce import keys as key_store
 from sec_mcp.commerce import plans as plan_catalogue
-from sec_mcp.commerce import usage
 
 log = logging.getLogger(__name__)
 

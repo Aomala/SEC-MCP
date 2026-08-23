@@ -175,7 +175,19 @@ class ETagCacheMiddleware:
 
         if etag and if_none_match and _etag_matches(if_none_match, etag):
             # 304 carries validators + policy, never a body or a length.
-            keep = (b"etag", b"cache-control", b"vary", b"date")
+            #
+            # The CORS headers MUST survive. CORSMiddleware is installed inside
+            # this one, so it stamps Access-Control-Allow-Origin downstream and
+            # a keep-list without it strips ACAO from every 304 — which makes
+            # the browser reject the revalidation and refetch the full payload,
+            # turning this whole layer into a no-op for every cross-origin
+            # caller (i.e. all of fineas.ai).
+            keep = (
+                b"etag", b"cache-control", b"vary", b"date",
+                b"access-control-allow-origin",
+                b"access-control-allow-credentials",
+                b"access-control-expose-headers",
+            )
             not_modified = [(k, v) for k, v in raw if k.lower() in keep]
             await send({"type": "http.response.start", "status": 304,
                         "headers": not_modified})

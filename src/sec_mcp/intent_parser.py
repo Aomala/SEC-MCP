@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from pathlib import Path
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Company alias resolver — maps common names to tickers
@@ -27,14 +27,34 @@ def _load_aliases() -> dict[str, str]:
     return {}
 
 
+# Route handlers are plain `def`, so FastAPI runs them on a 96-thread pool and
+# many can call learn_company() at once. This read-modify-write was previously
+# serialized by the event loop; concurrently it loses entries, and a torn write
+# leaves invalid JSON that _load_aliases() silently swallows into {} — which is
+# how 293 aliases disappeared from company_aliases.json in one local run.
+_alias_lock = threading.Lock()
+
+
 def _save_alias(name: str, ticker: str):
-    """Persist a new company alias for future lookups."""
-    data = _load_aliases()
-    data[name.lower().strip()] = ticker.upper().strip()
-    try:
-        _ALIASES_PATH.write_text(json.dumps(data, indent=2))
-    except OSError:
-        pass
+    """Persist a new company alias for future lookups.
+
+    Serialized and atomic: the lock stops concurrent handlers from clobbering
+    each other, and the temp-file rename means a crash mid-write can never
+    leave a half-written file where the alias table should be.
+    """
+    key = name.lower().strip()
+    value = ticker.upper().strip()
+    with _alias_lock:
+        data = _load_aliases()
+        if data.get(key) == value:
+            return                      # nothing to write — the common case
+        data[key] = value
+        tmp = _ALIASES_PATH.with_suffix(".json.tmp")
+        try:
+            tmp.write_text(json.dumps(data, indent=2))
+            tmp.replace(_ALIASES_PATH)  # atomic on POSIX
+        except OSError:
+            tmp.unlink(missing_ok=True)
 
 
 def resolve_name(text: str) -> str | None:
