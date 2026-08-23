@@ -81,43 +81,89 @@
   </div>
 
   <!-- Pricing -->
+  <!-- Rendered from /v1/plans so the page and the enforcement engine can never
+       disagree. The old $5 / $100-yr / $10k-lifetime cards were hardcoded here
+       AND duplicated in chat_app's /docs-legacy route; both were off-market and
+       a lifetime SKU converts recurring revenue into one-time cash. -->
   <h2>Pricing</h2>
-  <div class="pricing">
-    <div class="price-card">
-      <h3>Starter</h3>
-      <div class="price-amount">$5<span>/mo</span></div>
-      <ul>
-        <li>100 API calls/day</li>
-        <li>SEC XBRL financials</li>
-        <li>Company search</li>
-        <li>JSON response format</li>
-      </ul>
-      <button class="price-btn price-btn-outline" onclick="alert('Coming soon — Stripe integration')">Get Started</button>
-    </div>
-    <div class="price-card featured">
-      <h3>Pro <span class="badge badge-pro">POPULAR</span></h3>
-      <div class="price-amount">$100<span>/yr</span></div>
-      <ul>
-        <li>Unlimited API calls</li>
-        <li>Cross-validation (Polygon)</li>
-        <li>AI-powered insights</li>
-        <li>Comparables engine</li>
-        <li>Priority support</li>
-      </ul>
-      <button class="price-btn price-btn-primary" onclick="alert('Coming soon — Stripe integration')">Subscribe</button>
-    </div>
-    <div class="price-card">
-      <h3>Lifetime</h3>
-      <div class="price-amount">$10k</div>
-      <ul>
-        <li>Everything in Pro</li>
-        <li>Lifetime access</li>
-        <li>Custom integrations</li>
-        <li>Direct support line</li>
-        <li>Early access to features</li>
-      </ul>
-      <button class="price-btn price-btn-outline" onclick="alert('Contact austin@fineas.ai')">Contact Us</button>
-    </div>
+  <div class="pricing" id="pricing-cards">
+    <div class="price-card"><h3>Loading plans…</h3></div>
+  </div>
+  <p style="opacity:.7;font-size:13px;margin-top:8px">
+    Every tier includes the hosted MCP server. Redistribution and reseller
+    rights are available on Enterprise only.
+  </p>
+  <script>
+  (function () {
+    var FEATURED = 'pro';
+    var COPY = {
+      free:       ['Latest annual period', 'Company search + filings', 'Hosted MCP server', 'Attribution required, non-commercial'],
+      pro:        ['Full XBRL history', 'TTM + standalone quarters', 'Segment + geographic revenue', 'Polygon cross-check', 'Commercial use in your product'],
+      business:   ['Everything in Pro', 'Bulk universe download (NDJSON)', 'Display rights to end users', '1-business-day support'],
+      enterprise: ['Everything in Business', 'Redistribution / reseller licence', 'Guaranteed warm cache for your tickers', 'NDA / DDQ support']
+    };
+    function card(p) {
+      var featured = p.plan === FEATURED;
+      var price = p.priceUsdMonth === 0
+        ? '$0'
+        : (p.plan === 'enterprise' ? 'from $' + p.priceUsdMonth : '$' + p.priceUsdMonth)
+          + '<span>/mo</span>';
+      var items = (COPY[p.plan] || []).concat(
+        p.dailyCalls ? [p.dailyCalls.toLocaleString() + ' calls/day · ' + p.requestsPerMinute + '/min'] : []
+      );
+      var cta = p.priceUsdMonth === 0
+        ? '<button class="price-btn price-btn-outline" data-plan="' + p.plan + '" data-act="key">Get a free key</button>'
+        : (p.plan === 'enterprise'
+            ? '<a class="price-btn price-btn-outline" href="mailto:austin@fineas.ai?subject=Fineas%20API%20Enterprise">Contact us</a>'
+            : '<button class="price-btn price-btn-primary" data-plan="' + p.plan + '" data-act="buy">Subscribe</button>');
+      return '<div class="price-card' + (featured ? ' featured' : '') + '">'
+        + '<h3>' + p.label + (featured ? ' <span class="badge badge-pro">POPULAR</span>' : '') + '</h3>'
+        + '<div class="price-amount">' + price + '</div>'
+        + '<ul>' + items.map(function (i) { return '<li>' + i + '</li>'; }).join('') + '</ul>'
+        + cta + '</div>';
+    }
+    fetch('/v1/plans')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        document.getElementById('pricing-cards').innerHTML = (d.plans || []).map(card).join('');
+      })
+      .catch(function () {
+        document.getElementById('pricing-cards').innerHTML =
+          '<div class="price-card"><h3>Pricing unavailable</h3>'
+          + '<p>See <a href="/v1/plans">/v1/plans</a>.</p></div>';
+      });
+
+    document.getElementById('pricing-cards').addEventListener('click', function (ev) {
+      var btn = ev.target.closest('[data-act]');
+      if (!btn) return;
+      var email = prompt('Your email — the key and any subscription are tied to it:');
+      if (!email) return;
+      var act = btn.getAttribute('data-act');
+      var url = act === 'key' ? '/v1/keys' : '/v1/billing/checkout';
+      var body = act === 'key'
+        ? { email: email }
+        : { email: email, plan: btn.getAttribute('data-plan') };
+      btn.disabled = true;
+      fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          btn.disabled = false;
+          if (d.url) { window.location = d.url; return; }        // Stripe Checkout
+          if (d.key) {
+            // Shown once and never retrievable — say so, loudly.
+            window.prompt('Your API key (copy it now — it cannot be shown again):', d.key);
+            return;
+          }
+          alert(d.error || 'Something went wrong. Try again.');
+        })
+        .catch(function () { btn.disabled = false; alert('Network error.'); });
+    });
+  })();
+  </script>
   </div>
 
   <!-- Authentication -->

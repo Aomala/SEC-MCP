@@ -158,7 +158,7 @@ def key_usage(request: Request, days: int = 30):
 
 class CheckoutRequest(BaseModel):
     email: str
-    plan: str = Field("starter", description="starter | pro | business")
+    plan: str = Field("pro", description="pro | business | enterprise")
 
 
 @router.post("/v1/billing/checkout", summary="Start a Stripe Checkout session")
@@ -168,7 +168,7 @@ def checkout(body: CheckoutRequest):
         return JSONResponse(status_code=422, content={
             "error": "A valid email address is required.", "code": "invalid_email",
             "hint": "The subscription and the key are keyed to this address."})
-    result = billing.create_checkout_session(email, (body.plan or "starter").lower())
+    result = billing.create_checkout_session(email, (body.plan or "pro").lower())
     if "error" in result:
         code = 503 if result.get("code") == "billing_unconfigured" else 400
         return JSONResponse(status_code=code, content=result)

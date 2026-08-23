@@ -41,7 +41,7 @@ def test_unknown_plan_falls_back_to_free_never_errors():
 
 def test_plan_ladder_is_monotonic():
     """A higher price must never buy a smaller quota — an easy config typo."""
-    ladder = ["free", "starter", "pro", "business"]
+    ladder = ["free", "pro", "business", "enterprise"]
     prev_calls = prev_rpm = -1
     for name in ladder:
         plan = plan_catalogue.get_plan(name)
@@ -64,23 +64,23 @@ def test_anon_cannot_reach_paid_scopes():
 
 
 def test_env_override_changes_pricing_without_code_change(monkeypatch):
-    monkeypatch.setenv("API_PLANS", '{"starter": {"price_usd_month": 79}}')
+    monkeypatch.setenv("API_PLANS", '{"pro": {"price_usd_month": 79}}')
     plan_catalogue.reset_cache()
-    assert plan_catalogue.get_plan("starter")["price_usd_month"] == 79
+    assert plan_catalogue.get_plan("pro")["price_usd_month"] == 79
     # Untouched fields survive the merge.
-    assert plan_catalogue.get_plan("starter")["daily_calls"] == 10_000
+    assert plan_catalogue.get_plan("pro")["daily_calls"] == 830
 
 
 def test_malformed_override_does_not_break_the_ladder(monkeypatch):
     monkeypatch.setenv("API_PLANS", "{not json at all")
     plan_catalogue.reset_cache()
-    assert plan_catalogue.get_plan("pro")["daily_calls"] == 100_000
+    assert plan_catalogue.get_plan("business")["daily_calls"] == 8_300
 
 
 def test_public_catalogue_hides_internal_tiers():
     names = {p["plan"] for p in plan_catalogue.public_catalogue()}
     assert "internal" not in names and "anon" not in names
-    assert {"free", "starter", "pro"} <= names
+    assert {"free", "pro", "business"} <= names
 
 
 # ── Keys ───────────────────────────────────────────────────────────────────

@@ -47,42 +47,50 @@ DEFAULT_PLANS: dict[str, dict] = {
         "rpm": 10,
         "scopes": ["search", "fundamentals", "market"],
         "bulk": False,
-        "history_years": 3,
+        # Must never exceed `free` below, or signing up would be a downgrade.
+        "history_years": 1,
     },
     # Free, keyed. The signup incentive: 10x the anonymous budget.
     "free": {
         "label": "Free",
         "price_usd_month": 0,
-        "daily_calls": 500,
+        "daily_calls": 250,
         "rpm": 30,
-        "scopes": ["search", "fundamentals", "market", "filings", "segments"],
+        # No segments: dimensional XBRL is one of the four things competitors
+        # cannot copy in a weekend, so it sits behind the paywall.
+        "scopes": ["search", "fundamentals", "market", "filings"],
         "bulk": False,
-        "history_years": 5,
+        "history_years": 1,
     },
-    # The self-serve tier — an indie dev, a quant, an AI agent builder.
-    "starter": {
-        "label": "Starter",
-        "price_usd_month": 49,
-        "daily_calls": 10_000,
-        "rpm": 120,
-        "scopes": ["*"],
-        "bulk": False,
-        "history_years": 10,
-    },
-    # The one that pays the bills: bulk access is the differentiator.
+    # The self-serve tier — an indie dev, a quant, an AI-agent builder.
+    # $49 matches sec-api.io Personal ($49 annual / $55 monthly) for strictly
+    # better data, and sits above the Wisesheets/edgar.tools $19-$39 band that
+    # competes on price rather than depth.
     "pro": {
         "label": "Pro",
+        "price_usd_month": 49,
+        "daily_calls": 830,          # ~25,000/mo
+        "rpm": 60,
+        "scopes": ["*"],
+        "bulk": False,
+        "history_years": None,       # full history is the Pro unlock
+    },
+    # The one that pays the bills: bulk access is the differentiator, and
+    # $199 mirrors sec-api.io Business ($199 annual / $239 monthly).
+    "business": {
+        "label": "Business",
         "price_usd_month": 199,
-        "daily_calls": 100_000,
-        "rpm": 600,
+        "daily_calls": 8_300,        # ~250,000/mo
+        "rpm": 300,
         "scopes": ["*"],
         "bulk": True,
         "history_years": None,
     },
-    # Negotiated. Quotas here are the default before a contract overrides them.
-    "business": {
-        "label": "Business",
-        "price_usd_month": 999,
+    # Negotiated, and the ONLY tier carrying redistribution rights — the same
+    # place sec-api.io draws that line. Quotas here are the pre-contract default.
+    "enterprise": {
+        "label": "Enterprise",
+        "price_usd_month": 1000,
         "daily_calls": 1_000_000,
         "rpm": 3_000,
         "scopes": ["*"],

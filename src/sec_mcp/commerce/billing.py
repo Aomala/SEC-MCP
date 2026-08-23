@@ -15,9 +15,9 @@ Flow:
 Configuration (all env, nothing hardcoded):
   STRIPE_SECRET_KEY       sk_live_… / sk_test_…
   STRIPE_WEBHOOK_SECRET   whsec_…  — signature verification, REQUIRED in prod
-  STRIPE_PRICE_STARTER    price_…
-  STRIPE_PRICE_PRO        price_…
-  STRIPE_PRICE_BUSINESS   price_…
+  STRIPE_PRICE_PRO        price_…  ($49/mo)
+  STRIPE_PRICE_BUSINESS   price_…  ($199/mo)
+  STRIPE_PRICE_ENTERPRISE price_…  (from $1,000/mo, negotiated)
   BILLING_SUCCESS_URL / BILLING_CANCEL_URL
 
 Absent STRIPE_SECRET_KEY the module reports unconfigured and the endpoints
@@ -35,9 +35,9 @@ log = logging.getLogger(__name__)
 def _price_map() -> dict[str, str]:
     """price_id → plan name, built from env so prices can rotate without a deploy."""
     pairs = {
-        "starter": os.environ.get("STRIPE_PRICE_STARTER", "").strip(),
         "pro": os.environ.get("STRIPE_PRICE_PRO", "").strip(),
         "business": os.environ.get("STRIPE_PRICE_BUSINESS", "").strip(),
+        "enterprise": os.environ.get("STRIPE_PRICE_ENTERPRISE", "").strip(),
     }
     return {price: plan for plan, price in pairs.items() if price}
 
@@ -68,7 +68,7 @@ def create_checkout_session(email: str, plan: str) -> dict:
     if not price_id:
         return {"error": f"No Stripe price configured for plan '{plan}'.",
                 "code": "unknown_plan",
-                "hint": "Paid plans are: starter, pro, business. See /v1/plans."}
+                "hint": "Paid plans are: pro, business, enterprise. See /v1/plans."}
 
     try:
         stripe = _stripe()
@@ -152,7 +152,7 @@ def handle_event(event) -> dict:
         meta = data.get("metadata") or {}
         email = (meta.get("email") or data.get("customer_email")
                  or (data.get("customer_details") or {}).get("email") or "")
-        plan = meta.get("plan") or "starter"
+        plan = meta.get("plan") or "pro"
         result = _apply_plan(
             email, plan,
             stripe_customer_id=data.get("customer"),
@@ -168,7 +168,7 @@ def handle_event(event) -> dict:
         # checkout, but the price changes on every upgrade and downgrade.
         items = ((data.get("items") or {}).get("data") or [])
         price_id = (items[0].get("price") or {}).get("id") if items else None
-        plan = _price_map().get(price_id) or meta.get("plan") or "starter"
+        plan = _price_map().get(price_id) or meta.get("plan") or "pro"
         if data.get("status") in ("canceled", "unpaid", "incomplete_expired"):
             plan = "free"
         return _apply_plan(email, plan)
@@ -191,6 +191,6 @@ def status() -> dict:
         "configured": is_configured(),
         "webhookSecretSet": bool(os.environ.get("STRIPE_WEBHOOK_SECRET", "").strip()),
         "pricesConfigured": sorted(set(prices.values())),
-        "missingPrices": [p for p in ("starter", "pro", "business")
+        "missingPrices": [p for p in ("pro", "business", "enterprise")
                           if p not in set(prices.values())],
     }
