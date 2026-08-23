@@ -11,6 +11,24 @@ Modern fintech-style UI with:
 
 Run:  python -m sec_mcp.chat_app
 Open: http://localhost:{PORT}  (default 8877)
+
+CONCURRENCY CONTRACT — read before adding a route
+-------------------------------------------------
+Almost every handler here calls BLOCKING code: requests/httpx-sync to SEC EDGAR,
+supabase-py, pandas, edgartools. Declaring such a handler `async def` runs it
+directly on the event loop, and one cold extraction then stalls the ENTIRE
+server — measured 2026-08-23 on prod: a cold /api/metrics?period=ttm (45s) made
+a concurrent /health take 42.4s. All 52 routes were `async def` and 48 of them
+never awaited anything.
+
+So: **a route that does blocking work must be `def`, not `async def`.** FastAPI
+runs plain `def` handlers on the anyio threadpool, which is what gives this
+process any concurrency at all. Only declare `async def` when you genuinely need
+to await an ASGI primitive (e.g. `await request.json()`), and in that case hand
+the blocking half to `starlette.concurrency.run_in_threadpool`.
+
+Sync generators inside `StreamingResponse` are fine either way — Starlette
+iterates them on the threadpool.
 """
 
 from __future__ import annotations
@@ -42,6 +60,17 @@ from sec_mcp.financials import (
 from sec_mcp.historical import get_historical_data, run_historical_extraction
 from sec_mcp.intent_parser import learn_company, parse_intent
 
+# logging_config.setup_logging() had never been called from here, so every
+# log.info/log.warning in the app went nowhere on Railway — including the cache
+# hit/miss and background-refresh lines you need to see whether the cache is
+# actually working. LOG_FORMAT=json gives Railway structured logs.
+from sec_mcp.logging_config import setup_logging  # noqa: E402
+
+setup_logging(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    fmt="json" if os.environ.get("LOG_FORMAT", "").lower() == "json" else "text",
+)
+
 log = logging.getLogger(__name__)
 
 # ── Server-side result cache ──────────────────────────────────────────────────
@@ -66,6 +95,23 @@ def _rcache_put(ticker: str, accession: str, data: dict, summary: str) -> None:
 
 app = FastAPI(title="SEC Terminal", docs_url="/swagger", redoc_url="/redoc")
 
+# Every blocking `def` route shares ONE anyio threadpool, and its default cap is
+# 40 threads. Our slow work is network-bound (SEC EDGAR at 8 req/s, Polygon,
+# Supabase) — threads sit in socket waits, not on the GIL — so the default is
+# needlessly tight for a data-fetch API. Raise it; override with API_THREADPOOL.
+_THREADPOOL_SIZE = int(os.environ.get("API_THREADPOOL", "96"))
+
+
+@app.on_event("startup")
+async def _raise_threadpool_limit():
+    """Widen the threadpool that every blocking `def` route runs on."""
+    try:
+        import anyio.to_thread
+        anyio.to_thread.current_default_thread_limiter().total_tokens = _THREADPOOL_SIZE
+        log.info("Threadpool limit set to %d", _THREADPOOL_SIZE)
+    except Exception as exc:  # noqa: BLE001 — never block startup on this
+        log.warning("Could not raise threadpool limit: %s", exc)
+
 # CORS for cross-origin access (needed for Railway deployment)
 app.add_middleware(
     CORSMiddleware,
@@ -74,6 +120,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Compression + ETag/304 + Cache-Control. Installed BEFORE the demo limiter so
+# the limiter ends up outermost and can still short-circuit a 429 without the
+# caching layer touching it. See http_cache.py.
+from sec_mcp.http_cache import install_http_cache  # noqa: E402
+
+install_http_cache(app)
 
 # Daily usage budget for the public demo site (fineasmcp.vercel.app only —
 # Fineas prod traffic is never metered). See demo_limiter.py.
@@ -146,9 +199,44 @@ app.include_router(_metrics_routes.router)
 # v2 overview — one-call payload for the explorer's animated dashboard
 app.include_router(_metrics_routes.router_v2)
 
+# ── Public, metered, sellable API ────────────────────────────────────────────
+# /v1 is a thin shell over the same surface/*_impl functions the MCP tools use,
+# gated by commerce/ (keys → plan → scope → quota). Everything above stays
+# internal/unmetered so Fineas's own frontend is unaffected.
+from sec_mcp.api_v1 import router as _v1_router  # noqa: E402
+from sec_mcp.commerce.auth import install_error_handlers, install_rate_headers  # noqa: E402
+
+app.include_router(_v1_router)
+
+# Signup / key management / Stripe. Separate router: these are account routes,
+# not data routes, so they are not gated by plan scope and must keep working
+# when a customer is out of quota.
+from sec_mcp.api_keys_routes import router as _account_router  # noqa: E402
+
+app.include_router(_account_router)
+install_error_handlers(app)
+install_rate_headers(app)
+
+
+@app.on_event("startup")
+async def _start_metering():
+    """Restore today's quota counters and start the usage flusher."""
+    import threading
+
+    from sec_mcp.commerce import usage
+
+    def _boot():
+        try:
+            usage.load_today()
+            usage.start_flusher()
+        except Exception as exc:  # noqa: BLE001 — never block startup on metering
+            log.warning("Usage metering did not start: %s", exc)
+
+    threading.Thread(target=_boot, daemon=True).start()
+
 
 @app.get("/explorer")
-async def explorer_page():
+def explorer_page():
     """Interactive data explorer: ECharts time series, income waterfall, and
     the per-filing calculation-tree view (the bad-match debugging surface)."""
     return HTMLResponse((_STATIC_DIR / "explorer.html").read_text())
@@ -156,7 +244,7 @@ async def explorer_page():
 
 @app.get("/filings")
 @app.get("/filings/{ticker}")
-async def filings_page(ticker: str = ""):
+def filings_page(ticker: str = ""):
     """Inline filings reader: filing picker, section tabs rendered as clean
     text in-page, live in-document search with match cycling, and a side
     insights rail (valuation + revenue/margin/FCF charts + YoY deltas)."""
@@ -458,7 +546,7 @@ PEER_MAP: dict[str, list[str]] = {
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/health")
-async def health():
+def health():
     """Health check endpoint for Railway deployment.
 
     MUST respond instantly — never block on DB/network calls.
@@ -470,6 +558,29 @@ async def health():
 # ═══════════════════════════════════════════════════════════════════════════
 #  Tool handlers — each returns a dict for the frontend
 # ═══════════════════════════════════════════════════════════════════════════
+
+def _spawn_financials_refresh(ticker: str, year: int | None, form_type: str,
+                              period_key: str) -> None:
+    """Re-extract + re-cache one ticker off the request path (single-flighted)."""
+    from sec_mcp import supabase_cache
+    from sec_mcp.core import refresh
+
+    def _rebuild() -> None:
+        data = extract_financials(
+            ticker, year=year, form_type=form_type,
+            include_statements=True, include_segments=True,
+        )
+        if not (data and data.get("metrics")):
+            raise RuntimeError(f"refresh produced no metrics for {ticker}")
+        ttl = (supabase_cache.QUARTERLY_FINANCIALS_TTL
+               if form_type in ("10-Q", "6-K") else None)
+        supabase_cache.set_cached(ticker, "financials", data, period_key, ttl=ttl)
+        acc = (data.get("filing_info") or {}).get("accession_number")
+        if acc:
+            _rcache_put(ticker, acc, data, generate_local_summary(data))
+
+    refresh.spawn(f"financials|{ticker}|{period_key}", _rebuild)
+
 
 def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -> dict:
     """Handle a financial data request for a single company.
@@ -486,10 +597,18 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
     # ── Try Supabase cache first (before hitting SEC EDGAR) ──
     # Cache version bumped to v2 — schema added industry_class + sector-aware
     # income_statement[] rows; v1 entries lack these fields, force refresh.
+    #
+    # STALE-WHILE-REVALIDATE: an expired row is still a real filed 10-K, so we
+    # serve it and rebuild behind the response rather than making the caller
+    # pay a 20-45s extraction. Only a genuine MISS blocks. See core/refresh.py.
     period_key = financials_period_key(form_type, year)
-    sb_cached = supabase_cache.get_cached(ticker.upper(), "financials", period_key)
+    entry = supabase_cache.get_entry(ticker.upper(), "financials", period_key)
+    sb_cached = entry["data"] if entry else None
     if sb_cached and isinstance(sb_cached, dict) and sb_cached.get("metrics"):
-        log.info("Supabase cache hit for %s financials", ticker)
+        log.info("Supabase cache %s for %s financials",
+                 "STALE hit" if entry["stale"] else "hit", ticker)
+        if entry["stale"]:
+            _spawn_financials_refresh(ticker.upper(), year, form_type, period_key)
         data = sb_cached
         summary = generate_local_summary(data)
         # Warm the memory cache too
@@ -1088,7 +1207,7 @@ def _handle_qa(ticker: str, question: str, year: int | None = None, form_type: s
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest, bg: BackgroundTasks) -> dict:
+def chat(req: ChatRequest, bg: BackgroundTasks) -> dict:
     """Main chat endpoint — parses intent and dispatches to the right handler.
 
     Returns intent metadata (tool, reasoning) alongside results so the
@@ -1166,7 +1285,7 @@ async def chat(req: ChatRequest, bg: BackgroundTasks) -> dict:
 
 
 @app.post("/api/ask")
-async def ask_question(req: ChatRequest) -> dict:
+def ask_question(req: ChatRequest) -> dict:
     """Direct Q&A endpoint — takes a question + uses current context.
 
     This allows the frontend to send follow-up questions about on-screen data.
@@ -1184,14 +1303,14 @@ async def ask_question(req: ChatRequest) -> dict:
 
 
 @app.get("/api/historical/{ticker}")
-async def historical_data(ticker: str, form_type: str | None = None):
+def historical_data(ticker: str, form_type: str | None = None):
     """Return cached historical data from MongoDB."""
     data = get_historical_data(ticker.upper(), form_type=form_type)
     return data
 
 
 @app.post("/api/historical/{ticker}/fetch")
-async def trigger_fetch(ticker: str, bg: BackgroundTasks):
+def trigger_fetch(ticker: str, bg: BackgroundTasks):
     """Manually trigger historical extraction as a background task."""
     if not db_available():
         return {"error": "MongoDB not configured. Add MONGODB_URI to .env"}
@@ -1200,7 +1319,7 @@ async def trigger_fetch(ticker: str, bg: BackgroundTasks):
 
 
 @app.get("/api/historical/{ticker}/status")
-async def fetch_status(ticker: str):
+def fetch_status(ticker: str):
     """Poll historical extraction job progress."""
     job = get_job(ticker.upper())
     return job or {"status": "none"}
@@ -1215,7 +1334,7 @@ def _build_edgar_url(cik: str, accession: str) -> str:
 
 
 @app.get("/api/filings/{ticker}")
-async def list_available_filings(ticker: str, limit: int = 24):
+def list_available_filings(ticker: str, limit: int = 24):
     """List available filings for the filing selector toolbar.
 
     Tries both US (10-K/10-Q) and FPI (20-F/6-K) form types automatically.
@@ -1250,7 +1369,7 @@ async def list_available_filings(ticker: str, limit: int = 24):
 
 
 @app.post("/api/load-filing")
-async def load_specific_filing(req: LoadFilingRequest):
+def load_specific_filing(req: LoadFilingRequest):
     """Load financials for one specific filing (by accession number).
 
     Checks memory cache then disk cache before hitting SEC EDGAR.
@@ -1293,7 +1412,7 @@ async def load_specific_filing(req: LoadFilingRequest):
 
 
 @app.get("/api/search")
-async def search_assets(q: str = "", limit: int = 12):
+def search_assets(q: str = "", limit: int = 12):
     """Search for companies by ticker or name.
 
     Checks Supabase company_directory first (instant, 8K+ companies),
@@ -1355,7 +1474,7 @@ async def search_assets(q: str = "", limit: int = 12):
 
 
 @app.get("/api/cache/stats")
-async def cache_stats():
+def cache_stats():
     """Return cache statistics (memory + disk + Supabase)."""
     mem_entries = len(_result_cache)
     sb_count = 0
@@ -1375,7 +1494,7 @@ async def cache_stats():
 
 
 @app.post("/api/cache/batch")
-async def trigger_batch_cache(bg: BackgroundTasks):
+def trigger_batch_cache(bg: BackgroundTasks):
     """Trigger background batch caching of all SECTOR_UNIVERSE tickers."""
     import threading
 
@@ -1393,7 +1512,7 @@ async def trigger_batch_cache(bg: BackgroundTasks):
 
 
 @app.get("/api/peers/{ticker}")
-async def get_peers(ticker: str):
+def get_peers(ticker: str):
     """Return suggested peer companies using rules-based sector + size matching.
 
     Rules:
@@ -1419,7 +1538,7 @@ async def get_peers(ticker: str):
 
 
 @app.get("/embed/youtube/{video_id}")
-async def youtube_embed_shim(video_id: str, autoplay: int = 0, rel: int = 0):
+def youtube_embed_shim(video_id: str, autoplay: int = 0, rel: int = 0):
     """HTTPS shim page wrapping a YouTube embed.
 
     The Fineas iOS app runs from capacitor://localhost — WKWebView sends no
@@ -1466,7 +1585,7 @@ def _seg_cache_fresh(cached: dict | None, *, dimensional_needs_axis: bool) -> bo
 
 
 @app.get("/api/geo-revenue/{ticker}")
-async def get_geo_revenue(ticker: str, period: str = "annual"):
+def get_geo_revenue(ticker: str, period: str = "annual"):
     """Geographic revenue breakdown — SEC XBRL first (truth), filing text second, FMP fallback.
 
     Priority:
@@ -1575,7 +1694,7 @@ async def get_geo_revenue(ticker: str, period: str = "annual"):
 
 
 @app.get("/api/segments/{ticker}")
-async def get_segments(ticker: str, period: str = "annual"):
+def get_segments(ticker: str, period: str = "annual"):
     """Revenue segments — SEC XBRL first (truth), filing text second, FMP fallback."""
     tk = ticker.upper()
 
@@ -1660,7 +1779,7 @@ async def get_segments(ticker: str, period: str = "annual"):
 
 
 @app.get("/api/financials-history/{ticker}")
-async def get_financials_history(ticker: str, bg: BackgroundTasks,
+def get_financials_history(ticker: str, bg: BackgroundTasks,
                                   period: str = "annual",
                                   date_from: str = "", date_to: str = "",
                                   limit: int = 10):
@@ -1728,7 +1847,7 @@ async def get_financials_history(ticker: str, bg: BackgroundTasks,
 
 
 @app.post("/api/comps")
-async def get_comps(req: CompsRequest):
+def get_comps(req: CompsRequest):
     """Fetch financial data for multiple tickers for side-by-side comparison."""
     tickers = [t.strip().upper() for t in req.tickers if t.strip()][:8]
     if not tickers:
@@ -1750,7 +1869,7 @@ class SnapshotRequest(BaseModel):
 
 
 @app.post("/api/comps/snapshot")
-async def save_comps_snapshot(req: SnapshotRequest):
+def save_comps_snapshot(req: SnapshotRequest):
     """Save a comparison snapshot to Supabase for quick recall."""
     tickers = [t.strip().upper() for t in req.tickers if t.strip()]
     if not tickers:
@@ -1797,7 +1916,7 @@ async def save_comps_snapshot(req: SnapshotRequest):
 
 
 @app.delete("/api/cache/clear")
-async def cache_clear(ticker: str | None = None):
+def cache_clear(ticker: str | None = None):
     """Clear disk cache. Optional ticker query param to clear just one company."""
     count = disk_cache.clear(ticker)
     # Also clear memory cache entries for this ticker
@@ -2004,7 +2123,7 @@ def _assemble_chatbot_prompt(req: ChatbotRequest) -> tuple[str, list, list, bool
     return system, messages, citations, has_data
 
 @app.post("/api/chatbot")
-async def chatbot_qa(req: ChatbotRequest) -> dict:
+def chatbot_qa(req: ChatbotRequest) -> dict:
     """Right-panel chatbot — answers questions using on-screen data as context.
 
     Accepts the currently loaded financial data so it doesn't need to re-fetch.
@@ -2041,7 +2160,7 @@ async def chatbot_qa(req: ChatbotRequest) -> dict:
 
 
 @app.post("/api/chatbot-stream")
-async def chatbot_stream(req: ChatbotRequest):
+def chatbot_stream(req: ChatbotRequest):
     """Streaming twin of /api/chatbot — SSE token stream from Claude.
 
     Same prompt assembly (shared helper), same grounding; tokens render as
@@ -2099,7 +2218,7 @@ class ExecSummaryRequest(BaseModel):
 
 
 @app.post("/api/exec-summaries")
-async def exec_summaries(req: ExecSummaryRequest) -> dict:
+def exec_summaries(req: ExecSummaryRequest) -> dict:
     """Generate executive summaries via Claude — single call for speed.
 
     Instead of 4 sequential API calls (~20-30s), uses ONE call that generates
@@ -2224,7 +2343,7 @@ def _parse_exec_sections(text: str) -> dict:
 
 
 @app.get("/api/section/{ticker}/{section}")
-async def get_section(ticker: str, section: str) -> dict:
+def get_section(ticker: str, section: str) -> dict:
     """Fetch a specific filing text section for background loading."""
     try:
         # Try US and FPI form types for section extraction
@@ -2253,7 +2372,7 @@ async def get_section(ticker: str, section: str) -> dict:
 
 
 @app.get("/api/entity/{ticker}")
-async def get_entity(ticker: str) -> dict:
+def get_entity(ticker: str) -> dict:
     """Direct entity profile endpoint — no chat routing needed."""
     try:
         result = _handle_entity(ticker)
@@ -2268,7 +2387,7 @@ async def get_entity(ticker: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/etf/{ticker}")
-async def get_etf(ticker: str) -> dict:
+def get_etf(ticker: str) -> dict:
     """ETF detection + profile (AUM, expense ratio, issuer, peers).
 
     `isEtf: false` for operating companies — callers use this as their
@@ -2288,7 +2407,7 @@ class EtfCompsRequest(BaseModel):
 
 
 @app.post("/api/etf/comps")
-async def etf_comps(req: EtfCompsRequest) -> dict:
+def etf_comps(req: EtfCompsRequest) -> dict:
     """Profiles for a target ETF + its peers in one call."""
     from sec_mcp.core import etf
 
@@ -2312,7 +2431,7 @@ def _json_safe(payload: dict) -> dict:
 
 
 @app.get("/api/index/{symbol}")
-async def get_index_route(symbol: str, history: bool = True, window: str = "1M") -> dict:
+def get_index_route(symbol: str, history: bool = True, window: str = "1M") -> dict:
     """Real index level + history: I:SPX / SPX / ^GSPC, I:NDX, I:DJI, I:RUT, I:VIX."""
     try:
         from sec_mcp.surface.indices import get_index_impl
@@ -2323,7 +2442,7 @@ async def get_index_route(symbol: str, history: bool = True, window: str = "1M")
 
 
 @app.get("/api/market/overview")
-async def get_market_overview_route() -> dict:
+def get_market_overview_route() -> dict:
     """One-call market dashboard: index tape + breadth + cap-weighted sectors."""
     try:
         from sec_mcp.surface.indices import get_market_overview_impl
@@ -2334,7 +2453,7 @@ async def get_market_overview_route() -> dict:
 
 
 @app.post("/api/ingest/indices")
-async def ingest_indices_route(request: Request) -> dict:
+def ingest_indices_route(request: Request) -> dict:
     """Trigger the breadth + constituent recompute (cron-invoked, secret-gated).
 
     Set INGEST_SECRET to require an `x-ingest-secret` header; unset = open
@@ -2369,6 +2488,37 @@ def _normalize_period(period: str | None) -> str | None:
             "quarterly": "quarterly", "ttm": "ttm"}.get(p)
 
 
+def _spawn_ttm_refresh(tk: str) -> None:
+    """Rebuild + re-cache the TTM block off the request path (single-flighted)."""
+    from sec_mcp import supabase_cache
+    from sec_mcp.core import refresh
+    from sec_mcp.core.cache_keys import TTM_DATA_TYPE, TTM_PERIOD
+
+    def _rebuild() -> None:
+        from sec_mcp.core.ttm import build_ttm_metrics
+        block = build_ttm_metrics(tk)
+        supabase_cache.set_cached(tk, TTM_DATA_TYPE, block, TTM_PERIOD,
+                                  ttl=259200 if block.get("error") else None)
+
+    refresh.spawn(f"ttm|{tk}", _rebuild)
+
+
+def _spawn_quarter_refresh(tk: str) -> None:
+    """Rebuild + re-cache the standalone-quarter block off the request path."""
+    from sec_mcp import supabase_cache
+    from sec_mcp.core import refresh
+    from sec_mcp.core.cache_keys import QUARTER_METRICS_DATA_TYPE, QUARTER_METRICS_PERIOD
+
+    def _rebuild() -> None:
+        from sec_mcp.core.ttm import build_latest_quarter_metrics
+        block = build_latest_quarter_metrics(tk)
+        supabase_cache.set_cached(
+            tk, QUARTER_METRICS_DATA_TYPE, block, QUARTER_METRICS_PERIOD,
+            ttl=259200 if block.get("error") else None)
+
+    refresh.spawn(f"quarter|{tk}", _rebuild)
+
+
 def _get_or_build_ttm(tk: str, build: bool = True) -> dict | None:
     """Cached TTM metrics block; optionally build + cache on miss.
 
@@ -2378,8 +2528,13 @@ def _get_or_build_ttm(tk: str, build: bool = True) -> dict | None:
     """
     from sec_mcp import supabase_cache
     from sec_mcp.core.cache_keys import TTM_DATA_TYPE, TTM_PERIOD
-    cached = supabase_cache.get_cached(tk, TTM_DATA_TYPE, TTM_PERIOD)
+    entry = supabase_cache.get_entry(tk, TTM_DATA_TYPE, TTM_PERIOD)
+    cached = entry["data"] if entry else None
     if cached and isinstance(cached, dict) and (cached.get("metrics") or cached.get("error")):
+        # Stale TTM still serves: it is four filed quarters, not a live quote.
+        # The 45s rebuild happens behind the response. See core/refresh.py.
+        if entry["stale"]:
+            _spawn_ttm_refresh(tk)
         return cached
     if not build:
         return None
@@ -2401,9 +2556,12 @@ def _get_or_build_quarter(tk: str) -> dict | None:
     """
     from sec_mcp import supabase_cache
     from sec_mcp.core.cache_keys import QUARTER_METRICS_DATA_TYPE, QUARTER_METRICS_PERIOD
-    cached = supabase_cache.get_cached(
+    entry = supabase_cache.get_entry(
         tk, QUARTER_METRICS_DATA_TYPE, QUARTER_METRICS_PERIOD)
+    cached = entry["data"] if entry else None
     if cached and isinstance(cached, dict) and (cached.get("metrics") or cached.get("error")):
+        if entry["stale"]:
+            _spawn_quarter_refresh(tk)
         return cached
     from sec_mcp.core.ttm import build_latest_quarter_metrics
     block = build_latest_quarter_metrics(tk)
@@ -2440,7 +2598,7 @@ def _bank_metrics_block(drivers: dict, metrics: dict, prior: dict | None) -> dic
 
 
 @app.get("/api/metrics/{ticker}")
-async def get_ticker_metrics(ticker: str, period: str = "annual") -> dict:
+def get_ticker_metrics(ticker: str, period: str = "annual") -> dict:
     """Valuation block (P/E, P/S, EV/EBITDA, margins, ROE/ROA/ROIC …).
 
     Reuses the same cached SEC extraction as /api/comps, adds a live price
@@ -2693,7 +2851,7 @@ _BULK_HIGHLIGHTS: dict = _load_bulk_data("highlights.json")
 
 
 @app.get("/api/tickers/bulk")
-async def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
+def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
     """Paginated dump of the full SEC-registered ticker universe.
 
     Source: SEC company_tickers_exchange.json (~10k active filers). Sector is
@@ -2767,7 +2925,7 @@ async def tickers_bulk(page: int = 1, page_size: int = 1000) -> dict:
 
 
 @app.get("/api/filing-text/{ticker}/{section}")
-async def get_filing_text(
+def get_filing_text(
     ticker: str,
     section: str,
     accession: str | None = None,
@@ -2851,7 +3009,7 @@ class SearchRequest(BaseModel):
 
 
 @app.post("/api/search-realtime")
-async def search_realtime(req: SearchRequest):
+def search_realtime(req: SearchRequest):
     """Real-time web search via Perplexity for financial data validation."""
     try:
         from sec_mcp.perplexity_client import is_available, search
@@ -2874,7 +3032,7 @@ async def search_realtime(req: SearchRequest):
 
 
 @app.get("/api/news/{ticker}")
-async def get_news(ticker: str):
+def get_news(ticker: str):
     """Latest per-ticker news. Polygon Ticker News is the reliable primary source
     (structured, no Perplexity); a Perplexity narrative is added only when its key
     is available and not quota-exhausted."""
@@ -2933,11 +3091,17 @@ async def validate_metric_endpoint(request: Request):
         metric = body.get("metric", "")
         value = body.get("value", 0)
 
+        from starlette.concurrency import run_in_threadpool
+
         from sec_mcp.perplexity_client import is_available, validate_metric
         if not is_available():
             return {"error": "Perplexity API not configured"}
 
-        result = validate_metric(ticker.upper(), metric, float(value))
+        # validate_metric does a blocking Perplexity HTTP call — this route has
+        # to stay `async` for `await request.json()`, so the blocking half goes
+        # to the threadpool explicitly. See the module docstring on concurrency.
+        result = await run_in_threadpool(
+            validate_metric, ticker.upper(), metric, float(value))
         return result or {"error": "Validation failed"}
     except Exception as e:
         log.exception("Metric validation failed")
@@ -2949,7 +3113,7 @@ async def validate_metric_endpoint(request: Request):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/cross-check/{ticker}")
-async def cross_check_ticker(ticker: str):
+def cross_check_ticker(ticker: str):
     """Cross-check SEC XBRL data against Polygon.io standardized financials.
 
     The comparison is period-ALIGNED: our SEC annual metrics are compared
@@ -2998,7 +3162,7 @@ async def cross_check_ticker(ticker: str):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/export/{ticker}/csv")
-async def export_csv(ticker: str, year: int | None = None, form_type: str = "10-K"):
+def export_csv(ticker: str, year: int | None = None, form_type: str = "10-K"):
     """Export financial data as CSV download."""
     import csv
     import io
@@ -3068,7 +3232,7 @@ async def export_csv(ticker: str, year: int | None = None, form_type: str = "10-
 
 
 @app.get("/api/export/{ticker}/json")
-async def export_json(ticker: str, year: int | None = None, form_type: str = "10-K"):
+def export_json(ticker: str, year: int | None = None, form_type: str = "10-K"):
     """Export full financial data as downloadable JSON."""
     import io
     import json as json_mod
@@ -3110,7 +3274,7 @@ async def export_json(ticker: str, year: int | None = None, form_type: str = "10
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/enrich/{ticker}")
-async def enrich_ticker(ticker: str, year: int | None = None, form_type: str = "10-K"):
+def enrich_ticker(ticker: str, year: int | None = None, form_type: str = "10-K"):
     """Lazy enrichment: Polygon cross-check + Perplexity news.
 
     Called AFTER the dashboard renders with SEC data. This removes 5-30s
@@ -3181,13 +3345,17 @@ async def enrich_ticker(ticker: str, year: int | None = None, form_type: str = "
 @app.post("/api/screener")
 async def run_screener(request: Request):
     """Screen companies from SECTOR_UNIVERSE by financial metrics."""
+    from starlette.concurrency import run_in_threadpool
+
     from sec_mcp.screener import get_available_sectors, get_cached_ticker_count, screen
 
     body = await request.json()
     filters = body.get("filters", {})
     limit = body.get("limit", 50)
 
-    results = screen(filters, limit=limit)
+    # screen() walks the cached universe synchronously — threadpool it so a slow
+    # screen can't stall the event loop. See the module docstring on concurrency.
+    results = await run_in_threadpool(screen, filters, limit=limit)
     return {
         "matches": results,
         "count": len(results),
@@ -3197,7 +3365,7 @@ async def run_screener(request: Request):
 
 
 @app.get("/api/insider/{ticker}")
-async def get_insider_data(ticker: str):
+def get_insider_data(ticker: str):
     """Get insider trading data from SEC Form 4 filings."""
     try:
         from sec_mcp.insider_tracker import get_insider_summary, get_insider_transactions
@@ -3210,7 +3378,7 @@ async def get_insider_data(ticker: str):
 
 
 @app.get("/api/screener/sectors")
-async def screener_sectors():
+def screener_sectors():
     """Return available sectors for the screener."""
     from sec_mcp.screener import get_available_sectors, get_cached_ticker_count
     return {
@@ -3223,82 +3391,23 @@ async def screener_sectors():
 #  Public API (v1) — rate-limited, key-authenticated
 # ═══════════════════════════════════════════════════════════════════════════
 
-# Simple in-memory API key store (replace with DB lookup for production)
-_API_KEYS: dict[str, dict] = {}  # key -> {tier: "free"|"pro"|"lifetime", calls: int, limit: int}
-
-
-def _check_api_key(request) -> dict | None:
-    """Validate API key from X-API-Key header. Returns key info or None."""
-    key = request.headers.get("x-api-key", "")
-    if not key:
-        return None
-    return _API_KEYS.get(key)
-
-
-@app.get("/v1/financials/{ticker}")
-async def api_v1_financials(request: Request, ticker: str, year: int | None = None, form_type: str = "10-K"):
-    """Public API: Get financial data for a ticker.
-
-    Requires X-API-Key header. Returns JSON with metrics, statements, segments.
-    """
-    # For now, allow unauthenticated access (paywall will be added via Stripe)
-    # key_info = _check_api_key(request)
-    # if not key_info:
-    #     return JSONResponse({"error": "API key required. Get one at /docs"}, status_code=401)
-
-    result = _handle_financials(ticker.upper(), year, form_type)
-    data = result.get("data") or {}
-    return {
-        "ticker": ticker.upper(),
-        "company": data.get("company_name"),
-        "period": data.get("fiscal_period"),
-        "year": data.get("fiscal_year"),
-        "industry_class": data.get("industry_class"),
-        "metrics": data.get("metrics", {}),
-        "ratios": data.get("ratios", {}),
-        "filing": data.get("filing_info"),
-        "summary": result.get("summary"),
-    }
-
-
-@app.get("/v1/compare")
-async def api_v1_compare(request: Request, tickers: str, year: int | None = None, form_type: str = "10-K"):
-    """Public API: Compare multiple tickers. Pass comma-separated tickers."""
-    ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
-    if not ticker_list or len(ticker_list) > 10:
-        return {"error": "Provide 1-10 comma-separated tickers"}
-
-    result = _handle_compare(ticker_list, year, form_type)
-    return {
-        "tickers": ticker_list,
-        "results": [
-            {
-                "ticker": (r["data"] or {}).get("ticker_or_cik"),
-                "company": (r["data"] or {}).get("company_name"),
-                "metrics": (r["data"] or {}).get("metrics", {}),
-                "summary": r.get("summary"),
-            }
-            for r in result.get("results", [])
-        ],
-        "narrative": result.get("comparison_narrative"),
-    }
-
-
-@app.get("/v1/search")
-async def api_v1_search(request: Request, q: str):
-    """Public API: Search companies by name or ticker."""
-    results = search_companies(q, limit=10)
-    return {"query": q, "results": results}
+# The old /v1/financials, /v1/compare and /v1/search stubs lived here. They were
+# unauthenticated, unmetered, and duplicated the engine with a thinner payload.
+# The real, metered surface is in api_v1.py:
+#     /v1/financials → /v1/fundamentals/{ticker}
+#     /v1/compare    → /v1/compare        (same path, now metered + validated)
+#     /v1/search     → /v1/companies/search
+# /v1/cross-check and /v1/price stay below — they have no api_v1 equivalent yet.
 
 
 @app.get("/v1/cross-check/{ticker}")
-async def api_v1_cross_check(request: Request, ticker: str):
+def api_v1_cross_check(request: Request, ticker: str):
     """Public API: Cross-check SEC data against Polygon.io."""
-    return await cross_check_ticker(ticker)
+    return cross_check_ticker(ticker)
 
 
 @app.get("/v1/price/{ticker}")
-async def api_v1_price(ticker: str):
+def api_v1_price(ticker: str):
     """Real-time price with multi-provider fallback (Polygon → yfinance → FMP).
 
     30-second cache shared across providers. Response includes `source`,
@@ -3313,14 +3422,14 @@ async def api_v1_price(ticker: str):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @app.get("/docs")
-async def api_docs():
+def api_docs():
     """Interactive API documentation page — served from static file."""
     docs_path = Path(__file__).parent / "static" / "docs.html"
     return HTMLResponse(docs_path.read_text())
 
 
 @app.get("/docs-legacy")
-async def _api_docs_legacy():
+def _api_docs_legacy():
     """Legacy inline docs — kept for reference."""
     html = """<!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -3628,7 +3737,7 @@ async def _api_docs_legacy():
 
 
 @app.get("/")
-async def index():
+def index():
     """Serve the main dashboard HTML."""
     html_path = Path(__file__).parent / "static" / "index.html"
     return HTMLResponse(html_path.read_text())

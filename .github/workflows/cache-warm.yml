@@ -1,0 +1,94 @@
+name: Warm data cache
+
+# Why this exists
+# ---------------
+# The cache decayed to 42 live rows out of 9,663 because the batch sweep was a
+# manual, local-only job that last ran in July. Every expired row turned a 0.4s
+# response into a 20-45s one. Stale-while-revalidate now stops expiry from
+# hurting reads, but something still has to (a) pull in tickers we have never
+# seen and (b) refresh rows nobody happens to request.
+#
+# A full top-1000 sweep is 8-14h, longer than any runner allows, so this takes a
+# fixed nightly bite with --max-minutes and resumes next run: --refresh-older-than
+# makes already-fresh tickers skip for free, so each run starts where the last
+# one stopped without any cursor to track.
+#
+# Runs here rather than on Railway because Railway's disk is ephemeral (the disk
+# cache would be thrown away every deploy) and a long sweep inside the web
+# process would compete with serving traffic for the same threadpool.
+
+on:
+  schedule:
+    # 07:00 UTC daily — after the US close and after EDGAR's overnight window,
+    # before European market hours.
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      universe:
+        description: "sectors (curated) or top1000"
+        required: false
+        default: "top1000"
+        type: choice
+        options: [sectors, top1000]
+      max_minutes:
+        description: "Wall-clock budget in minutes"
+        required: false
+        default: "300"
+      refresh_older_than:
+        description: "Re-extract entries older than N days"
+        required: false
+        default: "6"
+
+concurrency:
+  # Two concurrent sweeps would double the SEC EDGAR request rate and race on
+  # the same cache rows.
+  group: cache-warm
+  cancel-in-progress: false
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    # Runner ceiling is 6h; the job's own budget stops it before this bites.
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Warm cache
+        env:
+          EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+          LOG_LEVEL: INFO
+        run: |
+          python -m sec_mcp.batch_cache \
+            --universe "${{ inputs.universe || 'top1000' }}" \
+            --refresh-older-than "${{ inputs.refresh_older_than || '6' }}" \
+            --max-minutes "${{ inputs.max_minutes || '300' }}" \
+            --delay 0.3
+
+      - name: Report coverage
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          python - <<'PY'
+          from sec_mcp.commerce.bulk import coverage_report
+          import json, os
+          rep = coverage_report()
+          print(json.dumps(rep, indent=2))
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary and rep.get("available"):
+              with open(summary, "a") as fh:
+                  fh.write("## Cache coverage\n\n| Artifact | Rows |\n|---|---|\n")
+                  for k, v in rep["coverage"].items():
+                      fh.write(f"| {k} | {v:,} |\n")
+          PY

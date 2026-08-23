@@ -230,8 +230,16 @@ def run(
     artifacts: tuple[str, ...] = ARTIFACTS,
     refresh_older_than: float | None = None,
     tickers_file: str | None = None,
+    max_minutes: float | None = None,
 ):
-    """Run the batch cache job."""
+    """Run the batch cache job.
+
+    `max_minutes` stops cleanly at a wall-clock budget instead of running to
+    completion. A full top-1000 sweep takes 8-14h, which does not fit any
+    scheduled CI runner, so the nightly job takes a fixed bite and the next run
+    picks up where this one stopped (`--refresh-older-than` makes the skip logic
+    resume automatically — already-fresh tickers are skipped for free).
+    """
     from sec_mcp import supabase_cache
 
     if not supabase_cache.is_available():
@@ -249,7 +257,15 @@ def run(
     failed: dict[str, int] = {a: 0 for a in artifacts}
     t0 = time.time()
 
+    budget_s = max_minutes * 60 if max_minutes else None
+    stopped_early = False
+
     for i, (tk, sect) in enumerate(pairs):
+        if budget_s and (time.time() - t0) > budget_s:
+            log.info("Time budget of %.0f min reached — stopping at %d/%d. "
+                     "The next run resumes from here.", max_minutes, i, total)
+            stopped_early = True
+            break
         prefix = f"[{i+1}/{total}]"
         todo = [a for a in ARTIFACTS if a in artifacts and not artifact_fresh(tk, a, max_age)]
         for a in artifacts:
@@ -289,7 +305,8 @@ def run(
     elapsed = time.time() - t0
     log.info("")
     log.info("=" * 60)
-    log.info("BATCH CACHE COMPLETE — %d tickers in %.1f min", total, elapsed / 60)
+    log.info("BATCH CACHE %s — %d tickers in %.1f min",
+             "STOPPED (budget)" if stopped_early else "COMPLETE", total, elapsed / 60)
     for a in artifacts:
         log.info("  %-9s done=%d skipped=%d failed=%d", a, done[a], skipped[a], failed[a])
     log.info("=" * 60)
@@ -306,6 +323,9 @@ if __name__ == "__main__":
                         help="Re-extract artifacts older than DAYS (default: skip any live entry)")
     parser.add_argument("--tickers-file", help="File with one ticker per line (overrides universe)")
     parser.add_argument("--force", action="store_true", help="Re-cache even if already cached")
+    parser.add_argument("--max-minutes", type=float, default=None, metavar="MIN",
+                        help="Stop cleanly after MIN minutes (for scheduled runs); "
+                             "the next run resumes where this one stopped")
     parser.add_argument("--delay", type=float, default=0.5, help="Delay between tickers (seconds)")
     args = parser.parse_args()
 
@@ -316,4 +336,5 @@ if __name__ == "__main__":
 
     run(sector=args.sector, force=args.force, delay=args.delay,
         universe=args.universe, artifacts=arts,
-        refresh_older_than=args.refresh_older_than, tickers_file=args.tickers_file)
+        refresh_older_than=args.refresh_older_than, tickers_file=args.tickers_file,
+        max_minutes=args.max_minutes)
