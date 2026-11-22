@@ -104,6 +104,7 @@ def phase1_download_tickers():
             log.info("  Upserted %d-%d / %d", i + 1, min(i + chunk_size, len(companies)), len(companies))
         except Exception as exc:
             log.error("  Upsert failed at %d: %s", i, exc)
+            raise
 
     log.info("Phase 1 complete: %d companies saved to company_directory", len(companies))
     return len(companies)
@@ -216,6 +217,8 @@ def phase2_check_filings(limit: int = 0):
         # Rate limit
         time.sleep(0.15)
 
+    if companies and not checked:
+        raise RuntimeError("Could not verify filing flags for any company")
     log.info("Phase 2 complete: checked %d, %d have annual filings (10-K/20-F)", checked, has_filings)
 
 
@@ -283,7 +286,8 @@ def phase3_extract(top: int = 500):
         try:
             data = extract_financials(ticker, include_statements=True, include_segments=True)
             if data and data.get("metrics"):
-                supabase_cache.set_cached(ticker, "financials", data, financials_period_key())
+                if not supabase_cache.set_cached(ticker, "financials", data, financials_period_key()):
+                    raise RuntimeError("Failed to persist extracted financials")
                 # Transitional dual-write, matching batch_cache.cache_annual
                 supabase_cache.set_cached(ticker, "financials", data,
                                           legacy_financials_period_key())
@@ -309,6 +313,8 @@ def phase3_extract(top: int = 500):
 
         time.sleep(0.3)
 
+    if companies and failed == len(companies):
+        raise RuntimeError("Financial extraction failed for every company in the queue")
     log.info("Phase 3 complete: extracted %d, failed %d", extracted, failed)
 
 

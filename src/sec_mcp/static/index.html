@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
+  <link rel="stylesheet" href="/static/auth-gate.css?v=1">
+  <script src="/static/auth-gate.js?v=1"></script>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
   <title>Fineas.ai — SEC Financial Intelligence</title>
@@ -17,8 +19,11 @@
   <link rel="icon" type="image/png" href="/static/logo-32.png"/>
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png"/>
   <link rel="stylesheet" href="/static/app.css?v=60"/>
+  <link rel="stylesheet" href="/static/styles/tokens.css?v=20261011-tools3">
+  <link rel="stylesheet" href="/static/workspace.css?v=20261011-tools3">
 </head>
-<body>
+<body class="research-app">
+<div id="fineas-navigation"></div>
 <div class="app">
   <!-- LEFT SIDEBAR -->
   <aside class="sidebar" id="sidebar">
@@ -51,7 +56,7 @@
         <i data-lucide="filter"></i> Screener
       </a>
       <div class="section-title" style="padding:10px 12px 4px">PAGES</div>
-      <a href="/filings" class="nav-item">
+      <a href="/?view=filings" class="nav-item">
         <i data-lucide="file-text"></i> Filings Reader
       </a>
       <a href="/explorer" class="nav-item">
@@ -341,128 +346,33 @@
       </div>
 
       <!-- ═══ COMPS VIEW ═══ -->
-      <div class="view-panel" id="panel-comps" style="display:none">
-        <div class="chart-card">
-          <div class="card-header">
-            <div>
-              <h3>Comparable Companies</h3>
-              <p class="card-subtitle" id="comps-sub">Side-by-side financial comparison</p>
-            </div>
-            <div style="display:flex;gap:8px;align-items:center">
-              <input id="comps-input" class="sel" style="width:200px" placeholder="Add ticker (e.g. MSFT)" onkeydown="if(event.key==='Enter'){addCompTicker()}"/>
-              <button class="send-btn" style="padding:6px 12px;font-size:12px" onclick="addCompTicker()">Add</button>
-            </div>
-          </div>
-          <div id="comps-chips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
-          <div style="overflow-x:auto">
-          <table class="data-table" id="comps-table">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th class="right">Revenue</th>
-                <th class="right">Net Income</th>
-                <th class="right">EBITDA</th>
-                <th class="right">Gross Margin</th>
-                <th class="right">Op Margin</th>
-                <th class="right">Net Margin</th>
-                <th class="right">FCF</th>
-                <th class="right">EPS</th>
-                <th class="right">D/E</th>
-              </tr>
-            </thead>
-            <tbody id="comps-tbody">
-              <tr><td colspan="10" class="text-center text-muted">Add tickers above to compare</td></tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </div>
+<div class="view-panel tools-page" id="panel-comps" style="display:none">
+  <div class="tools-heading"><div><h1>Compare companies</h1><p>Put the same fiscal period side by side. Follow a company back to its numbers.</p></div><div class="tool-presets"><span>Start with a group</span><button data-peer-group="MSFT,GOOGL,META">Big tech</button><button data-peer-group="NVDA,AMD,INTC">Semiconductors</button><button data-peer-group="JPM,BAC,C">Banks</button><button id="compare-peers">Find peers</button></div></div>
+  <form id="compare-form" class="tool-controls">
+    <label class="wide">Companies<input id="compare-add" list="tool-companies" placeholder="Add a ticker, e.g. MSFT" autocomplete="off" maxlength="80"></label><button type="submit">Add company</button>
+    <label>Reporting period<select id="compare-mode"><option value="annual">Annual</option><option value="quarter">Quarterly</option></select></label>
+    <label>Fiscal year<select id="compare-year"><option value="">Latest available</option></select></label>
+    <label id="compare-quarter-label" hidden>Quarter<select id="compare-quarter"><option value="Q4">Q4</option><option value="Q3">Q3</option><option value="Q2">Q2</option><option value="Q1">Q1</option></select></label>
+  </form>
+
+  <div class="compare-selection"><div id="compare-chips" class="tool-chips" aria-label="Selected companies"></div>
+  <p id="compare-status" class="tool-status" role="status"></p></div>
+  <div id="compare-summary" class="tool-summary" hidden></div>
+  <div class="tools-table-wrap"><table id="compare-table" class="tools-table"><caption>Amounts in each company’s reported currency. Missing figures stay blank.</caption><thead><tr><th scope="col">Company</th><th scope="col">Fiscal period</th><th scope="col" data-sort="revenue"><button>Revenue</button></th><th scope="col" data-sort="grossMargin"><button>Gross margin</button></th><th scope="col" data-sort="netMargin"><button>Net margin</button></th><th scope="col" data-sort="freeCashFlow"><button>Free cash flow</button></th><th scope="col" data-sort="eps"><button>Diluted EPS</button></th></tr></thead><tbody id="compare-rows"></tbody></table></div>
+  <p class="tool-footnote">Fiscal calendars differ between companies; each row shows its period end. Q4* is derived from the full year less Q1–Q3. Ratios are calculated only when the underlying figures are available.</p>
+</div>
 
       <!-- ═══ 10-K EXPLORER VIEW ═══ -->
-      <div class="view-panel" id="panel-filings" style="display:none">
-        <!-- Section navigation tabs -->
-        <div class="explorer-tabs" id="explorer-tabs">
-          <button class="explorer-tab active" data-section="overview" onclick="loadExplorerSection('overview')">
-            <i data-lucide="list"></i> All Filings
-          </button>
-          <button class="explorer-tab" data-section="business" onclick="loadExplorerSection('business')">
-            <i data-lucide="building-2"></i> Business
-          </button>
-          <button class="explorer-tab" data-section="risk_factors" onclick="loadExplorerSection('risk_factors')">
-            <i data-lucide="alert-triangle"></i> Risk Factors
-          </button>
-          <button class="explorer-tab" data-section="mda" onclick="loadExplorerSection('mda')">
-            <i data-lucide="bar-chart-3"></i> MD&A
-          </button>
-          <button class="explorer-tab" data-section="financial_statements" onclick="loadExplorerSection('financial_statements')">
-            <i data-lucide="calculator"></i> Financials
-          </button>
-          <button class="explorer-tab" data-section="executive_compensation" onclick="loadExplorerSection('executive_compensation')">
-            <i data-lucide="users"></i> Exec Comp
-          </button>
-          <button class="explorer-tab" data-section="controls" onclick="loadExplorerSection('controls')">
-            <i data-lucide="shield-check"></i> Controls
-          </button>
-        </div>
-
-        <!-- Explorer content area -->
-        <div id="explorer-content">
-          <!-- All Filings table (default) -->
-          <div class="chart-card" id="explorer-overview">
-            <div class="card-header">
-              <div>
-                <h3>SEC Filings</h3>
-                <p class="card-subtitle" id="filings-sub">Recent filings from SEC EDGAR</p>
-              </div>
-            </div>
-            <table class="data-table" id="filings-table">
-              <thead>
-                <tr>
-                  <th>Form</th>
-                  <th>Filing Date</th>
-                  <th>Description</th>
-                  <th class="right">Action</th>
-                </tr>
-              </thead>
-              <tbody id="filings-tbody">
-                <tr><td colspan="4" class="text-center text-muted">Search a company to see filings</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Section content (shown when a section tab is clicked) -->
-          <div class="chart-card" id="explorer-section" style="display:none">
-            <div class="card-header">
-              <div>
-                <h3 id="explorer-section-title">Section</h3>
-                <p class="card-subtitle" id="explorer-section-sub"></p>
-              </div>
-              <div style="display:flex;gap:8px;align-items:center">
-                <button class="text-btn" id="explorer-summarize-btn" onclick="summarizeSection()" style="display:none"><i data-lucide="sparkles"></i> Summarize</button>
-                <button class="text-btn" id="explorer-full-btn" onclick="showFullSection()" style="display:none"><i data-lucide="file-text"></i> Full Text</button>
-                <button class="text-btn" onclick="copyExplorerText()"><i data-lucide="copy"></i> Copy</button>
-              </div>
-            </div>
-            <!-- Section TOC + Body side by side -->
-            <div class="explorer-layout">
-              <nav class="explorer-toc" id="explorer-toc"></nav>
-              <div id="explorer-section-body" class="explorer-body"></div>
-            </div>
-            <!-- Inline AI Q&A for the section -->
-            <div class="explorer-qa">
-              <div class="explorer-qa-header">
-                <i data-lucide="zap"></i>
-                <span>Ask AI about this section</span>
-              </div>
-              <div id="explorer-qa-messages" class="explorer-qa-messages"></div>
-              <form class="explorer-qa-input" onsubmit="askExplorerAI(); return false;">
-                <input id="explorer-qa-inp" placeholder="Ask a question about this section..." autocomplete="off"/>
-                <button type="submit" class="send-btn" style="padding:8px 14px;font-size:12px">Ask</button>
-              </form>
-            </div>
-          </div>
-        </div>
-      </div>
+<div class="view-panel tools-page" id="panel-filings" style="display:none">
+  <div class="tools-heading"><div><h1>Read the original filing</h1><p>Choose a report, jump to a section, and search the company’s own words.</p></div><a id="reader-explorer" href="/explorer">View company financials</a></div>
+  <form id="reader-form" class="tool-controls"><label class="wide">Company<input id="reader-company" list="tool-companies" placeholder="Company ticker, e.g. META" autocomplete="off" required></label><button class="primary" type="submit">Open filings</button><label>Report type<select id="reader-type"><option value="annual">Annual · 10-K / 20-F</option><option value="quarter">Quarterly · 10-Q / 6-K</option><option value="all">All reports</option></select></label><label>Filing year<select id="reader-year"><option value="">All years</option></select></label></form>
+  <p id="reader-status" class="tool-status" role="status"></p>
+  <div class="reader-layout"><aside id="reader-list" class="reader-list" aria-label="Available filings"></aside><section class="reader-pane" aria-label="Filing reader">
+    <div class="reader-toolbar"><div id="reader-tabs" class="reader-tabs" role="tablist" aria-label="Filing sections"><button role="tab" aria-selected="true" data-section="business">Business</button><button role="tab" aria-selected="false" data-section="risk_factors">Risk factors</button><button role="tab" aria-selected="false" data-section="mda">MD&amp;A</button><button role="tab" aria-selected="false" data-section="financial_statements">Financials</button><button role="tab" aria-selected="false" data-section="controls">Controls</button><button role="tab" aria-selected="false" data-section="executive_compensation">Compensation</button><button role="tab" aria-selected="false" data-section="full">Full text</button></div>
+    <div class="reader-search"><input id="reader-find" type="search" placeholder="Find a word or phrase in this section" aria-label="Find in filing"><span id="reader-matches" role="status"></span><button id="reader-prev" aria-label="Previous match">↑</button><button id="reader-next" aria-label="Next match">↓</button></div><p id="reader-meta" class="reader-meta"></p></div>
+    <article id="reader-doc" class="reader-document" role="tabpanel" aria-label="Selected filing section"><p class="reader-status">Choose a filing to start reading.</p></article>
+  </section></div>
+</div>
 
       <!-- ═══ INSIGHTS VIEW ═══ -->
       <div class="view-panel" id="panel-insights" style="display:none">
@@ -495,83 +405,23 @@
       </div>
 
       <!-- ═══ SCREENER VIEW ═══ -->
-      <div class="view-panel" id="panel-screener" style="display:none">
-        <div class="chart-card">
-          <div class="card-header">
-            <div>
-              <h3>Stock Screener</h3>
-              <p class="card-subtitle" id="screener-sub">Filter by financial metrics</p>
-            </div>
-            <button class="send-btn" style="padding:6px 12px;font-size:12px" onclick="runScreener()">Screen</button>
-          </div>
-          <div class="screener-filters" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px;margin-bottom:16px">
-            <div>
-              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Min Revenue</label>
-              <select id="scr-rev-min" class="sel" style="width:100%">
-                <option value="">Any</option>
-                <option value="1000000000">$1B+</option>
-                <option value="10000000000">$10B+</option>
-                <option value="50000000000">$50B+</option>
-                <option value="100000000000">$100B+</option>
-              </select>
-            </div>
-            <div>
-              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Min Gross Margin</label>
-              <select id="scr-gm-min" class="sel" style="width:100%">
-                <option value="">Any</option>
-                <option value="0.2">20%+</option>
-                <option value="0.3">30%+</option>
-                <option value="0.5">50%+</option>
-                <option value="0.7">70%+</option>
-              </select>
-            </div>
-            <div>
-              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Min Net Margin</label>
-              <select id="scr-nm-min" class="sel" style="width:100%">
-                <option value="">Any</option>
-                <option value="0.05">5%+</option>
-                <option value="0.1">10%+</option>
-                <option value="0.2">20%+</option>
-                <option value="0.3">30%+</option>
-              </select>
-            </div>
-            <div>
-              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Max D/E Ratio</label>
-              <select id="scr-de-max" class="sel" style="width:100%">
-                <option value="">Any</option>
-                <option value="0.5">&lt; 0.5x</option>
-                <option value="1">&lt; 1x</option>
-                <option value="2">&lt; 2x</option>
-              </select>
-            </div>
-            <div>
-              <label style="font-size:11px;color:var(--text-tertiary);display:block;margin-bottom:4px">Sector</label>
-              <select id="scr-sector" class="sel" style="width:100%">
-                <option value="">All Sectors</option>
-              </select>
-            </div>
-          </div>
-          <div style="overflow-x:auto">
-          <table class="data-table" id="screener-table">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th class="right">Revenue</th>
-                <th class="right">Net Income</th>
-                <th class="right">Gross Margin</th>
-                <th class="right">Net Margin</th>
-                <th class="right">EPS</th>
-                <th class="right">D/E</th>
-                <th>Sector</th>
-              </tr>
-            </thead>
-            <tbody id="screener-tbody">
-              <tr><td colspan="8" class="text-center text-muted">Set filters and click Screen</td></tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </div>
+<div class="view-panel tools-page" id="panel-screener" style="display:none">
+  <div class="tools-heading"><div><h1>Find companies worth a closer look</h1><p>Filter the covered companies by reported fundamentals, then compare your shortlist.</p></div></div>
+  <div class="tool-presets"><span>Start with a screen</span><button data-screen-preset="tech">Big tech</button><button data-screen-preset="chips">Semiconductors</button><button data-screen-preset="margin">Profitable large companies</button></div>
+  <form id="screen-form" class="tool-controls" style="margin-top:16px">
+    <label class="wide">Sector<select id="screen-sector"><option value="">All covered sectors</option></select></label>
+    <label>Revenue, minimum<select id="screen-revenue"><option value="">Any</option><option value="1000000000">1 billion</option><option value="10000000000">10 billion</option><option value="50000000000">50 billion</option><option value="100000000000">100 billion</option></select></label>
+    <label>Gross margin<select id="screen-gross"><option value="">Any</option><option value="0.2">20% or more</option><option value="0.5">50% or more</option><option value="0.7">70% or more</option></select></label>
+    <label>Net margin<select id="screen-margin"><option value="">Any</option><option value="0.05">5% or more</option><option value="0.1">10% or more</option><option value="0.2">20% or more</option><option value="0.3">30% or more</option></select></label>
+    <label>Debt / equity<select id="screen-debt"><option value="">Any</option><option value="0.5">0.5× or less</option><option value="1">1× or less</option><option value="2">2× or less</option></select></label>
+    <button type="submit" class="primary" id="screen-run">Run screen</button><button type="button" id="screen-reset">Reset</button><button type="button" id="screen-stop" hidden>Stop</button>
+  </form>
+  <p id="screen-status" class="tool-status" role="status">Choose a preset or set your filters, then run the screen.</p>
+  <div class="tool-section-head"><h2 id="screen-result-title">Results</h2><div class="tools-actions"><label class="muted" for="screen-sort">Sort by</label><select id="screen-sort"><option value="revenue">Revenue</option><option value="net_margin">Net margin</option><option value="gross_margin">Gross margin</option><option value="de_ratio">Debt / equity</option><option value="ticker">Ticker</option></select><button id="screen-compare" disabled>Compare selected (0)</button></div></div>
+  <div class="tools-table-wrap"><table class="tools-table" id="screen-table"><thead><tr><th scope="col">Company</th><th scope="col">Sector</th><th scope="col">Revenue</th><th scope="col">Net income</th><th scope="col">Gross margin</th><th scope="col">Net margin</th><th scope="col">Debt / equity</th></tr></thead><tbody id="screen-rows"><tr><td colspan="7" class="tools-empty"><strong>Build your shortlist</strong>Choose a screen above. Select up to eight results to compare.</td></tr></tbody></table></div>
+  <p class="tool-footnote">Screens use cached annual filings from the covered universe, not every listed company. Currency and filing dates are not supplied by this screening feed; monetary amounts are shown as reported. Open a company to verify its period and currency.</p>
+</div>
+
     </div>
   </main>
 
@@ -676,6 +526,8 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=60"></script>
+<script src="/static/workspace-shell.js?v=20261011-tools3"></script>
+<script src="/static/app.js?v=20261011-tools3"></script>
+<script src="/static/research-tools.js?v=20261011-tools3"></script>
 </body>
 </html>

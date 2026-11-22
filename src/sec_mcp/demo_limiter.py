@@ -87,7 +87,8 @@ def install_demo_limiter(app) -> None:
     @app.middleware("http")
     async def demo_limiter(request: Request, call_next):
         if (
-            os.getenv("DEMO_LIMIT_OFF") == "1"
+            os.getenv("FINEAS_ACCOUNT_GATE", "").strip() == "1"
+            or os.getenv("DEMO_LIMIT_OFF") == "1"
             or request.method == "OPTIONS"
             or not request.url.path.startswith(_LIMITED_PREFIXES)
             or not _is_demo_request(request)

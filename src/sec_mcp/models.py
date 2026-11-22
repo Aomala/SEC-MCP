@@ -17,6 +17,7 @@ class CompanyInfo(BaseModel):
     sic_code: str | None = None
     website: str | None = None
     exchange: str | None = None
+    fiscal_year_end: str | None = None
 
 
 class FilingMetadata(BaseModel):

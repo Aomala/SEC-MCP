@@ -1,0 +1,60 @@
+name: Monthly SEC EDGAR ingestion
+
+on:
+  schedule:
+    - cron: '17 5 1 * *'
+  workflow_dispatch:
+    inputs:
+      month:
+        description: Completed filing month (YYYY-MM), defaults to the previous month
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monthly-edgar
+  cancel-in-progress: false
+
+env:
+  EDGAR_IDENTITY: ${{ secrets.EDGAR_IDENTITY }}
+  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+  SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e . 'supabase>=2,<3'
+      - name: Index filings
+        env:
+          MONTH: ${{ inputs.month }}
+        run: |
+          : "${EDGAR_IDENTITY:?missing EDGAR_IDENTITY}" "${SUPABASE_URL:?missing SUPABASE_URL}" "${SUPABASE_KEY:?missing SUPABASE_KEY}"
+          if [[ -n "$MONTH" ]]; then
+            python -m sec_mcp.ingest_monthly --month "$MONTH"
+          else
+            python -m sec_mcp.ingest_monthly
+          fi
+      - name: Refresh the company directory and filing flags
+        run: |
+          python -m sec_mcp.ingest_all --phase 1
+          python -m sec_mcp.ingest_all --phase 2
+
+  financials:
+    needs: index
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e . 'supabase>=2,<3'
+      - run: python -m sec_mcp.ingest_all --phase 3

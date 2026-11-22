@@ -25,8 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev]"
-      - run: pytest tests/ -m "not integration and not slow" --tb=short -q
+      - run: pip install uv
+      - run: uv run --frozen --extra dev --extra mcp pytest tests/ -m "not integration and not slow" --tb=short -q
 
   integration:
     runs-on: ubuntu-latest
@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev]"
-      - run: pytest tests/ -m integration --tb=short -q
+      - run: pip install uv
+      - run: uv run --frozen --extra dev --extra mcp pytest tests/ -m integration --tb=short -q
     env:
       EDGAR_IDENTITY: "SEC-MCP CI ci@sec-mcp.dev"

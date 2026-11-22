@@ -32,7 +32,7 @@ Tool hierarchy
 
 from __future__ import annotations
 
-from fastmcp import FastMCP
+from sec_mcp.commerce.mcp import FineasFastMCP as FastMCP
 
 from sec_mcp.edgar_client import (
     search_companies,

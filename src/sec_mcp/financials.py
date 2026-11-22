@@ -40,7 +40,9 @@ import pandas as pd
 
 from sec_mcp import disk_cache
 from sec_mcp.config import get_config
+from sec_mcp.facts.interim import fiscal_quarter, has_release_format, release_quarters
 from sec_mcp.facts.periods import PeriodType, annotate_periods, dedupe_facts
+from sec_mcp.models import FilingMetadata
 from sec_mcp.sec_client import get_sec_client
 from sec_mcp.xbrl_mappings import (
     ABSTRACT_COLUMNS,
@@ -176,6 +178,7 @@ def _get_facts_for_filing(
             ticker_or_cik,
             form_type=form_type,
             accession=accession,
+            taxonomy="all" if form_type in ("6-K", "6-K/A") else "us-gaap",
         )
     except Exception as exc:
         log.warning("Failed to get XBRL facts for %s: %s", ticker_or_cik, exc)
@@ -2478,6 +2481,7 @@ def extract_financials(
     include_segments: bool = False,
     period_index: int = 0,
     standalone_quarter: bool = False,
+    filing: FilingMetadata | None = None,
 ) -> dict | None:
     """Extract standardized financials for one company.
 
@@ -2545,7 +2549,9 @@ def extract_financials(
     # ── Find the target filing ────────────────────────────────────────
     filing_meta = None
 
-    if accession:
+    if filing is not None:
+        filing_meta = filing.model_dump()
+    elif accession:
         # Specific filing requested — look up its metadata from submissions
         filing_meta = {
             "accession_number": accession,
@@ -2601,12 +2607,16 @@ def extract_financials(
         forms_to_try = [form_type]
         if form_type in ("10-K", "20-F"):
             forms_to_try.append("10-Q")  # fallback to quarterly if no annual
-        else:
-            forms_to_try.append("10-K")  # fallback to annual if no quarterly
+        elif form_type not in ("10-Q", "6-K", "6-K/A"):
+            forms_to_try.append("10-K")
         for ft in forms_to_try:
             filing_meta = _find_filing_accession(ticker_or_cik, form_type=ft, year=year)
             if filing_meta:
                 break
+
+    if not filing_meta and form_type in ("10-Q", "6-K", "6-K/A"):
+        result["error"] = "No quarterly filing available"
+        return result
 
     if filing_meta:
         result["filing_info"] = filing_meta
@@ -2646,6 +2656,9 @@ def extract_financials(
     # never collide in the cache. Graph-resolver-on results get their own key
     # — values can legitimately differ from legacy and must not cross-pollute.
     cache_acc = (filing_meta or {}).get("accession_number", "")
+    is_interim = (filing_meta or {}).get("form_type") in ("6-K", "6-K/A")
+    if cache_acc and is_interim:
+        cache_acc += "#interim-v1"
     if cache_acc and standalone_quarter:
         cache_acc = f"{cache_acc}#sq"
     try:
@@ -2691,17 +2704,30 @@ def extract_financials(
         log.warning("XBRL facts extraction failed for %s: %s", ticker_or_cik, exc)
         facts_df = pd.DataFrame()
 
-    # Fallback 2: drop accession filter (accession format might not match)
-    if (facts_df is None or facts_df.empty) and accession:
-        log.info("Retrying XBRL facts for %s without accession filter", ticker_or_cik)
-        try:
-            facts_df = _get_facts_for_filing(
-                ticker_or_cik,
-                accession=None,
-                form_type=actual_form,
-            )
-        except Exception:
-            facts_df = pd.DataFrame()
+    if is_interim:
+        # Foreign issuers file events, interim YTD results and standalone quarters
+        # on the same form. Require this accession's own three-month facts.
+        scoped = annotate_periods(facts_df)
+        if scoped is not None and not scoped.empty:
+            ends = scoped.loc[scoped["_ptype"] != PeriodType.INSTANT.value, "end"]
+            end = pd.to_datetime(ends, errors="coerce").max()
+            scoped = scoped[(scoped["end"] == end) & scoped["_ptype"].isin(
+                [PeriodType.QUARTER.value, PeriodType.INSTANT.value])]
+            fiscal = fiscal_quarter(end.date(), company.fiscal_year_end) if pd.notna(end) else None
+        else:
+            fiscal = None
+        if not fiscal or not (scoped["_ptype"] == PeriodType.QUARTER.value).any():
+            result["error"] = "This 6-K has no identifiable tagged standalone quarter. See the filing exhibits."
+            return result
+        result["interimVersion"] = 1
+        interim_year, interim_quarter = fiscal
+        filing_meta["report_date"] = end.date().isoformat()
+        facts_df = scoped.copy()
+        facts_df["fp"], facts_df["fy"] = interim_quarter, interim_year
+
+    if accession and (facts_df is None or facts_df.empty):
+        result["error"] = "No tagged financials for this accession. See the filing exhibits."
+        return result
 
     # Fallback 3: try FPI alternative form types
     # 6-K filings often lack XBRL — fall back to 20-F data
@@ -2761,7 +2787,7 @@ def extract_financials(
     # Duration preference: quarterly for 10-Q/6-K, annual for 10-K/20-F.
     # standalone_quarter=True asks for the 3-month standalone quarter (Fineas),
     # otherwise quarterly flow metrics return the SEC-native YTD (dashboard default).
-    is_quarterly = actual_form in ("10-Q", "10-q", "6-K", "6-k")
+    is_quarterly = is_interim or actual_form.upper() == "10-Q"
     if is_quarterly:
         dur_pref = "standalone_q" if standalone_quarter else "quarterly"
     else:
@@ -2794,7 +2820,7 @@ def extract_financials(
     # Flag YTD vs standalone for 10-Q data
     if is_quarterly and target_fp:
         fp_upper = target_fp.upper()
-        if standalone_quarter:
+        if standalone_quarter or is_interim:
             # Flow metrics are decumulated to the 3-month standalone quarter.
             result["is_ytd"] = False
             result["quarter_label"] = f"{fp_upper} (Standalone)"
@@ -3204,7 +3230,7 @@ def extract_financials(
             target_fp=target_fp, target_fy=target_fy)
 
     # ── Standalone-quarter cash-flow decumulation (YTD-only metrics) ──
-    if (standalone_quarter and is_quarterly and result.get("metrics")
+    if (standalone_quarter and is_quarterly and not is_interim and result.get("metrics")
             and (target_fp or "").upper() in ("Q2", "Q3", "H1", "M9")):
         _decumulate_cash_flow(result, ticker_or_cik, filing_meta, target_fy)
 
@@ -4012,21 +4038,17 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
     try:
         client = get_sec_client()
         filings = client.get_periodic_filings_smart(tk, form_type=form, limit=max(fetch_n, 12)) or []
-        accs: list[str] = []
-        seen: set[str] = set()
-        for f in filings:
-            a = f.accession_number
-            if a and a not in seen:
-                seen.add(a)
-                accs.append(a)
-        accs = accs[:fetch_n]
+        by_accession = {}
+        for filing in filings:
+            if filing.accession_number:
+                by_accession.setdefault(filing.accession_number, filing)
+        selected = list(by_accession.values())[:fetch_n]
 
-        def _ex(acc: str) -> dict | None:
+        def _ex(filing: FilingMetadata) -> dict | None:
             try:
-                # Extract as YTD (fast: single companyfacts parse, no inner re-fetch).
-                return extract_financials(tk, accession=acc, standalone_quarter=False)
+                return extract_financials(tk, filing=filing, standalone_quarter=False)
             except Exception as exc:
-                log.debug("history extract failed for %s/%s: %s", tk, acc, exc)
+                log.debug("history extract failed for %s/%s: %s", tk, filing.accession_number, exc)
                 return None
 
         # Fanning this out is COUNTERPRODUCTIVE, which is unintuitive enough to
@@ -4041,15 +4063,32 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
         # Default 1. Raise SEC_HISTORY_WORKERS only after adding a single-flight
         # lock to the submissions cache, which is what would make >1 pay off.
         workers = max(1, int(os.environ.get("SEC_HISTORY_WORKERS", "1")))
-        with ThreadPoolExecutor(max_workers=min(workers, max(1, len(accs)))) as ex:
-            results = [r for r in ex.map(_ex, accs)
+        with ThreadPoolExecutor(max_workers=min(workers, max(1, len(selected)))) as ex:
+            results = [r for r in ex.map(_ex, selected)
                        if r and (r.get("metrics") or {}).get("revenue") is not None]
 
         # newest-first by report period end
         results.sort(key=lambda r: (r.get("filing_info") or {}).get("report_date") or "", reverse=True)
         if is_q:
-            results = _decumulate_quarters_inmemory(results)
-            results = _synthesize_q4(tk, results)
+            is_foreign = has_release_format(tk) or any(f.form_type in ("6-K", "6-K/A") for f in selected)
+            if is_foreign:
+                # Amended accessions have precedence over the original. Limit
+                # after deduplicating and merging verified exhibits.
+                unique = {}
+                for row in sorted(results, key=lambda r: (
+                    r["filing_info"]["filing_date"], r["filing_info"]["accession_number"]
+                ), reverse=True):
+                    rank = _quarter_rank(row)
+                    if rank:
+                        unique.setdefault((row["fiscal_year"], f"Q{rank}"), row)
+                results = _decumulate_quarters_inmemory(list(unique.values()))
+                try:
+                    results.extend(release_quarters(tk, want, set(unique)))
+                except Exception as exc:
+                    log.warning("6-K exhibit lookup failed for %s: %s", tk, exc)
+                results.sort(key=lambda r: r["filing_info"]["report_date"], reverse=True)
+            else:
+                results = _synthesize_q4(tk, _decumulate_quarters_inmemory(results))
         results = results[:want]
 
         income, balance, cashflow = [], [], []
@@ -4058,7 +4097,7 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
             income.append(rows["income"])
             balance.append(rows["balance"])
             cashflow.append(rows["cashflow"])
-        return {"ticker": tk, "period": period, "income": income,
+        return {"ticker": tk, "period": period, "interimVersion": 1, "income": income,
                 "balance": balance, "cashflow": cashflow, "source": "sec"}
     except Exception as exc:
         log.warning("get_fmp_shaped_history failed for %s: %s", tk, exc)

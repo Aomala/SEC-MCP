@@ -314,10 +314,15 @@ def test_no_route_handler_blocks_the_event_loop():
 
 # ── Regressions found by audit — each of these shipped broken once ─────────
 
-def test_legacy_v1_paths_still_resolve(client):
+def test_legacy_v1_paths_still_resolve(client, monkeypatch):
     """/v1/financials and /v1/search predate the router and are still called by
     static/app.js (peer comps) and the docs console. Renaming them 404'd the
     live frontend."""
+    # This checks routing and response handling. SEC availability is covered by integration tests.
+    monkeypatch.setattr("sec_mcp.surface.company_search.search_companies_impl",
+                        lambda *args: {"companies": []})
+    monkeypatch.setattr("sec_mcp.surface.fundamentals.get_fundamentals_impl",
+                        lambda *args: {"periods": []})
     assert client.get("/v1/search?q=apple").status_code == 200
     # Route must EXIST (not 404); data availability is a separate concern.
     assert client.get("/v1/financials/AAPL").status_code != 404

@@ -404,6 +404,7 @@ class SECClient:
             ticker=ticker,
             industry=data.get("sicDescription"),
             sic_code=data.get("sic"),
+            fiscal_year_end=data.get("fiscalYearEnd"),
             website=website,
         )
 
@@ -793,7 +794,7 @@ class SECClient:
         included when their form matches exactly.
         """
         try:
-            df = self.get_facts_dataframe(ticker_or_cik)
+            df = self.get_facts_dataframe(ticker_or_cik, taxonomy="all" if form_type == "6-K" else "us-gaap")
         except Exception as exc:
             log.warning("get_periodic_filings facts fetch failed for %s: %s",
                         ticker_or_cik, exc)
@@ -801,7 +802,13 @@ class SECClient:
         if df is None or df.empty or "accn" not in df.columns or "form" not in df.columns:
             return []
 
-        sub = df[df["form"] == form_type]
+        forms = ("6-K", "6-K/A") if form_type == "6-K" else (form_type,)
+        sub = df[df["form"].isin(forms)]
+        if form_type == "6-K":
+            # A cover-page instant can be weeks later than the quarter it describes.
+            # Use financial durations to locate the period; events remain in get_filings.
+            sub = sub[sub["start"].notna() & sub["taxonomy"].isin(["ifrs-full", "us-gaap"])]
+
         # dei cover-page facts (shares outstanding etc.) are dated near the
         # FILING date, not the period end — including them overshoots the
         # report_date past the fiscal end (bit IFRS filers whose frames carry
@@ -823,17 +830,17 @@ class SECClient:
 
         results: list[FilingMetadata] = []
         grouped = sub.groupby("accn").agg(
-            report=("end", "max"), filed=("filed", "min"))
+            report=("end", "max"), filed=("filed", "min"), form=("form", "first"))
         for accn, row in grouped.iterrows():
             report = row["report"]
             filed = row["filed"]
             results.append(FilingMetadata(
                 accession_number=str(accn),
-                form_type=form_type,
+                form_type=row["form"],
                 filing_date=str(filed.date()) if pd.notna(filed) else "",
                 report_date=str(report.date()) if pd.notna(report) else "",
             ))
-        results.sort(key=lambda f: f.report_date or "", reverse=True)
+        results.sort(key=lambda f: (f.report_date or "", f.filing_date, f.accession_number), reverse=True)
         return results[:limit]
 
     def get_periodic_filings_smart(

@@ -229,6 +229,12 @@ app.include_router(_account_router)
 install_error_handlers(app)
 install_rate_headers(app)
 
+# Install last: even cached/304 responses must pass account authentication and
+# the shared quota before data leaves the origin.
+from sec_mcp.commerce.account_gate import install_account_gate  # noqa: E402
+
+install_account_gate(app)
+
 
 @app.on_event("startup")
 async def _start_metering():
@@ -616,6 +622,10 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
     period_key = financials_period_key(form_type, year)
     entry = supabase_cache.get_entry(ticker.upper(), "financials", period_key)
     sb_cached = entry["data"] if entry else None
+    if isinstance(sb_cached, dict) and form_type in {"10-Q", "6-K", "6-K/A"}:
+        form = (sb_cached.get("filing_info") or {}).get("form_type")
+        if form in {"10-K", "20-F", "40-F"} or (form in {"6-K", "6-K/A"} and not sb_cached.get("interimVersion")):
+            sb_cached = None
     if sb_cached and isinstance(sb_cached, dict) and sb_cached.get("metrics"):
         log.info("Supabase cache %s for %s financials",
                  "STALE hit" if entry["stale"] else "hit", ticker)
@@ -1848,6 +1858,14 @@ def get_financials_history(ticker: str, bg: BackgroundTasks,
     # being true on day 15, so serve it and refresh underneath.
     entry = supabase_cache.get_entry(tk, cache_type, period)
     cached = entry["data"] if entry else None
+    # Old 6-K rows could echo another accession's figures. Rebuild those on read.
+    from sec_mcp.facts.interim import has_release_format
+    if (period == "quarter" and cached and not cached.get("interimVersion")
+            and (has_release_format(tk) or any(
+                (r.get("_meta") or {}).get("formType") in {"6-K", "6-K/A", "20-F", "40-F"}
+                for r in cached.get("income", [])
+            ))):
+        cached = None
     if cached:
         cached_at = cached.get("_cached_at") or 0
         # Refresh on EITHER trigger — a stale row past expiry AND a row older

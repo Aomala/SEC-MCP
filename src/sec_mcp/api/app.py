@@ -190,6 +190,9 @@ def create_api_app(
     app.include_router(metrics.router)
 
     # Log that app is fully configured
+    from sec_mcp.commerce.account_gate import install_account_gate
+    install_account_gate(app)
+
     logger.info(f"FastAPI app created: {title} v{version} with 8 route groups")
     
     # Return configured application

@@ -1,0 +1,21 @@
+/* Shared visual language for every Fineas research tool. */
+:root {
+  color-scheme: dark;
+  --bg:#10151d; --panel:#181f29; --panel2:#202a37; --line:#303d4e;
+  --text:#edf2f8; --dim:#a5b3c6; --accent:#99baff; --green:#74d6b3;
+  --red:#ff9caa; --gold:#eec57e; --violet:#b7a5ee; --cyan:#8dcddc; --rose:#d3a1ca;
+  --shadow:0 14px 40px #0003;
+  --font-sans:"Avenir Next","Segoe UI",sans-serif;
+  --bg-primary:var(--bg); --bg-secondary:var(--panel); --bg-tertiary:var(--panel2);
+  --bg-elevated:var(--panel); --bg-hover:var(--panel2);
+  --text-primary:var(--text); --text-secondary:var(--dim); --text-tertiary:var(--dim); --text-muted:var(--dim);
+  --border:var(--line); --border-light:var(--line); --brand:var(--accent); --brand-light:var(--accent);
+  --success:var(--green); --danger:var(--red); --warning:var(--gold);
+}
+[data-theme="light"] {
+  color-scheme:light;
+  --bg:#f4f6f9; --panel:#ffffff; --panel2:#e9eef6; --line:#cbd5e3;
+  --text:#182435; --dim:#526378; --accent:#305fb2; --green:#147958;
+  --red:#b9324d; --gold:#8b6012; --violet:#7152ac; --cyan:#24748b; --rose:#995776;
+  --shadow:0 14px 40px #24395114;
+}

@@ -144,7 +144,7 @@ def v1_me(request: Request, caller: Caller = NeedsSearch) -> dict:
             "resetsAt": caller.verdict.get("reset_epoch"),
         },
     }
-    if caller.authenticated:
+    if caller.authenticated and not getattr(request.state, "fineas_account_gate", False):
         body["usage"] = usage.summary_for_key(caller.key_id)
     return body
 
