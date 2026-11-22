@@ -44,7 +44,8 @@ _available: bool | None = None
 # then treat older blobs as stale (served, refreshed in the background).
 # 2 = Nov 2026 data audit (weighted shares, filed 3-month EPS, basis guards,
 # split adjustment, OI-based EBITDA, equity-repair gating, TTM tax/current).
-DATA_VERSION = 2
+# 3 = G&A decumulated like every other flow (v2 history served YTD G&A).
+DATA_VERSION = 3
 VERSIONED_DATA_TYPES = frozenset({
     "financials", "sec_income_history_v2", "ttm_metrics", "quarter_metrics",
 })

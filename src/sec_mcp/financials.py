@@ -2383,7 +2383,7 @@ _CASHFLOW_CONCEPTS = [
 _FLOW_DECUM_METRICS = (
     # Income statement
     "revenue", "cost_of_revenue", "gross_profit", "operating_income",
-    "operating_expenses", "sga_expense", "rd_expense", "interest_expense",
+    "operating_expenses", "sga_expense", "ga_expense", "rd_expense", "interest_expense",
     "income_tax_expense", "depreciation_amortization", "provision_for_credit_losses",
     "other_income_expense", "income_before_tax", "share_based_compensation",
     "net_income", "ebitda",
@@ -4498,7 +4498,7 @@ def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
     return results
 
 
-HISTORY_VERSION = 2
+HISTORY_VERSION = 3  # 3: ga_expense decumulated (v2 served AAPL's YTD G&A as quarters)
 
 
 def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 8) -> dict:

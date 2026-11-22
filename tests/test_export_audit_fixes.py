@@ -366,3 +366,17 @@ def test_predecessor_facts_merge():
     m = _merge_company_facts(succ, pred)
     assert [x["accn"] for x in m["facts"]["us-gaap"]["Revenues"]["units"]["USD"]] == ["new", "old"]
     assert "Assets" in m["facts"]["us-gaap"] and m["cik"] == 2115436
+
+
+def test_ga_expense_is_a_flow_like_sga():
+    """historyVersion 2 left ga_expense out of the decumulated flows, so AAPL's
+    'quarterly' G&A was its 6M/9M/FY cumulative figure (4.37B, 6.68B, 8.64B)."""
+    rows = [
+        _row("Q3 (9-month YTD)", "2026-06-27", is_ytd=True, ga_expense=6_683.0,
+             metrics_3m={"ga_expense": 2_312.0}),
+        _row("Q2 (6-month YTD)", "2026-03-28", is_ytd=True, ga_expense=4_371.0),
+        _row("Q1 (Standalone)", "2025-12-27", is_ytd=False, ga_expense=2_095.0),
+    ]
+    out = _decumulate_quarters_inmemory(rows)
+    assert out[0]["metrics"]["ga_expense"] == 2_312.0      # filed 3-month figure
+    assert out[1]["metrics"]["ga_expense"] == pytest.approx(2_276.0)  # 4,371 − 2,095
