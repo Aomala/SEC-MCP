@@ -180,7 +180,8 @@ def _release_hits(cik, phrase, today):
     params = {
         "q": f'"{phrase}"',
         "ciks": cik.zfill(10),
-        "forms": "6-K,6-K/A",
+        # EFTS combines a root form and an explicit amendment with AND. The root already includes amendments.
+        "forms": "6-K",
         "dateRange": "custom",
         "startdt": (today - timedelta(days=1200)).isoformat(),
         "enddt": today.isoformat(),
@@ -218,7 +219,7 @@ def release_quarters(ticker, limit, covered):
             continue
         url = f"{SEC_BASE}/Archives/edgar/data/{cik}/{accession.replace('-', '')}/{doc}"
         try:
-            parsed = _read_release(ticker, url, src.get("period_of_report"), year_end)
+            parsed = _read_release(ticker, url, src.get("period_ending"), year_end)
         except (ValueError, OSError):
             continue
         if not parsed:

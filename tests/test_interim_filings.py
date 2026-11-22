@@ -1,5 +1,6 @@
 from datetime import date
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 import pytest
@@ -94,6 +95,19 @@ def test_release_rejects_wrong_period_and_guidance():
     )
 
 
+def test_sec_exhibit_search_includes_initial_reports(monkeypatch):
+    def search(url, timeout):
+        filters = parse_qs(urlsplit(url).query)
+        assert filters["forms"] == ["6-K"]
+        assert filters["ciks"] == ["0001046179"]
+        return {"hits": {"hits": [{"_id": "result"}]}}
+
+    monkeypatch.setattr(interim, "get_sec_client", lambda: SimpleNamespace(_request_json=search))
+    assert interim._release_hits.__wrapped__("1046179", "per ADR unit", date(2026, 11, 22)) == [
+        {"_id": "result"}
+    ]
+
+
 def test_untagged_history_uses_actual_exhibit(monkeypatch):
     cik, accession = "1046179", "0001046179-26-000451"
     hit = {
@@ -102,7 +116,7 @@ def test_untagged_history_uses_actual_exhibit(monkeypatch):
             "form": "6-K",
             "file_type": "EX-99.1",
             "ciks": [cik.zfill(10)],
-            "period_of_report": "2026-07-16",
+            "period_ending": "2026-06-30",
             "file_date": "2026-07-16",
         },
     }
@@ -113,9 +127,12 @@ def test_untagged_history_uses_actual_exhibit(monkeypatch):
     monkeypatch.setattr(financials, "get_sec_client", lambda: client)
     monkeypatch.setattr(interim, "get_sec_client", lambda: client)
     monkeypatch.setattr(interim, "_release_hits", lambda *args: [hit, hit])
-    monkeypatch.setattr(
-        interim, "_read_release", lambda tk, url, rd, fye: interim.parse_release(tk, TSM, rd, fye)
-    )
+
+    def parse_filed_release(tk, url, rd, fye):
+        assert rd == "2026-06-30"
+        return interim.parse_release(tk, TSM, rd, fye)
+
+    monkeypatch.setattr(interim, "_read_release", parse_filed_release)
     monkeypatch.setattr("sec_mcp.core.fx.convert_metrics_to_usd", lambda m, c: (m, None))
     history = financials.get_fmp_shaped_history("TSM", period="quarter")
     (inc,) = history["income"]
