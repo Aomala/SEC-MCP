@@ -52,7 +52,8 @@ _EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 # Caller-friendly form aliases → official EDGAR form names
 _FORM_ALIASES: dict[str, list[str]] = {
     "10-K": ["10-K", "10-K/A", "20-F", "20-F/A"],          # FPI annuals included
-    "10-Q": ["10-Q", "10-Q/A", "6-K"],                     # FPI interim included
+    "10-Q": ["10-Q", "10-Q/A", "6-K", "6-K/A"],                     # FPI interim included
+    "6-K": ["6-K", "6-K/A"],
     "8-K": ["8-K", "8-K/A"],
     "S-1": ["S-1", "S-1/A", "F-1", "F-1/A"],               # FPI IPO form included
     "13F": ["13F-HR", "13F-HR/A"],
