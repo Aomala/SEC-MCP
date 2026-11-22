@@ -109,6 +109,15 @@ src/sec_mcp/
   `standalone_decumulated`, `ytd_fallback` (neighbour missing — value stays YTD),
   `q4_synthesized` (Q4 = FY − ΣQ1-3). Fineas consumes `/api/financials-history` on
   chat_app — its shape is a frozen contract; only add keys, never change them.
+  historyVersion 2 (Nov 2026 audit): Q2/Q3 income lines + EPS come from the 10-Q's
+  own 3-month facts (`metrics_3m`), quarters pair by REPORT DATE (never fy label),
+  subtraction across a recast (spin-off) is refused via each filing's prior-year
+  comparative (`basis_check` → `validation: basis_break`), per-share history is
+  split-adjusted to the newest basis (`_meta.splitFactor`), `_meta.epsSource` says
+  reported vs derived. weightedAverageShsOut/Dil are real weighted counts.
+- **Cache versioning**: `supabase_cache.DATA_VERSION` stamps extraction blobs; older
+  blobs stay servable (get_cached unchanged) but SWR readers see `outdated` and rebuild
+  in the background. Bump it whenever a cached value's MEANING changes.
 - **FPI currency**: metrics are fx-converted to USD; `reportedCurrency` describes
   the VALUES (USD when converted), the filing's native currency + rate live in
   `_meta.filingCurrency` / `_meta.fxRate`. Known limitation: conversion uses

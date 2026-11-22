@@ -643,9 +643,15 @@ def _filter_by_period_type(
     if prefer == "annual":
         kept = flows[flows["_ptype"] == PeriodType.YEAR.value]
         if kept.empty:
-            # Transition periods / stubs: longest duration per period end
+            # Transition periods / stubs: longest duration per period end —
+            # but never a single quarter. ABBV and HON tag GrossProfit ONLY in
+            # the 10-K's quarterly-data note (Q4, 92 days); taking it as the
+            # "annual" value served FY25 gross profit of $12.1B (real ~$43B)
+            # and a −$18.8B synthesized Q4. With no annual-length fact the
+            # metric stays None and the Revenue − COGS rollup takes over.
             idx = flows.groupby(end_col)["_dur_days"].idxmax()
             kept = flows.loc[idx]
+            kept = kept[kept["_dur_days"] >= 150]
     else:  # quarterly — YTD-through-quarter per period end
         sub = flows[flows["_dur_days"] <= 295]  # exclude full-year rows
         if sub.empty:
@@ -659,6 +665,129 @@ def _filter_by_period_type(
     except Exception as exc:
         log.debug("Sort by %s failed: %s", end_col, exc)
     return result.drop(columns=["_ptype", "_dur_days"], errors="ignore")
+
+
+def _concept_for_source(concepts: list[ConceptEntry], source: str | None) -> str | None:
+    """The XBRL tag behind a resolver `source` label (exact, non-aggregate passes)."""
+    for e in concepts or ():
+        if not e.aggregate and e.display_name == source:
+            return e.xbrl_concept
+    return None
+
+
+def _three_month_fact(facts_df: pd.DataFrame, concept: str, end: pd.Timestamp) -> float | None:
+    """The filer's own ~3-month value of `concept` ending at `end`, or None.
+
+    Ambiguity (two different values for the same 3-month context, e.g. a
+    segment leak the quality filter missed) returns None — never guess.
+    """
+    concept_col = _find_column(facts_df, ("concept", "Concept", "tag", "Tag"))
+    value_col = _find_column(facts_df, ("value", "Value", "val"))
+    if concept_col is None or value_col is None or "start" not in facts_df.columns:
+        return None
+    col = facts_df[concept_col].astype(str)
+    m = facts_df[(col == concept) | col.str.endswith(f":{concept}") | col.str.endswith(f"_{concept}")]
+    if m.empty:
+        return None
+    m = annotate_periods(m)
+    end_dt = pd.to_datetime(m["end"], errors="coerce")
+    m = m[((end_dt - end).abs() <= pd.Timedelta(days=4))
+          & (m["_dur_days"] >= 80) & (m["_dur_days"] <= 100)]
+    if m.empty:
+        return None
+    vals = pd.to_numeric(dedupe_facts(m)[value_col], errors="coerce").dropna().unique()
+    return float(vals[0]) if len(vals) == 1 else None
+
+
+def _basis_check(facts_df: pd.DataFrame, sourced: dict, metrics: dict,
+                 industry: IndustryClass) -> dict | None:
+    """This filing's own prior-year comparative for revenue (same tag, same
+    duration, one year earlier). Comparing it with how the prior-year filing
+    originally reported that period says whether this filing recast history —
+    the signal that two filings sit on different bases (spin-off/discontinued
+    operations), so subtracting one from the other is meaningless."""
+    rev = metrics.get("revenue")
+    concept = _concept_for_source(get_revenue_concepts(industry), sourced.get("revenue"))
+    if rev is None or not concept:
+        return None
+    clean = _apply_quality_filters(facts_df)
+    concept_col = _find_column(clean, ("concept", "Concept", "tag", "Tag"))
+    value_col = _find_column(clean, ("value", "Value", "val"))
+    if concept_col is None or value_col is None or "start" not in clean.columns:
+        return None
+    col = clean[concept_col].astype(str)
+    m = annotate_periods(clean[(col == concept) | col.str.endswith(f":{concept}")
+                               | col.str.endswith(f"_{concept}")])
+    m = m[m["_dur_days"].notna()]
+    if m.empty:
+        return None
+    m = m.assign(_end=pd.to_datetime(m["end"], errors="coerce"),
+                 _val=pd.to_numeric(m[value_col], errors="coerce"))
+    cur = m[m["_val"] == rev]
+    if cur.empty:
+        return None
+    end, dur = cur["_end"].max(), cur.loc[cur["_end"].idxmax(), "_dur_days"]
+    py = m[((m["_end"] - (end - pd.DateOffset(years=1))).abs() <= pd.Timedelta(days=10))
+           & ((m["_dur_days"] - dur).abs() <= 20)]
+    vals = py["_val"].dropna().unique()
+    out = {"period_end": end.date().isoformat(), "duration_days": int(dur)}
+    if len(vals) == 1:
+        out["revenue_prior_year"] = float(vals[0])
+    return out
+
+
+# Income-statement flows + per-share columns a 10-Q tags at the 3-month context.
+_THREE_MONTH_KEYS = (
+    "revenue", "cost_of_revenue", "gross_profit", "operating_income", "operating_expenses",
+    "sga_expense", "ga_expense", "rd_expense", "interest_expense", "income_tax_expense",
+    "other_income_expense", "income_before_tax", "net_income", "provision_for_credit_losses",
+    "eps_basic", "eps_diluted", "weighted_shares_basic", "weighted_shares_diluted",
+)
+
+
+def _capture_three_month(
+    facts_df: pd.DataFrame,
+    metrics: dict,
+    sourced: dict,
+    industry: IndustryClass,
+) -> dict[str, float]:
+    """Q2/Q3 10-Qs tag BOTH the YTD and the 3-month context. History rows are
+    extracted YTD and decumulated by subtracting the prior 10-Q's YTD, which is
+    wrong whenever the two filings sit on different bases — a spin-off or
+    divestiture recast between them (WDC Q3 FY25 revenue −$1.47B; APP Q2'25
+    $934M vs $1,259M filed) — and it forces EPS to be re-derived instead of
+    read (190 of 879 audited quarterly EPS values were off). Read the filer's
+    own 3-month figure from the SAME tag that produced each YTD value; anything
+    composite or auto-corrected is left to the subtraction path."""
+    clean = _apply_quality_filters(facts_df)
+    if clean is None or clean.empty or "start" not in clean.columns:
+        return {}
+    flows = clean[pd.to_datetime(clean["start"], errors="coerce").notna()]
+    ends = pd.to_datetime(flows["end"], errors="coerce").dropna()
+    if ends.empty:
+        return {}
+    end = ends.max()
+    out: dict[str, float] = {}
+    for k in _THREE_MONTH_KEYS:
+        if metrics.get(k) is None:
+            continue
+        if k == "revenue":
+            concepts = get_revenue_concepts(industry)
+        elif k == "operating_income":
+            concepts = get_operating_income_concepts(industry)
+        elif k == "ga_expense":
+            concepts = [ConceptEntry("GeneralAndAdministrativeExpense", "General & Administrative")]
+        else:
+            concepts = CONCEPT_MAP.get(k) or []
+        concept = _concept_for_source(concepts, sourced.get(k))
+        if concept:
+            v = _three_month_fact(clean, concept, end)
+            if v is not None:
+                out[k] = v
+    if ("gross_profit" not in out and "revenue" in out and "cost_of_revenue" in out
+            and str(sourced.get("gross_profit") or "").startswith("Computed: Revenue")):
+        out["gross_profit"] = out["revenue"] - abs(out["cost_of_revenue"])
+    return out
 
 
 # Balance sheet concepts are point-in-time, not flow — no duration filtering needed
@@ -2297,7 +2426,11 @@ def _decumulate_cash_flow(
         if target_fy is not None and prior.get("fiscal_year") not in (target_fy, None):
             return
         pm = prior["metrics"]
+        direct = result.get("metrics_3m") or {}
         for k in _FLOW_DECUM_METRICS:
+            if k in direct:  # the filer's own 3-month figure beats subtraction
+                cm[k] = direct[k]
+                continue
             cv, pv = cm.get(k), pm.get(k)
             if cv is not None and pv is not None:
                 cm[k] = cv - pv
@@ -2305,11 +2438,16 @@ def _decumulate_cash_flow(
                 # Prior YTD never reported this column — a cumulative value
                 # must not survive in a standalone-quarter result.
                 cm[k] = None
+        for k in ("weighted_shares_basic", "weighted_shares_diluted"):
+            if k in direct:
+                cm[k] = direct[k]
         # Recompute FCF + per-share columns from the decumulated basis
-        # (EPS: NI/shares, else YTD-neighbour diff, else None — never the
-        # cumulative YTD value).
-        _recompute_derived_quarter_metrics(
-            cm, prior_eps={k: pm.get(k) for k in _PER_SHARE_METRICS})
+        # (EPS: the 10-Q's own 3-month figure, else YTD-neighbour diff, else
+        # None — never the cumulative YTD value).
+        result["eps_source"] = _recompute_derived_quarter_metrics(
+            cm, prior_eps={k: pm.get(k) for k in _PER_SHARE_METRICS},
+            direct=direct, industry=result.get("industry_class"))
+        _guard_impossible(cm)
     except Exception as exc:  # never let decumulation break extraction
         log.debug("cash-flow decumulation failed for %s: %s", ticker_or_cik, exc)
 
@@ -2656,6 +2794,10 @@ def extract_financials(
     # never collide in the cache. Graph-resolver-on results get their own key
     # — values can legitimately differ from legacy and must not cross-pollute.
     cache_acc = (filing_meta or {}).get("accession_number", "")
+    if cache_acc:
+        # Extraction-output version: v2 adds weighted shares, metrics_3m and
+        # basis_check (Nov 2026 audit) — a 7-day-old v1 entry must not mask them.
+        cache_acc += "#x2"
     is_interim = (filing_meta or {}).get("form_type") in ("6-K", "6-K/A")
     if cache_acc and is_interim:
         cache_acc += "#interim-v1"
@@ -2939,6 +3081,15 @@ def extract_financials(
         if lease_capex is not None and lease_capex > 0:
             metrics["capital_expenditures"] = metrics["capital_expenditures"] + lease_capex
             sourced["capital_expenditures"] = f"{capex_src} + Equipment on Lease"
+    if (metrics.get("capital_expenditures") is not None
+            and capex_src == "Capital Expenditures (other productive assets)"):
+        owned_re = _lookup_fact(
+            facts_df, "PaymentsToAcquireAndDevelopRealEstate", period_index,
+            match_mode="exact", duration_pref=dur_pref,
+            target_fp=target_fp, target_fy=target_fy)
+        if owned_re is not None and owned_re > 0:
+            metrics["capital_expenditures"] = abs(metrics["capital_expenditures"]) + owned_re
+            sourced["capital_expenditures"] = f"{capex_src} + Owned Real Estate"
 
     # Total liabilities = Assets − Equity − NCI (when no Liabilities subtotal
     # is tagged — utilities often jump straight to "capitalization and
@@ -3022,22 +3173,12 @@ def extract_financials(
         metrics["depreciation_amortization"] = da_val
         sourced["depreciation_amortization"] = "D&A (largest tagged total)"
 
-    if ni_val is not None and da_val is not None:
-        # Proper EBITDA: NI + Interest + Tax + D&A. Tax must be added back
-        # SIGNED — IncomeTaxExpenseBenefit is negative for a net benefit, and
-        # abs() would add the benefit on top of the NI that already includes
-        # it (QCOM Q2 FY26: −5.1B benefit → EBITDA at 113% of revenue).
-        ebitda_val = ni_val + abs(int_exp or 0) + (tax_exp or 0) + abs(da_val)
-        metrics["ebitda"] = ebitda_val
-        confidence["ebitda"] = 0.85 if (int_exp is not None and tax_exp is not None) else 0.70
-    elif oi is not None and da_val is not None:
-        # Fallback: EBIT + D&A ≈ Operating Income + D&A
-        metrics["ebitda"] = oi + abs(da_val)
-        confidence["ebitda"] = 0.65
-        sourced["ebitda"] = "Approximated: Operating Income + D&A"
-    else:
-        metrics["ebitda"] = None
-        confidence["ebitda"] = 0.0
+    ebitda_val, ebitda_src, ebitda_conf = _build_ebitda(
+        oi, ni_val, int_exp, tax_exp, da_val, industry)
+    metrics["ebitda"] = ebitda_val
+    confidence["ebitda"] = ebitda_conf
+    if ebitda_src:
+        sourced["ebitda"] = ebitda_src
 
     # ── Post-extraction sanity checks + auto-correction ────────────
     # If NI > Revenue, we likely picked the wrong revenue tag.
@@ -3075,6 +3216,66 @@ def extract_financials(
             sourced["revenue"] = best_src
             confidence["revenue"] = 0.80
 
+    # ── SG&A from components when no total is tagged ──
+    # AMAT reports "Marketing and selling" and "General and administrative"
+    # with no SG&A total; the resolver took G&A alone (≈half the real line),
+    # and FY − ΣQ1-3 on mixed tags then served Q4 SG&A at 2.4×.
+    def _flow(tag: str) -> float | None:
+        return _lookup_fact(facts_df, tag, period_index, match_mode="exact",
+                            duration_pref=dur_pref, target_fp=target_fp, target_fy=target_fy)
+    ga_tagged = _flow("GeneralAndAdministrativeExpense")
+    metrics["ga_expense"] = ga_tagged
+    sourced["ga_expense"] = "General & Administrative" if ga_tagged is not None else None
+    sga_concept = _concept_for_source(CONCEPT_MAP["sga_expense"], sourced.get("sga_expense"))
+    if metrics.get("sga_expense") is not None and sga_concept not in (None, "SellingGeneralAndAdministrativeExpense"):
+        selling = next((v for v in (_flow(t) for t in (
+            "SellingAndMarketingExpense", "SellingExpense", "MarketingAndAdvertisingExpense"))
+            if v is not None), None)
+        if ga_tagged is not None and selling is not None:
+            metrics["sga_expense"] = abs(ga_tagged) + abs(selling)
+            sourced["sga_expense"] = "Computed: Selling/Marketing + G&A"
+            confidence["sga_expense"] = 0.85
+
+    # ── Intangibles never include goodwill ──
+    # MAR's 10-Qs tag only IntangibleAssetsNetIncludingGoodwill: quarterly
+    # intangibles served $19.2B against $10.3B in the 10-K, and goodwill was
+    # counted twice in any tangible-book calculation.
+    if (metrics.get("intangible_assets") is not None
+            and _concept_for_source(CONCEPT_MAP["intangible_assets"], sourced.get("intangible_assets"))
+            == "IntangibleAssetsNetIncludingGoodwill"):
+        gw = metrics.get("goodwill")
+        metrics["intangible_assets"] = (metrics["intangible_assets"] - gw) if gw is not None else None
+        sourced["intangible_assets"] = ("Computed: Intangibles incl. Goodwill − Goodwill"
+                                        if gw is not None else None)
+
+    # ── Operating expenses must tie GP − OpEx = OI ──
+    # OperatingExpenses / CostsAndExpenses / OperatingCostsAndExpenses mean
+    # different things per filer (AMZN and GOOGL tag total costs including
+    # cost of revenue), so "operatingExpenses" mixed two definitions across
+    # 23 tickers. Where GP and OI are both known, OpEx is defined by them.
+    gp_v, oi_v, opex_v = metrics.get("gross_profit"), metrics.get("operating_income"), metrics.get("operating_expenses")
+    if gp_v is not None and oi_v is not None and opex_v is not None:
+        scale = max(abs(metrics.get("revenue") or 0), abs(gp_v), 1.0)
+        if abs(gp_v - abs(opex_v) - oi_v) > 0.02 * scale:
+            metrics["operating_expenses"] = gp_v - oi_v
+            sourced["operating_expenses"] = "Computed: Gross Profit − Operating Income"
+            confidence["operating_expenses"] = 0.80
+
+    # ── Filer-tagged 3-month values for Q2/Q3 YTD extractions ──
+    metrics_3m: dict[str, float] = {}
+    if (is_quarterly and not is_interim
+            and (target_fp or "").upper() in ("Q2", "Q3", "H1", "M9")):
+        try:
+            metrics_3m = _capture_three_month(facts_df, metrics, sourced, industry)
+        except Exception as exc:  # never let the garnish break the extraction
+            log.debug("3-month capture failed for %s: %s", ticker_or_cik, exc)
+    basis = None
+    if not is_interim:
+        try:
+            basis = _basis_check(facts_df, sourced, metrics, industry)
+        except Exception as exc:
+            log.debug("basis check failed for %s: %s", ticker_or_cik, exc)
+
     # ── Bank revenue-driver breakdown (income-type composition; additive) ──
     # Banks only. Computed from the already-loaded native facts_df (cheap), so
     # metrics["revenue"] here is still the native total. Business-division rows
@@ -3092,6 +3293,10 @@ def extract_financials(
     result["reporting_currency"] = reporting_currency
     if reporting_currency != "USD":
         metrics, fx_rate = convert_metrics_to_usd(metrics, reporting_currency)
+        if metrics_3m:
+            metrics_3m, _ = convert_metrics_to_usd(metrics_3m, reporting_currency)
+        if basis and fx_rate and basis.get("revenue_prior_year") is not None:
+            basis["revenue_prior_year"] *= fx_rate
         result["fx_rate"] = fx_rate
         result["fx_note"] = f"Converted from {reporting_currency} to USD at {fx_rate:.4f}" if fx_rate else f"Reported in {reporting_currency} (conversion unavailable)"
         log.info("Foreign filer %s reports in %s, converted to USD", ticker_or_cik, reporting_currency)
@@ -3108,6 +3313,10 @@ def extract_financials(
     result["metrics_sourced"] = sourced
     result["confidence_scores"] = confidence
     result["validation"] = _validate(metrics, industry, confidence)
+    if metrics_3m:
+        result["metrics_3m"] = metrics_3m
+    if basis:
+        result["basis_check"] = basis
 
     # ── Prior-period metrics for YoY comparison ─────────────────────
     # For annual (10-K): compare to prior fiscal year (period_index+1)
@@ -3282,6 +3491,37 @@ def _compute_ratios(
 #  Validation
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _build_ebitda(
+    oi: float | None,
+    ni: float | None,
+    int_exp: float | None,
+    tax_exp: float | None,
+    da: float | None,
+    industry: IndustryClass | str | None = None,
+) -> tuple[float | None, str | None, float]:
+    """EBITDA = Operating Income + D&A (the CapIQ/Bloomberg definition).
+
+    The old primary build, NI + interest + tax + D&A, drags every non-operating
+    line into "EBITDA": equity-investment marks, divestiture gains, FX. GOOGL
+    Q2'26 served EBITDA $146B on $40.8B of operating income, and EV/EBITDA
+    inherited it. The bottom-up build survives only where operating income is
+    a pretax proxy (banks, insurers) or is missing. Tax is added back SIGNED —
+    a net benefit is negative (QCOM Q2 FY26: −5.1B), abs() would double it.
+    """
+    if da is None:
+        return None, None, 0.0
+    financial = str(getattr(industry, "value", industry) or "").lower() in ("bank", "insurance")
+    if oi is not None and not financial:
+        return oi + abs(da), "Operating Income + D&A", 0.85
+    if ni is not None:
+        conf = 0.85 if (int_exp is not None and tax_exp is not None) else 0.70
+        return (ni + abs(int_exp or 0) + (tax_exp or 0) + abs(da),
+                "Net Income + Interest + Tax + D&A", conf)
+    if oi is not None:
+        return oi + abs(da), "Operating Income + D&A", 0.65
+    return None, None, 0.0
+
+
 def _try_repair_balance_sheet(
     m: dict[str, float | None],
     ta: float,
@@ -3301,9 +3541,18 @@ def _try_repair_balance_sheet(
     """
     repairs = {}
 
+    # A directly-tagged total is the filer's own number. When A ≠ L + E it is
+    # almost always a line we don't model — temporary/mezzanine equity,
+    # redeemable or untagged NCI — not a wrong tag. Overwriting a tagged
+    # StockholdersEquity with A − L served BX ~2.5×, SPGI +10-16%, MSTR
+    # +11-25% and CRWV +61% (Nov 2026 audit). Only weakly-sourced values
+    # (rollups, fuzzy matches) may be "repaired".
+    def _weak(key: str) -> bool:
+        return (confidence or {}).get(key, 0.0) < 0.90
+
     # Strategy 1: If L+E > A, equity might include NCI that should be separate
     # Try: Equity = Assets - Liabilities (derive equity from the equation)
-    if tl is not None and ta is not None:
+    if tl is not None and ta is not None and _weak("stockholders_equity"):
         derived_eq = ta - tl
         if derived_eq > 0 and abs(derived_eq - eq) / max(abs(eq), 1) > 0.05:
             # The derived equity is different — check if it's more reasonable
@@ -3318,7 +3567,7 @@ def _try_repair_balance_sheet(
     # Strategy 2: If total_liabilities was actually LiabilitiesAndStockholdersEquity
     # (i.e., L = L+E), then real liabilities = total - equity
     if tl is not None and ta is not None and eq is not None:
-        if abs(tl - ta) / max(abs(ta), 1) < 0.02:
+        if abs(tl - ta) / max(abs(ta), 1) < 0.02:  # L ≈ A: a mis-tag, not a gap
             # "Liabilities" value is suspiciously close to "Assets" — it's probably L+E
             real_liab = ta - eq
             if real_liab > 0:
@@ -3330,7 +3579,7 @@ def _try_repair_balance_sheet(
     # Strategy 3: Minority interest missing from equity
     # Some companies tag equity as parent-only but assets/liabilities are consolidated
     nci = m.get("minority_interest") or m.get("noncontrolling_interest") or m.get("redeemable_noncontrolling_interest")
-    if nci is not None and nci > 0:
+    if nci is not None and nci > 0 and _weak("stockholders_equity"):
         eq_with_nci = eq + nci
         new_diff = abs(ta - (tl + eq_with_nci)) / max(abs(ta), 1)
         if new_diff < 0.05:
@@ -3339,7 +3588,7 @@ def _try_repair_balance_sheet(
             return repairs
 
     # Strategy 4: Try computing total_liabilities = total_assets - equity
-    if ta is not None and eq is not None:
+    if ta is not None and eq is not None and _weak("total_liabilities"):
         derived_tl = ta - eq
         old_diff = abs(ta - (tl + eq)) / max(abs(ta), 1)
         new_diff = abs(ta - (derived_tl + eq)) / max(abs(ta), 1)
@@ -3744,6 +3993,12 @@ def sec_to_fmp_statements(result: dict) -> dict:
                 # to express the values in USD (null for US filers).
                 "filingCurrency": filing_ccy,
                 "fxRate": result.get("fx_rate"),
+                # Additive: where the per-share columns came from
+                # ("reported" = the filing's own figure, "derived" = arithmetic)
+                # and the split factor applied to bring an older row onto the
+                # newest share basis (1 = none).
+                "epsSource": result.get("eps_source") or "reported",
+                "splitFactor": result.get("split_factor") or 1,
             }}
 
     def neg(v):
@@ -3753,7 +4008,9 @@ def sec_to_fmp_statements(result: dict) -> dict:
         "revenue": m.get("revenue"), "costOfRevenue": m.get("cost_of_revenue"),
         "grossProfit": m.get("gross_profit"),
         "researchAndDevelopmentExpenses": m.get("rd_expense"),
-        "generalAndAdministrativeExpenses": m.get("sga_expense"),
+        # G&A only when the filer reports it as its own line — it used to be
+        # a copy of SG&A for every filer (132 of 158 audited tickers).
+        "generalAndAdministrativeExpenses": m.get("ga_expense"),
         "sellingGeneralAndAdministrativeExpenses": m.get("sga_expense"),
         "operatingExpenses": m.get("operating_expenses"),
         "depreciationAndAmortization": m.get("depreciation_amortization"),
@@ -3765,8 +4022,16 @@ def sec_to_fmp_statements(result: dict) -> dict:
         "incomeTaxExpense": m.get("income_tax_expense"),
         "netIncome": m.get("net_income"), "bottomLineNetIncome": m.get("net_income"),
         "eps": m.get("eps_basic"), "epsDiluted": m.get("eps_diluted"),
-        "weightedAverageShsOut": m.get("shares_outstanding"),
-        "weightedAverageShsOutDil": m.get("shares_outstanding")}
+        # Weighted averages are the EPS denominators. Period-end shares only
+        # stand in when the filer tags no weighted count; diluted falls back
+        # to basic only when no diluted count exists (net-loss filers often
+        # tag one BasicAndDiluted figure, where equal IS correct).
+        "weightedAverageShsOut": m.get("weighted_shares_basic") or m.get("shares_outstanding"),
+        "weightedAverageShsOutDil": (m.get("weighted_shares_diluted")
+                                     or m.get("weighted_shares_basic")
+                                     or m.get("shares_outstanding")),
+        # Additive: period-end common shares (balance-sheet/cover count).
+        "sharesOutstanding": m.get("shares_outstanding")}
 
     balance = {**base,
         "cashAndCashEquivalents": m.get("cash_and_equivalents"),
@@ -3815,113 +4080,299 @@ def _quarter_rank(result: dict) -> int | None:
 
 # Per-share flow columns. Cumulative like the flow metrics, but they can't be
 # decumulated by plain subtraction of the underlying dollars — they must be
-# re-derived (or YTD-neighbour-diffed) after the row changes basis.
+# read from the filing's 3-month context (10-Q) or differenced as per-share
+# figures (YTD − prior YTD, FY − ΣQ1-3).
 _PER_SHARE_METRICS = ("eps_basic", "eps_diluted")
+_SHARE_COUNT_METRICS = ("weighted_shares_basic", "weighted_shares_diluted", "shares_outstanding")
+
+# Lines that cannot be negative in a real quarter. A negative value here is
+# the fingerprint of subtracting figures reported on different bases.
+_NONNEG_QUARTER_METRICS = ("revenue", "cost_of_revenue", "sga_expense", "ga_expense",
+                           "rd_expense", "depreciation_amortization")
+_IS_FLOW_KEYS = frozenset((
+    "revenue", "cost_of_revenue", "gross_profit", "operating_income", "operating_expenses",
+    "sga_expense", "ga_expense", "rd_expense", "interest_expense", "income_tax_expense",
+    "depreciation_amortization", "provision_for_credit_losses", "other_income_expense",
+    "income_before_tax", "net_income", "ebitda",
+))
+
+# Common split ratios (forward). Reverse splits use the reciprocals.
+_SPLIT_RATIOS = (2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 100)
 
 
-def _recompute_derived_quarter_metrics(cm: dict, prior_eps: dict | None = None) -> None:
-    """Re-derive FCF and per-share columns after quarter metrics change basis.
+def _report_date(result: dict) -> pd.Timestamp:
+    return pd.to_datetime((result.get("filing_info") or {}).get("report_date") or "",
+                          errors="coerce")
+
+
+def _days(newer: pd.Timestamp, older: pd.Timestamp) -> int | None:
+    if pd.isna(newer) or pd.isna(older):
+        return None
+    return int((newer - older).days)
+
+
+def _guard_impossible(cm: dict) -> list[str]:
+    """Null quarter lines that cannot be negative; return what was nulled.
+
+    If revenue itself was impossible, every income-statement flow in the row
+    shares the broken basis — null them all rather than serve half a quarter.
+    """
+    bad = [k for k in _NONNEG_QUARTER_METRICS if (cm.get(k) is not None and cm[k] < 0)]
+    for k in bad:
+        cm[k] = None
+    if "revenue" in bad:
+        for k in _IS_FLOW_KEYS | set(_PER_SHARE_METRICS):
+            cm[k] = None
+    return bad
+
+
+def _note(result: dict, rule: str, message: str) -> None:
+    result.setdefault("validation", [])
+    result["validation"] = list(result["validation"]) + [
+        {"rule": rule, "severity": "warning", "message": message}]
+
+
+def _split_ratio(newer: float | None, older: float | None) -> float | None:
+    """Forward/reverse split factor implied by two adjacent share counts."""
+    if not newer or not older or newer <= 0 or older <= 0:
+        return None
+    r = newer / older
+    if r >= 1.8:
+        k = min(_SPLIT_RATIOS, key=lambda s: abs(r / s - 1))
+        return float(k) if abs(r / k - 1) <= 0.06 else None
+    if r <= 0.55:
+        k = min(_SPLIT_RATIOS, key=lambda s: abs((1 / r) / s - 1))
+        return 1.0 / k if abs((1 / r) / k - 1) <= 0.06 else None
+    return None
+
+
+def _share_basis(result: dict) -> float | None:
+    m = result.get("metrics") or {}
+    return m.get("weighted_shares_diluted") or m.get("weighted_shares_basic") or m.get("shares_outstanding")
+
+
+def _scale_per_share(result: dict, factor: float) -> None:
+    """Bring a row onto a newer share basis: per-share ÷ f, share counts × f."""
+    for block in ("metrics", "metrics_3m"):
+        m = result.get(block) or {}
+        for k in _PER_SHARE_METRICS:
+            if m.get(k) is not None:
+                m[k] = m[k] / factor
+        for k in _SHARE_COUNT_METRICS:
+            if m.get(k) is not None:
+                m[k] = m[k] * factor
+    result["split_factor"] = (result.get("split_factor") or 1) * factor
+
+
+def _split_adjust(results: list[dict]) -> list[dict]:
+    """Restate older rows' per-share figures onto the newest share basis.
+
+    Filings report per-share history as originally reported, so a series that
+    spans a split jumps by the split ratio (NVDA FY24 EPS 11.93 → FY25 2.94;
+    ORLY 15:1, NFLX 10:1, CTAS 4:1 …), and any Q4 = FY − ΣQ1-3 that straddles
+    one is garbage (CTAS Q4 FY24 4.09 vs ~1.00). A split shows up as adjacent
+    share counts differing by a clean ratio (2, 3, 4, 10, 15 …, ±6%); ordinary
+    issuance and buybacks never do. Detected from the rows themselves, so no
+    external corporate-actions feed is needed.
+    """
+    dated = sorted((r for r in results if pd.notna(_report_date(r)) and _share_basis(r)),
+                   key=_report_date, reverse=True)
+    raw = [_share_basis(r) for r in dated]  # unadjusted — read before any scaling
+    factor = 1.0
+    for i in range(1, len(dated)):
+        k = _split_ratio(raw[i - 1], raw[i])
+        if k:
+            factor *= k
+        if factor != 1.0:
+            _scale_per_share(dated[i], factor)
+    return results
+
+
+def _align_to(result: dict, reference: dict | None) -> None:
+    """Put a stand-alone row (the 10-K used for Q4) on the reference row's basis."""
+    if reference is None:
+        return
+    k = _split_ratio(_share_basis(reference), _share_basis(result))
+    if k:
+        _scale_per_share(result, k)
+
+
+def _recompute_derived_quarter_metrics(cm: dict, prior_eps: dict | None = None,
+                                       direct: dict | None = None,
+                                       industry: Any = None) -> str:
+    """Re-derive FCF, per-share columns and EBITDA after a quarter changes basis.
 
     EPS priority (a decumulated/synthesized row must NEVER keep the
     cumulative YTD/FY per-share value it was extracted with):
-      1. row's OWN (already-decumulated/synthesized) net income / shares
-      2. cumulative EPS minus the YTD-neighbour EPS in `prior_eps`
-         (approximation — assumes a stable share count)
-      3. None — better an honest gap than a YTD/FY value on a standalone row
+      1. the filing's own 3-month EPS (`direct`, 10-Q Q2/Q3)       → "reported"
+      2. cumulative EPS minus the YTD-neighbour / ΣQ1-3 EPS          → "derived"
+      3. None — better an honest gap than a YTD/FY value
+    Net income ÷ period-end shares is NOT a fallback: it ignores weighting,
+    dilution and preferred dividends (GS/BAC quarterly EPS were 7-13% high).
+    Returns the EPS provenance.
     """
     ocf, capex = cm.get("operating_cash_flow"), cm.get("capital_expenditures")
     if ocf is not None and capex is not None:
         cm["free_cash_flow"] = ocf - abs(capex)
-    ni, sh = cm.get("net_income"), cm.get("shares_outstanding")
+    ni = cm.get("net_income")
+    source = "reported"
     for k in _PER_SHARE_METRICS:
-        if ni is not None and sh:
-            cm[k] = round(ni / sh, 2)
+        if direct and direct.get(k) is not None:
+            cm[k] = direct[k]
             continue
         cur, prior = cm.get(k), (prior_eps or {}).get(k)
         if cur is not None and prior is not None:
             v = round(cur - prior, 2)
-            # Sign cross-check against the row's own NI — catches stock
-            # splits, where the FY/YTD eps is split-adjusted but the earlier
-            # quarters' filings aren't (WMT 3:1 Feb'24: FY 1.91 − Σ pre-split
-            # 3.7 ⇒ −1.8 on a +5.5B-NI quarter). Better a gap than that.
-            if ni is not None and ni != 0 and v != 0 and (v < 0) != (ni < 0):
-                cm[k] = None
-            else:
-                cm[k] = v
+            # Sign cross-check against the row's own NI — a residual split or
+            # basis mismatch shows up as an EPS of the wrong sign.
+            cm[k] = None if (ni is not None and ni != 0 and v != 0 and (v < 0) != (ni < 0)) else v
+            if cm[k] is not None:
+                source = "derived"
         else:
             cm[k] = None
-    # EBITDA: rebuild from the row's OWN (decumulated/synthesized) components
-    # rather than trusting cumulative-EBITDA subtraction. Adjacent filings can
-    # resolve components differently (JPM's Q1 FY24 filing tags interest, the
-    # H1 filing doesn't), and subtracting EBITDAs built on mismatched bases
-    # emits garbage (JPM Q2'24: 1.1B vs ~25B). Same formula + preference
-    # order as the extraction-time builder.
+    # EBITDA: rebuild from the row's OWN (decumulated/synthesized) components —
+    # never by subtracting cumulative EBITDAs of possibly different bases
+    # (JPM Q2'24: 1.1B vs ~25B). Same definition as extraction time.
     da_q = cm.get("depreciation_amortization")
-    if ni is not None and da_q is not None:
-        cm["ebitda"] = (ni + abs(cm.get("interest_expense") or 0)
-                        + (cm.get("income_tax_expense") or 0) + abs(da_q))
-    elif cm.get("operating_income") is not None and da_q is not None:
-        cm["ebitda"] = cm["operating_income"] + abs(da_q)
-    elif cm.get("ebitda") is not None:
-        # No components to rebuild from — a subtracted cumulative EBITDA of
-        # unverifiable basis must not be served on a standalone row.
-        cm["ebitda"] = None
+    rebuilt, _, _ = _build_ebitda(cm.get("operating_income"), ni, cm.get("interest_expense"),
+                                  cm.get("income_tax_expense"), da_q, industry)
+    cm["ebitda"] = rebuilt
+    return source
+
+
+def _recast(result: dict, results: list[dict]) -> bool | None:
+    """Did this filing restate its prior-year comparative? None = can't tell.
+
+    Compares the filing's own prior-year revenue comparative with how the
+    prior-year filing of the same rank originally reported that period (its
+    pre-decumulation snapshot in `_ytd_metrics`).
+    """
+    py = (result.get("basis_check") or {}).get("revenue_prior_year")
+    d, rk = _report_date(result), _quarter_rank(result)
+    if py is None or pd.isna(d) or not rk:
+        return None
+    for other in results:
+        if other is result or _quarter_rank(other) != rk:
+            continue
+        gap = _days(d, _report_date(other))
+        if gap is not None and 350 <= gap <= 380:
+            orig = (other.get("_ytd_metrics") or other.get("metrics") or {}).get("revenue")
+            if orig:
+                return abs(py - orig) / abs(orig) > 0.005
+    return None
+
+
+def _basis_break(a: dict, b: dict, results: list[dict]) -> bool:
+    """True when exactly one of two filings recast prior periods — i.e. a
+    spin-off/discontinued-ops restatement landed between them."""
+    fa, fb = _recast(a, results), _recast(b, results)
+    return fa is not None and fb is not None and fa != fb
+
+
+def _neighbour(result: dict, results: list[dict], rank: int) -> dict | None:
+    """The rank-`rank` row ~one quarter (75-105 days) before `result`.
+
+    Paired by REPORT DATE, never by fiscal-year label: WDAY's FY26 10-Qs and
+    its FY25 10-Qs both carried fiscal_year 2025, so a (fy, rank) key paired
+    Q3 FY26 with Q2 FY25 and served revenue 21% high.
+    """
+    d = _report_date(result)
+    for other in results:
+        if other is result or _quarter_rank(other) != rank:
+            continue
+        gap = _days(d, _report_date(other))
+        if gap is not None and 75 <= gap <= 105:
+            return other
+    return None
+
+
+_DURATION_RANK = ((65, 115, 1), (155, 205, 2), (245, 295, 3))
+
+
+def _normalize_quarter_period(result: dict) -> None:
+    """Trust the revenue fact's own period over the filing's labels.
+
+    DEI fp and "latest fact end" describe the filing, not the period: BX's
+    Q2'24 10-Q carried fp=Q1 (its six-month YTD served as a standalone Q1),
+    and a subsequent-event fact dated its Q3'26 10-Q 2026-10-31, so neither
+    found its neighbour and both stayed YTD.
+    """
+    bc = result.get("basis_check") or {}
+    if result.get("period_type") != "quarterly" or not bc.get("duration_days"):
+        return
+    fi = result.setdefault("filing_info", {})
+    end = bc.get("period_end")
+    rd = _report_date(result)
+    if end and (pd.isna(rd) or abs((pd.Timestamp(end) - rd).days) > 7):
+        fi["report_date"] = end
+    rank = next((k for lo, hi, k in _DURATION_RANK if lo <= bc["duration_days"] <= hi), None)
+    if rank and rank != _quarter_rank(result):
+        result["quarter_label"] = {1: "Q1 (Standalone)", 2: "Q2 (6-month YTD)",
+                                   3: "Q3 (9-month YTD)"}[rank]
+        result["is_ytd"] = rank > 1
 
 
 def _decumulate_quarters_inmemory(results: list[dict]) -> list[dict]:
-    """Turn a list of per-quarter YTD extractions into standalone 3-month
-    quarters using the adjacent quarter already in hand (Q2=H1-Q1, Q3=9M-H1).
-    No re-extraction — pure arithmetic — so it's ~free vs re-fetching filings.
+    """Turn per-quarter YTD extractions into standalone 3-month quarters.
 
-    Honesty rules (each row gets a machine-readable `quality` flag):
+    Income statement: the filing's own 3-month figures (`metrics_3m`) when
+    tagged, else YTD − the neighbouring quarter's YTD. Cash flow is YTD-only in
+    10-Qs, so it is always differenced. Each row gets a `quality` flag:
       - Q1 / already-standalone rows pass through       → "standalone"
-      - YTD row with its neighbour in hand, subtracted   → "standalone_decumulated"
-      - YTD row whose neighbour is MISSING stays YTD and
-        keeps is_ytd=True                                → "ytd_fallback"
+      - YTD row with its neighbour in hand               → "standalone_decumulated"
+      - YTD row whose neighbour is MISSING stays YTD     → "ytd_fallback"
     The YTD snapshots are taken before any mutation, so decumulation order
     can never subtract an already-decumulated neighbour.
     """
-    # Snapshot every row's pre-mutation YTD metrics first
-    ytd_snapshot: dict[tuple, dict] = {}
     for r in results:
-        fy, rk = r.get("fiscal_year"), _quarter_rank(r)
-        if isinstance(fy, int) and rk:
-            ytd_snapshot[(fy, rk)] = dict(r.get("metrics") or {})
+        _normalize_quarter_period(r)
+        r["_ytd_metrics"] = dict(r.get("metrics") or {})
 
     for r in results:
-        fy, rk = r.get("fiscal_year"), _quarter_rank(r)
+        rk = _quarter_rank(r)
         cm = r.get("metrics") or {}
-        if not (isinstance(fy, int) and rk and cm):
+        if not (rk and cm):
             r["quality"] = "unknown_period"
             continue
 
         if rk == 1 or not r.get("is_ytd"):
-            # Q1 YTD already equals the standalone quarter
             r["is_ytd"] = False
             r["quarter_label"] = f"Q{min(rk, 4)} (Standalone)"
             r["quality"] = "standalone"
+            r["eps_source"] = "reported"
             continue
 
-        pm = ytd_snapshot.get((fy, rk - 1))
-        if not pm:
-            # No decumulation neighbour — value stays YTD; say so instead of
-            # relabelling it "Standalone" (the legacy behaviour).
+        nb = _neighbour(r, results, rk - 1)
+        if nb is None:
             r["is_ytd"] = True
             r["quality"] = "ytd_fallback"
             continue
 
+        pm = nb["_ytd_metrics"]
+        r["_was_ytd"] = True  # `_ytd_metrics` is this filing's cumulative YTD
+        direct = r.get("metrics_3m") or {}
+        broken = _basis_break(r, nb, results)
         for k in _FLOW_DECUM_METRICS:
+            if k in direct:
+                cm[k] = direct[k]
+                continue
             cv, pv = cm.get(k), pm.get(k)
-            if cv is not None and pv is not None:
-                cm[k] = cv - pv
-            elif cv is not None:
-                # Neighbour never reported this column — the YTD value cannot
-                # be decumulated and must NOT survive in a row labelled
-                # standalone_decumulated (JPM's interest_expense served
-                # 9-month cumulative values this way).
-                cm[k] = None
-        _recompute_derived_quarter_metrics(
-            cm, prior_eps={k: pm.get(k) for k in _PER_SHARE_METRICS})
+            # A YTD value whose neighbour never reported the column cannot be
+            # decumulated and must NOT survive on a standalone row; neither can
+            # one whose neighbour sits on a different (recast) basis.
+            cm[k] = cv - pv if (cv is not None and pv is not None and not broken) else None
+        for k in ("weighted_shares_basic", "weighted_shares_diluted"):
+            if k in direct:
+                cm[k] = direct[k]
+        r["eps_source"] = _recompute_derived_quarter_metrics(
+            cm, prior_eps=None if broken else {k: pm.get(k) for k in _PER_SHARE_METRICS},
+            direct=direct, industry=r.get("industry_class"))
+        if broken:
+            _note(r, "basis_break", "Prior quarter was reported on a different basis "
+                  "(restated comparatives); differenced lines are left empty.")
+        nulled = _guard_impossible(cm)
+        if nulled:
+            _note(r, "impossible_quarter_value", f"Negative {', '.join(nulled)} nulled.")
         r["is_ytd"] = False
         r["quarter_label"] = f"Q{min(rk, 4)} (Standalone)"
         r["quality"] = "standalone_decumulated"
@@ -3932,45 +4383,38 @@ def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
     """Append synthesized Q4 rows: Q4 = FY − (Q1+Q2+Q3) for flow metrics.
 
     Q4 has no 10-Q filing, so quarterly histories built from 10-Qs have a
-    hole at every fiscal year end. For each fiscal year with three standalone
-    quarters in hand, extract the 10-K (cheap — companyfacts is already
-    cached) and derive the fourth. Balance-sheet (instant) metrics come from
-    the 10-K directly: the FY-end snapshot IS the Q4-end snapshot.
+    hole at every fiscal year end. For each Q3 with its Q2 and Q1 in hand
+    (chained by report date, ~one quarter apart), extract the 10-K whose
+    period end lands 60-130 days after Q3 and derive the fourth. Balance-sheet
+    (instant) metrics come from the 10-K directly.
 
-    The 10-K is matched to the quarter group by REPORT DATE — the annual
-    filing whose period end lands ~one quarter (60-130 days) after the
-    group's Q3 end. Matching on the fiscal-year LABEL breaks for Jan/Feb-FYE
-    filers: HD's FY2025 10-K ends 2026-02-01 (report-date year ≠ label), and
-    CRM's newest 10-K even carries the same DEI fy as its predecessor — those
-    calendars never synthesized a Q4 and lost TTM eligibility.
+    Refused (flows left empty, row kept for its balance sheet) when the 10-K
+    and the Q3 10-Q sit on different bases: HON's FY2025 10-K restated for the
+    Solstice spin while its Q3 10-Q predates it, which served Q4 revenue
+    $6.86B and gross profit −$7.9B.
     """
-    by_fy: dict[int, dict[int, dict]] = {}
-    for r in results:
-        fy, rk = r.get("fiscal_year"), _quarter_rank(r)
-        if isinstance(fy, int) and rk and r.get("quality", "").startswith("standalone"):
-            by_fy.setdefault(fy, {})[rk] = r
-
+    standalone = [r for r in results if _quarter_rank(r) and (r.get("quality") or "").startswith("standalone")]
     annual_filings: list | None = None  # lazy — one fetch for all groups
-    for fy, ranks in sorted(by_fy.items(), reverse=True):
-        if not ({1, 2, 3} <= set(ranks)) or 4 in ranks:
+    new_rows: list[dict] = []
+    for q3 in sorted((r for r in standalone if _quarter_rank(r) == 3), key=_report_date):
+        q2 = _neighbour(q3, standalone, 2)
+        q1 = _neighbour(q2, standalone, 1) if q2 else None
+        q3_end = _report_date(q3)
+        if not (q1 and q2) or pd.isna(q3_end):
             continue
-        q3_end = pd.to_datetime(
-            (ranks[3].get("filing_info") or {}).get("report_date") or "",
-            errors="coerce")
-        if pd.isna(q3_end):
+        if any(_quarter_rank(r) == 4 and 60 <= (_days(_report_date(r), q3_end) or -1) <= 130
+               for r in results + new_rows):
             continue
         if annual_filings is None:
             try:
                 annual_filings = get_sec_client().get_periodic_filings_smart(
                     ticker, form_type="10-K", limit=15) or []
             except Exception as exc:
-                log.debug("Q4 synthesis: 10-K listing failed for %s: %s",
-                          ticker, exc)
+                log.debug("Q4 synthesis: 10-K listing failed for %s: %s", ticker, exc)
                 annual_filings = []
         acc = None
         for f in annual_filings:
-            rd = pd.to_datetime(getattr(f, "report_date", "") or "",
-                                errors="coerce")
+            rd = pd.to_datetime(getattr(f, "report_date", "") or "", errors="coerce")
             if pd.notna(rd) and 60 <= (rd - q3_end).days <= 130:
                 acc = f.accession_number
                 break
@@ -3979,47 +4423,82 @@ def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
         try:
             annual = extract_financials(ticker, accession=acc, form_type="10-K")
         except Exception as exc:
-            log.debug("Q4 synthesis: annual extract failed for %s FY%s: %s",
-                      ticker, fy, exc)
+            log.debug("Q4 synthesis: annual extract failed for %s: %s", ticker, exc)
             continue
-        if not annual or annual.get("error"):
+        if not annual or annual.get("error") or not annual.get("metrics"):
             continue
-        am = annual.get("metrics") or {}
-        if not am:
-            continue
+        annual = {**annual, "metrics": dict(annual["metrics"])}
+        _align_to(annual, q3)
+        am = annual["metrics"]
+        quarters = (q1, q2, q3)
 
+        # Basis: did the 10-K restate its prior year relative to the four
+        # quarters we already hold for that year, and did the Q3 10-Q?
+        broken = False
+        py_fy = (annual.get("basis_check") or {}).get("revenue_prior_year")
+        prior = [r for r in results + new_rows
+                 if _quarter_rank(r) and (r.get("quality") or "").startswith(("standalone", "q4_"))
+                 and 260 <= (_days(q3_end, _report_date(r)) or -1) <= 560]
+        prior_rev = [(r.get("metrics") or {}).get("revenue") for r in prior]
+        k_flag = (abs(py_fy - sum(prior_rev)) / abs(sum(prior_rev)) > 0.005
+                  if py_fy and len(prior) == 4 and None not in prior_rev and sum(prior_rev) else None)
+        q_flag = _recast(q3, results)
+        broken = k_flag is not None and q_flag is not None and k_flag != q_flag
+
+        # Subtract the Q3 10-Q's OWN nine-month YTD, not Σ of the standalone
+        # quarters: once Q2/Q3 carry their filed 3-month figures the three
+        # quarters no longer telescope to the 9M total when the basis moved
+        # mid-year (JNJ's Kenvue exit: ΣQ1-3 on mixed bases served Q4 revenue
+        # $13.5B vs $21.4B filed; APP's apps sale likewise). FY − 9M uses the
+        # two filings the basis check above vouches for.
+        nine = q3.get("_ytd_metrics") if q3.get("_was_ytd") else None
         q4m = dict(am)  # instants (balance sheet) carry over from the 10-K
         for k in _FLOW_DECUM_METRICS:
             fyv = am.get(k)
-            qs = [ (ranks[i].get("metrics") or {}).get(k) for i in (1, 2, 3) ]
-            q4m[k] = fyv - sum(qs) if fyv is not None and None not in qs else None
-        # Per-share columns: the dict(am) copy carries FULL-YEAR eps. Rebuild
-        # from Q4 NI / shares, else FY eps − Σ(standalone Q1-3 eps), else None
-        # — a q4_synthesized row must never serve the annual eps (META Q4'25
-        # served 23.49 = FY25; standalone is ~8.87).
-        _q4_prior_eps: dict[str, float | None] = {}
+            if nine is not None:
+                ytd = nine.get(k)
+                q4m[k] = fyv - ytd if (fyv is not None and ytd is not None and not broken) else None
+                continue
+            qs = [(q.get("metrics") or {}).get(k) for q in quarters]
+            q4m[k] = fyv - sum(qs) if (fyv is not None and None not in qs and not broken) else None
+        eps_sum = {}
         for k in _PER_SHARE_METRICS:
-            eps_qs = [(ranks[i].get("metrics") or {}).get(k) for i in (1, 2, 3)]
-            _q4_prior_eps[k] = sum(eps_qs) if None not in eps_qs else None
-        _recompute_derived_quarter_metrics(q4m, prior_eps=_q4_prior_eps)
-        if q4m.get("revenue") is None or q4m.get("revenue") <= 0:
-            # No revenue, or the matched 10-K doesn't cover these quarters
-            # (FY − ΣQ1-3 went negative) — don't serve a garbage Q4.
+            if nine is not None:
+                eps_sum[k] = nine.get(k) if not broken else None
+                continue
+            eps_qs = [(q.get("metrics") or {}).get(k) for q in quarters]
+            eps_sum[k] = sum(eps_qs) if (None not in eps_qs and not broken) else None
+        _recompute_derived_quarter_metrics(
+            q4m, prior_eps=eps_sum, industry=annual.get("industry_class"))
+        nulled = _guard_impossible(q4m)
+        if not broken and (q4m.get("revenue") is None or q4m["revenue"] <= 0):
+            # No revenue, or the matched 10-K doesn't cover these quarters.
             continue
 
         q4 = {**annual,
-              "fiscal_year": fy,  # group's label (10-K DEI fy can disagree — CRM)
+              "fiscal_year": q3.get("fiscal_year"),  # group's label (10-K DEI fy can disagree — CRM)
               "metrics": q4m,
               "period_type": "quarterly",
               "quarter_label": "Q4 (Synthesized)",
               "is_ytd": False,
               "quality": "q4_synthesized",
+              "eps_source": "derived",
               "ratios": _compute_ratios(q4m)}
-        results.append(q4)
+        q4.pop("metrics_3m", None)
+        if broken:
+            _note(q4, "basis_break", "The 10-K restated prior periods (e.g. a spin-off) "
+                  "but the Q3 10-Q did not; Q4 flows cannot be derived as FY − ΣQ1-3.")
+        if nulled:
+            _note(q4, "impossible_quarter_value", f"Negative {', '.join(nulled)} nulled.")
+        new_rows.append(q4)
 
+    results = results + new_rows
     results.sort(key=lambda r: (r.get("filing_info") or {}).get("report_date") or "",
                  reverse=True)
     return results
+
+
+HISTORY_VERSION = 2
 
 
 def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 8) -> dict:
@@ -4069,6 +4548,10 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
 
         # newest-first by report period end
         results.sort(key=lambda r: (r.get("filing_info") or {}).get("report_date") or "", reverse=True)
+        # Per-share history onto the newest share basis BEFORE any quarter
+        # arithmetic — a Q4 or decumulated quarter that straddles a split
+        # otherwise mixes pre- and post-split EPS.
+        results = _split_adjust(results)
         if is_q:
             is_foreign = has_release_format(tk) or any(f.form_type in ("6-K", "6-K/A") for f in selected)
             if is_foreign:
@@ -4097,7 +4580,12 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
             income.append(rows["income"])
             balance.append(rows["balance"])
             cashflow.append(rows["cashflow"])
-        return {"ticker": tk, "period": period, "interimVersion": 1, "income": income,
+        # historyVersion 2 (Nov 2026 audit): weighted basic/diluted shares,
+        # filed 3-month EPS and income lines, date-paired decumulation,
+        # basis-break guards, split-adjusted per-share history, OI-based EBITDA.
+        # Cached blobs without it are rebuilt in the background on read.
+        return {"ticker": tk, "period": period, "interimVersion": 1,
+                "historyVersion": HISTORY_VERSION, "income": income,
                 "balance": balance, "cashflow": cashflow, "source": "sec"}
     except Exception as exc:
         log.warning("get_fmp_shaped_history failed for %s: %s", tk, exc)

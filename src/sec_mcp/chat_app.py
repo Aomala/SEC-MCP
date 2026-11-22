@@ -39,6 +39,7 @@ import os
 import re
 import time
 import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, Request, Response
@@ -629,7 +630,7 @@ def _handle_financials(ticker: str, year: int | None, form_type: str = "10-K") -
     if sb_cached and isinstance(sb_cached, dict) and sb_cached.get("metrics"):
         log.info("Supabase cache %s for %s financials",
                  "STALE hit" if entry["stale"] else "hit", ticker)
-        if entry["stale"]:
+        if entry["stale"] or entry.get("outdated"):
             _spawn_financials_refresh(ticker.upper(), year, form_type, period_key)
         data = sb_cached
         summary = generate_local_summary(data)
@@ -991,11 +992,10 @@ def _handle_entity(ticker: str) -> dict:
         # Get most recent filings for context (auto-tries 20-F/6-K for foreign filers)
         recent_10k = client.get_filings_smart(ticker, form_type="10-K", limit=1)
         recent_10q = client.get_filings_smart(ticker, form_type="10-Q", limit=1)
-        latest_filing = None
-        if recent_10k:
-            latest_filing = recent_10k[0]
-        elif recent_10q:
-            latest_filing = recent_10q[0]
+        # The NEWER of the two — preferring any 10-K served a January 10-K as
+        # "latest" after three later 10-Qs (41 of 46 audited profiles).
+        candidates = [f for f in ((recent_10k or [None])[0], (recent_10q or [None])[0]) if f]
+        latest_filing = max(candidates, key=lambda f: getattr(f, "filing_date", "") or "") if candidates else None
 
         # Phone
         phone = subs.get("phone") or business_addr.get("phone") or ""
@@ -1841,7 +1841,12 @@ def get_financials_history(ticker: str, bg: BackgroundTasks,
             out[key] = rows[:want]
         if response is not None and not full.get("income"):
             response.headers["Cache-Control"] = "no-store"
-        out.pop("_cached_at", None)
+        # Additive: when this blob was built. A served history can be weeks
+        # old under stale-while-revalidate — callers deserve to know.
+        built = out.pop("_cached_at", None)
+        if built:
+            out["cachedAt"] = datetime.fromtimestamp(built, timezone.utc).isoformat(timespec="seconds")
+        out.pop("_dataVersion", None)
         return out
 
     def _compute_and_cache() -> dict:
@@ -1873,7 +1878,7 @@ def get_financials_history(ticker: str, bg: BackgroundTasks,
         # Refresh on EITHER trigger — a stale row past expiry AND a row older
         # than a day both want rebuilding; using expiry alone would stretch the
         # refresh cadence from 24h out to 14d.
-        if entry["stale"] or (time.time() - cached_at > 24 * 3600):
+        if entry["stale"] or entry.get("outdated") or (time.time() - cached_at > 24 * 3600):
             # refresh.spawn, not bg.add_task: BackgroundTasks has no
             # single-flight, so a popular stale ticker would launch one full
             # extraction per concurrent request.
@@ -2577,7 +2582,7 @@ def _get_or_build_ttm(tk: str, build: bool = True) -> dict | None:
     if cached and isinstance(cached, dict) and (cached.get("metrics") or cached.get("error")):
         # Stale TTM still serves: it is four filed quarters, not a live quote.
         # The 45s rebuild happens behind the response. See core/refresh.py.
-        if entry["stale"]:
+        if entry["stale"] or entry.get("outdated"):
             _spawn_ttm_refresh(tk)
         return cached
     if not build:
@@ -2604,7 +2609,7 @@ def _get_or_build_quarter(tk: str) -> dict | None:
         tk, QUARTER_METRICS_DATA_TYPE, QUARTER_METRICS_PERIOD)
     cached = entry["data"] if entry else None
     if cached and isinstance(cached, dict) and (cached.get("metrics") or cached.get("error")):
-        if entry["stale"]:
+        if entry["stale"] or entry.get("outdated"):
             _spawn_quarter_refresh(tk)
         return cached
     from sec_mcp.core.ttm import build_latest_quarter_metrics
@@ -2700,6 +2705,27 @@ def get_ticker_metrics(ticker: str, period: str = "annual") -> dict:
         price = price if isinstance(price, (int, float)) else None
         shares_override = shares_override if isinstance(shares_override, (int, float)) else None
         market_cap_override = market_cap_override if isinstance(market_cap_override, (int, float)) else None
+
+        # Market cap = price × SEC shares outstanding (the newest 10-K/10-Q
+        # cover count). Polygon's share figure is a weighted average that lags
+        # splits and buybacks: MNST's Oct 2026 2:1 split halved its market cap
+        # and every ratio built on it; WDC was −7.8%, ROP +3.4%. Polygon stays
+        # the fallback (ADRs/FPIs, or no recent cover page).
+        shares_source = "polygon" if shares_override else None
+        try:
+            from datetime import date as _date
+
+            from sec_mcp.sec_client import get_sec_client
+            cover = get_sec_client().get_latest_cover_shares(tk)
+            if cover and cover.get("as_of"):
+                age = (_date.today() - _date.fromisoformat(str(cover["as_of"])[:10])).days
+                if age <= 200:
+                    shares_override = cover["shares"]
+                    shares_source = "sec_cover"
+                    if price:
+                        market_cap_override = None  # recompute as price × SEC shares
+        except Exception as exc:
+            log.debug("SEC cover shares failed for %s: %s", tk, exc)
 
         industry = data.get("industry_class")
         metrics_src = data.get("metrics") or {}
@@ -2806,7 +2832,8 @@ def get_ticker_metrics(ticker: str, period: str = "annual") -> dict:
             # frontends drop these rows instead of rendering N/A. Keys stay
             # present-but-null in `metrics` (consumers key off presence).
             "notApplicable": not_applicable_for(industry, camel=True),
-            "meta": {"source": "sec+polygon", "priceSource": (snap or {}).get("source")},
+            "meta": {"source": "sec+polygon", "priceSource": (snap or {}).get("source"),
+                     "sharesSource": shares_source},
         }
         if as_of:
             resp["asOf"] = as_of

@@ -130,7 +130,9 @@ def compute_ticker_metrics(
         "netIncome": net_income,
         "ebitda": ebitda,
         "freeCashFlow": fcf,
-        "eps": eps,
+        # Basic EPS when known — it was the diluted figure under a second
+        # name (eps == epsDiluted on 63 of 87 audited tickers).
+        "eps": _num(m.get("eps_basic")) if m.get("eps_basic") is not None else eps,
         "epsDiluted": _num(m.get("eps_diluted")),
     }
     return out

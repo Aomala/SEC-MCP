@@ -41,7 +41,16 @@ _STOCK_MAP = {
     "cashAndEquivalents": "cash_and_equivalents",
     "totalDebt": "total_debt",
     "sharesOutstanding": "shares_outstanding",
+    "sharesDiluted": "weighted_shares_diluted",
+    # Current ratio inputs — never mapped, so currentRatio was always null.
+    "totalCurrentAssets": "current_assets",
+    "totalCurrentLiabilities": "current_liabilities",
 }
+
+# Per-share provenance a history row must carry before its EPS is summed:
+# pre-v2 rows recomputed EPS as NI ÷ period-end shares, so their EPS isn't
+# a filed figure and summing four of them inherits that error.
+_EPS_SOURCES = {"reported", "derived"}
 
 # YTD-quality rows are cumulative — summing them double-counts. Only these
 # per-quarter qualities are safe TTM addends.
@@ -149,14 +158,15 @@ def build_latest_quarter_metrics(ticker: str,
     # Row epsDiluted is only trustworthy on plain standalone rows — the eps
     # column skips decumulation/Q4-synthesis, so decumulated rows carry
     # YTD/full-year EPS. Otherwise derive from NI / share count.
-    ni, shares = metrics.get("net_income"), metrics.get("shares_outstanding")
-    if (q.get("quality") or "standalone") == "standalone":
-        eps = _num(q["metrics"].get("epsDiluted"))
-    else:
-        eps = None
+    ni = metrics.get("net_income")
+    shares = metrics.get("weighted_shares_diluted") or metrics.get("shares_outstanding")
+    trusted = (q.get("epsSource") in _EPS_SOURCES
+               or (q.get("quality") or "standalone") == "standalone")
+    eps = _num(q["metrics"].get("epsDiluted")) if trusted else None
     if eps is None and ni is not None and shares:
         eps = ni / shares
     metrics["eps_diluted"] = eps
+    metrics["eps_basic"] = _num(q["metrics"].get("epsBasic")) if trusted else None
 
     return {
         "metrics": metrics,
@@ -209,18 +219,24 @@ def build_ttm_metrics(ticker: str,
         metrics["capital_expenditures"] = abs(metrics["capital_expenditures"])
     _add_aliases(metrics)
 
-    # TTM EPS: NI_ttm / latest share count. Summing quarterly epsDiluted rows
-    # is only safe when every row is plain "standalone" — decumulated and
-    # q4_synthesized rows carry YTD/full-year EPS (the eps column skips
-    # decumulation), which inflated TTM P/E 2-3x across the panel. Callers
-    # backfill from NI / live share count when this stays None.
+    # TTM EPS = Σ of the four quarters' filed (or FY − ΣQ1-3) EPS — the way
+    # every data vendor defines it. Only rows carrying v2 per-share provenance
+    # qualify; older rows' EPS was NI ÷ period-end shares. Fallback: NI_ttm ÷
+    # the latest quarter's weighted DILUTED shares (not period-end shares,
+    # which made eps == epsDiluted and skewed P/E).
     ni = metrics.get("net_income")
-    shares = metrics.get("shares_outstanding")
-    eps = ni / shares if (ni is not None and shares) else None
-    if eps is None and all((q.get("quality") or "standalone") == "standalone" for q in qs):
+    eps = eps_basic = None
+    if all(q.get("epsSource") in _EPS_SOURCES
+           or (q.get("quality") or "standalone") == "standalone" for q in qs):
         q_eps = [_num(q["metrics"].get("epsDiluted")) for q in qs]
-        eps = sum(q_eps) if all(v is not None for v in q_eps) else None
+        q_basic = [_num(q["metrics"].get("epsBasic")) for q in qs]
+        eps = round(sum(q_eps), 4) if all(v is not None for v in q_eps) else None
+        eps_basic = round(sum(q_basic), 4) if all(v is not None for v in q_basic) else None
+    dil = metrics.get("weighted_shares_diluted") or metrics.get("shares_outstanding")
+    if eps is None and ni is not None and dil:
+        eps = ni / dil
     metrics["eps_diluted"] = eps
+    metrics["eps_basic"] = eps_basic
 
     return {
         "metrics": metrics,

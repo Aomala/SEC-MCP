@@ -162,6 +162,7 @@ def convert_metrics_to_usd(
     # Metrics that should NOT be currency-converted
     skip_keys = {
         "eps_basic", "eps_diluted", "shares_outstanding", "book_value_per_share",
+        "weighted_shares_basic", "weighted_shares_diluted",
         "reit_occupancy", "insurance_combined_ratio", "bank_efficiency",
         "bank_net_interest_margin", "fintech_take_rate",
         "gross_margin", "operating_margin", "net_margin",

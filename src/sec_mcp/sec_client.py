@@ -47,10 +47,21 @@ COMPANY_CONCEPT_URL = f"{DATA_BASE}/api/xbrl/companyconcept/CIK{{cik}}/{{taxonom
 #   XOM: company_tickers.json maps XOM → 0002115436 ("ExxonMobil Holdings Corp",
 #   a 2025 holdco with ~0 facts); the full history + current 10-Ks are under
 #   0000034088 ("Exxon Mobil Corporation"). Without this, every XOM metric is null.
-# Revisit if/when the holdco becomes the primary consolidated filer.
-_CIK_OVERRIDES: dict[str, str] = {
-    "XOM": "0000034088",
+# Nov 2026: the holdco IS now the primary filer (its 10-Qs start at Q2 2026),
+# so pinning the legacy CIK silently froze XOM at Q1 2026. XOM moved to
+# _PREDECESSOR_CIKS below: resolve to the holdco, merge the legacy history in.
+_CIK_OVERRIDES: dict[str, str] = {}
+
+# Successor CIK → predecessor CIKs whose XBRL history belongs to the same
+# economic entity (holdco reorganisations). companyfacts is per registrant, so
+# without the merge either the history or the newest filings go missing.
+_PREDECESSOR_CIKS: dict[str, tuple[str, ...]] = {
+    "0002115436": ("0000034088",),  # ExxonMobil Holdings ← Exxon Mobil Corp
 }
+
+# Forms whose cover-page share count is in the same units as the US quote.
+# (20-F/40-F covers count ordinary shares; the quote is per ADR.)
+_DOMESTIC_PERIODIC_FORMS = frozenset({"10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT"})
 
 # SEC requires a descriptive User-Agent with contact email
 DEFAULT_USER_AGENT = "SEC-MCP sec-mcp@example.com"
@@ -142,6 +153,33 @@ class _CacheEntry:
 # ═══════════════════════════════════════════════════════════════════════════
 #  SEC EDGAR Client
 # ═══════════════════════════════════════════════════════════════════════════
+
+def _merge_company_facts(primary: dict, other: dict) -> dict:
+    """Union two companyfacts payloads (successor first, predecessor appended).
+
+    Facts carry their own accession, so the two registrants' filings stay
+    distinguishable; the same (start, end, accn) can't appear in both.
+    """
+    if not other or not other.get("facts"):
+        return primary
+    if not primary or not primary.get("facts"):
+        return other
+    merged = {**primary, "facts": {}}
+    for tax in set(primary["facts"]) | set(other["facts"]):
+        a, b = primary["facts"].get(tax, {}), other["facts"].get(tax, {})
+        out = {}
+        for concept in set(a) | set(b):
+            ca, cb = a.get(concept), b.get(concept)
+            if not (ca and cb):
+                out[concept] = ca or cb
+                continue
+            units = {}
+            for unit in set(ca.get("units", {})) | set(cb.get("units", {})):
+                units[unit] = list(ca.get("units", {}).get(unit, [])) + list(cb.get("units", {}).get(unit, []))
+            out[concept] = {**ca, "units": units}
+        merged["facts"][tax] = out
+    return merged
+
 
 class SECClient:
     """Direct HTTP client for SEC EDGAR public APIs.
@@ -685,8 +723,38 @@ class SECClient:
             )
             return {}
 
+        for pred in _PREDECESSOR_CIKS.get(cik_padded, ()):
+            data = _merge_company_facts(data, self.get_company_facts(pred))
+
         self._facts_cache[cik_padded] = _CacheEntry(data)
         return data
+
+    def get_latest_cover_shares(self, ticker_or_cik: str) -> dict | None:
+        """Common shares outstanding from the newest 10-K/10-Q cover page.
+
+        Summed across share classes (one dei fact per class in the same
+        filing). Returns {shares, as_of, accession, filed, form} or None.
+        This is the point-in-time count a market cap needs: Polygon's
+        weighted_shares_outstanding lagged MNST's Oct 2026 2:1 split and
+        halved its market cap and every valuation ratio.
+        """
+        try:
+            facts = (self.get_company_facts(ticker_or_cik) or {}).get("facts") or {}
+        except Exception as exc:
+            log.debug("cover shares: facts fetch failed for %s: %s", ticker_or_cik, exc)
+            return None
+        units = (facts.get("dei", {}).get("EntityCommonStockSharesOutstanding") or {}).get("units") or {}
+        rows = [x for arr in units.values() for x in arr
+                if x.get("val") is not None and x.get("form") in _DOMESTIC_PERIODIC_FORMS]
+        if not rows:
+            return None
+        latest = max(rows, key=lambda x: (x.get("filed") or "", x.get("end") or ""))
+        same = [x for x in rows if x.get("accn") == latest.get("accn") and x.get("end") == latest.get("end")]
+        total = sum(float(x["val"]) for x in same)
+        if total <= 0:
+            return None
+        return {"shares": total, "as_of": latest.get("end"), "accession": latest.get("accn"),
+                "filed": latest.get("filed"), "form": latest.get("form")}
 
     def get_facts_dataframe(
         self,

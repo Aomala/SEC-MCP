@@ -192,6 +192,54 @@ def _drop_subtotals(rows: list[dict]) -> list[dict]:
     return rows
 
 
+def _consolidated_revenue(ticker: str, report_date: str | None, form_type: str) -> float | None:
+    """The filing's consolidated (undimensioned) revenue for the same period,
+    from companyfacts — the denominator segment coverage is measured against."""
+    if not report_date:
+        return None
+    try:
+        import pandas as pd
+
+        from sec_mcp.sec_client import get_sec_client
+        df = get_sec_client().get_facts_dataframe(ticker)
+        if df is None or df.empty:
+            return None
+        end = pd.to_datetime(str(report_date)[:10], errors="coerce")
+        lo, hi = (80, 100) if form_type in ("10-Q", "6-K") else (340, 400)
+        dur = (pd.to_datetime(df["end"], errors="coerce") - pd.to_datetime(df["start"], errors="coerce")).dt.days
+        near = df[((pd.to_datetime(df["end"], errors="coerce") - end).abs() <= pd.Timedelta(days=4))
+                  & dur.between(lo, hi)]
+        for concept in _REVENUE_CONCEPTS:
+            hit = near[near["concept"].astype(str).str.endswith(concept.split(":")[-1])]
+            hit = hit[hit["concept"].astype(str).str.split(":").str[-1] == concept.split(":")[-1]]
+            if not hit.empty:
+                hit = hit.sort_values("filed")
+                return float(hit["value"].iloc[-1])
+    except Exception as exc:
+        log.debug("consolidated revenue lookup failed for %s: %s", ticker, exc)
+    return None
+
+
+def _apply_coverage(rows: list[dict], total: float | None) -> dict:
+    """Measure a breakdown against consolidated revenue.
+
+    `pct` used to be value ÷ Σ(segments), so it always summed to 100% even
+    when the axis covered 42% of revenue (AMD) or double-counted it (CSX
+    163%, INTC 133%, BKR geography 152%). Partial axes now get pct of TOTAL
+    revenue; over-complete ones keep their relative split but are flagged —
+    the members overlap, so neither split is trustworthy.
+    """
+    if not rows or not total or total <= 0:
+        return {"coverage": None, "sumCheck": None}
+    s = sum(r["value"] for r in rows)
+    coverage = s / total
+    if coverage <= 1.02:
+        for r in rows:
+            r["pct"] = round(100 * r["value"] / total, 1)
+    check = "ok" if 0.98 <= coverage <= 1.02 else ("partial" if coverage < 0.98 else "exceeds_total")
+    return {"coverage": round(coverage, 4), "sumCheck": check}
+
+
 def get_dimensional_segments(ticker: str, form_type: str = "10-K") -> dict | None:
     """{'segments': [...], 'geographic_segments': [...], 'source_meta': {...}}
     from the latest filing's dimensional XBRL, or None when unavailable.
@@ -267,6 +315,13 @@ def get_dimensional_segments(ticker: str, form_type: str = "10-K") -> dict | Non
                         "geographyAxis": geo_axis,
                     },
                 }
+                meta = result["source_meta"]
+                total = _consolidated_revenue(ticker.upper(), meta.get("reportDate"),
+                                              meta.get("formType") or form_type)
+                seg_cov, geo_cov = _apply_coverage(segs, total), _apply_coverage(geo, total)
+                meta["totalRevenue"] = total
+                meta["segmentsCoverage"], meta["segmentsSumCheck"] = seg_cov["coverage"], seg_cov["sumCheck"]
+                meta["geographyCoverage"], meta["geographySumCheck"] = geo_cov["coverage"], geo_cov["sumCheck"]
     except Exception as exc:
         log.warning("dimensional segments failed for %s: %s", ticker, exc)
     with _lock:

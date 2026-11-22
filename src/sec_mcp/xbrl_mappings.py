@@ -971,6 +971,12 @@ CAPITAL_EXPENDITURES: list[ConceptEntry] = [
     ConceptEntry("PaymentsToAcquireOtherPropertyPlantAndEquipment",
                  "Capital Expenditures (other PP&E)"),
     ConceptEntry("PaymentsForCapitalImprovements", "Capital Improvements"),
+    # WDAY FY24 tags "capital expenditures, excluding owned real estate" here
+    # and owned real estate separately; without it the $4M real-estate line
+    # was served as all of capex (filed: $232M). The rollup in financials.py
+    # adds the real-estate line back.
+    ConceptEntry("PaymentsToAcquireOtherProductiveAssets",
+                 "Capital Expenditures (other productive assets)"),
     # REIT real-estate capex (property-owning REITs tag no generic PP&E line;
     # their capex is real-estate acquisition/development). Late fallbacks: only
     # reached when nothing above matched, so non-REITs are unaffected.
@@ -1088,6 +1094,28 @@ SHARES_OUTSTANDING: list[ConceptEntry] = [
                  "Weighted Avg Shares"),
     ConceptEntry("EntityCommonStockSharesOutstanding",
                  "Entity Common Shares Outstanding"),
+]
+
+# Weighted-average share counts (duration facts — the EPS denominators).
+# SHARES_OUTSTANDING above is a period-end/cover-page count; serving it as
+# FMP's weightedAverageShsOut AND weightedAverageShsOutDil made diluted a copy
+# of basic for every filer that reports dilution (Nov 2026 audit: 590 rows).
+WEIGHTED_SHARES_BASIC: list[ConceptEntry] = [
+    ConceptEntry("WeightedAverageNumberOfSharesOutstandingBasic",
+                 "Weighted Avg Shares (Basic)"),
+    ConceptEntry("WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
+                 "Weighted Avg Shares (Basic & Diluted)"),
+    # IFRS
+    ConceptEntry("WeightedAverageShares", "IFRS Weighted Avg Shares (Basic)"),
+]
+
+WEIGHTED_SHARES_DILUTED: list[ConceptEntry] = [
+    ConceptEntry("WeightedAverageNumberOfDilutedSharesOutstanding",
+                 "Weighted Avg Shares (Diluted)"),
+    ConceptEntry("WeightedAverageNumberOfShareOutstandingBasicAndDiluted",
+                 "Weighted Avg Shares (Basic & Diluted)"),
+    # IFRS
+    ConceptEntry("AdjustedWeightedAverageShares", "IFRS Weighted Avg Shares (Diluted)"),
 ]
 
 BOOK_VALUE_PER_SHARE: list[ConceptEntry] = [
@@ -1546,6 +1574,8 @@ CONCEPT_MAP: dict[str, list[ConceptEntry]] = {
     "eps_basic": EPS_BASIC,
     "eps_diluted": EPS_DILUTED,
     "shares_outstanding": SHARES_OUTSTANDING,
+    "weighted_shares_basic": WEIGHTED_SHARES_BASIC,
+    "weighted_shares_diluted": WEIGHTED_SHARES_DILUTED,
     "book_value_per_share": BOOK_VALUE_PER_SHARE,
     # ── REIT ──
     "reit_ffo": REIT_FFO,

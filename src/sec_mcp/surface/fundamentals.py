@@ -98,7 +98,19 @@ def _row_to_metrics(income: dict, balance: dict, cashflow: dict) -> dict:
         "grossMargin": round(gp / rev, 4) if (gp is not None and rev) else None,
         "operatingMargin": round(oi / rev, 4) if (oi is not None and rev) else None,
         "netMargin": round(ni / rev, 4) if (ni is not None and rev) else None,
-        "sharesOutstanding": g(income, "weightedAverageShsOut"),
+        # Period-end count when the row carries it (historyVersion ≥ 2); the
+        # weighted average is only the legacy stand-in.
+        "sharesOutstanding": g(income, "sharesOutstanding", "weightedAverageShsOut"),
+        # Additive — the TTM builder's tax rate, ROIC EBIT proxy, current
+        # ratio and EPS need these; without them effectiveTaxRate and
+        # currentRatio were null on every /api/metrics response.
+        "epsBasic": g(income, "eps"),
+        "sharesDiluted": g(income, "weightedAverageShsOutDil"),
+        "incomeTaxExpense": g(income, "incomeTaxExpense"),
+        "incomeBeforeTax": g(income, "incomeBeforeTax"),
+        "interestExpense": g(income, "interestExpense"),
+        "totalCurrentAssets": g(balance, "totalCurrentAssets"),
+        "totalCurrentLiabilities": g(balance, "totalCurrentLiabilities"),
     }
 
 
@@ -130,6 +142,8 @@ def _build_periods(ticker: str, period: str, periods_back: int) -> list[dict]:
             # Source filing form (10-K/10-Q/20-F/6-K) so callers can label the period
             "formType": (inc.get("_meta") or {}).get("formType"),
             "quality": (inc.get("_meta") or {}).get("quality"),
+            # Additive: per-share provenance (absent on pre-historyVersion-2 rows)
+            "epsSource": (inc.get("_meta") or {}).get("epsSource"),
             "metrics": _row_to_metrics(inc, bal, cf),
         })
     return periods

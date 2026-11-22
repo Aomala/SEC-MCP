@@ -39,6 +39,16 @@ _available: bool | None = None
 # Cache TTLs by data type (seconds). Freshness comes from the weekly batch
 # rewrite cadence (batch_cache --refresh-older-than), not TTL expiry — TTLs
 # are the backstop that keeps abandoned entries from serving forever.
+# Extraction-derived blobs carry `_dataVersion`. Bump DATA_VERSION when the
+# extraction or history arithmetic changes what a cached value MEANS; readers
+# then treat older blobs as stale (served, refreshed in the background).
+# 2 = Nov 2026 data audit (weighted shares, filed 3-month EPS, basis guards,
+# split adjustment, OI-based EBITDA, equity-repair gating, TTM tax/current).
+DATA_VERSION = 2
+VERSIONED_DATA_TYPES = frozenset({
+    "financials", "sec_income_history_v2", "ttm_metrics", "quarter_metrics",
+})
+
 CACHE_TTLS = {
     "financials": 1209600,      # 14 days — a filed document is immutable but the
                                 #   '|latest' key REBINDS at each new filing, so a
@@ -147,8 +157,15 @@ def get_entry(
                 age_days = max((now - dt).total_seconds() / 86400, 0.0)
             except (ValueError, TypeError):
                 pass
+        data = row["data"]
+        # An extraction blob written by older code is still served (and still
+        # "fresh" to get_cached — flipping it would send every fresh-only
+        # reader cold on deploy), but `outdated` tells stale-while-revalidate
+        # callers to rebuild it behind the response.
+        outdated = (data_type in VERSIONED_DATA_TYPES and isinstance(data, dict)
+                    and (data.get("_dataVersion") or 0) < DATA_VERSION)
         log.debug("Supabase cache %s: %s", "stale hit" if stale else "hit", key)
-        return {"data": row["data"], "stale": stale, "age_days": age_days}
+        return {"data": data, "stale": stale, "outdated": outdated, "age_days": age_days}
     except Exception as exc:
         log.debug("Supabase cache read failed: %s", exc)
         return None
@@ -188,6 +205,8 @@ def set_cached(
         return False
 
     key = _cache_key(ticker, data_type, period, date_from, date_to)
+    if data_type in VERSIONED_DATA_TYPES and isinstance(data, dict):
+        data = {**data, "_dataVersion": DATA_VERSION}
     if ttl is None:
         ttl = CACHE_TTLS.get(data_type, _SECTION_TTL if data_type.startswith("section_") else 3600)
     expires = datetime.now(timezone.utc) + timedelta(seconds=ttl)

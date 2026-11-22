@@ -44,12 +44,24 @@ def _row(fy, label, report_date, *, is_ytd, **metrics):
 # ─── _recompute_derived_quarter_metrics ──────────────────────────────────────
 
 class TestRecomputePerShare:
-    def test_shares_available_uses_ni_over_shares(self):
+    def test_period_end_shares_are_not_an_eps_source(self):
+        """NI ÷ period-end shares ignored weighting, dilution and preferred
+        dividends (Nov 2026 audit: GS/BAC quarterly EPS 7-13% high, eps ==
+        epsDiluted everywhere). With no filed 3-month EPS and no YTD
+        neighbour, the honest answer is None."""
         cm = {"net_income": 1000.0, "shares_outstanding": 400.0,
               "eps_basic": 7.5, "eps_diluted": 7.4}  # stale YTD values
         _recompute_derived_quarter_metrics(cm)
-        assert cm["eps_basic"] == 2.5
-        assert cm["eps_diluted"] == 2.5
+        assert cm["eps_basic"] is None
+        assert cm["eps_diluted"] is None
+
+    def test_filed_three_month_eps_wins(self):
+        cm = {"net_income": 1000.0, "eps_basic": 7.5, "eps_diluted": 7.4}
+        src = _recompute_derived_quarter_metrics(
+            cm, prior_eps={"eps_basic": 5.0, "eps_diluted": 4.95},
+            direct={"eps_basic": 2.53, "eps_diluted": 2.49})
+        assert src == "reported"
+        assert (cm["eps_basic"], cm["eps_diluted"]) == (2.53, 2.49)
 
     def test_no_shares_falls_back_to_ytd_diff(self):
         cm = {"net_income": 1000.0, "eps_basic": 7.5, "eps_diluted": 7.4}
