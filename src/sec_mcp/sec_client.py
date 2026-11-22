@@ -17,6 +17,7 @@ import logging
 import re
 import threading
 import time
+from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -98,6 +99,23 @@ def get_form_alternatives(form_type: str) -> list[str]:
 def is_annual_form(form_type: str) -> bool:
     """Check if a form type is an annual filing (10-K or 20-F)."""
     return form_type in _ANNUAL_FORMS
+
+
+def fiscal_year_end_from_submissions(data: dict) -> str | None:
+    """Use the latest annual report period when EDGAR omits fiscalYearEnd."""
+    stated = data.get("fiscalYearEnd")
+    if stated:
+        return stated
+    recent = data.get("filings", {}).get("recent", {})
+    annual_ends = []
+    for form, period in zip(recent.get("form", []), recent.get("reportDate", [])):
+        if form not in ("10-K", "20-F", "40-F") or not period:
+            continue
+        try:
+            annual_ends.append(date.fromisoformat(period))
+        except (TypeError, ValueError):
+            continue
+    return max(annual_ends).strftime("%m%d") if annual_ends else None
 
 
 def is_quarterly_form(form_type: str) -> bool:
@@ -404,7 +422,7 @@ class SECClient:
             ticker=ticker,
             industry=data.get("sicDescription"),
             sic_code=data.get("sic"),
-            fiscal_year_end=data.get("fiscalYearEnd"),
+            fiscal_year_end=fiscal_year_end_from_submissions(data),
             website=website,
         )
 

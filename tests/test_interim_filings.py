@@ -9,7 +9,7 @@ from sec_mcp import financials
 from sec_mcp.facts import interim
 from sec_mcp.ingest_monthly import ingest_month, month_filings
 from sec_mcp.models import CompanyInfo, FilingMetadata
-from sec_mcp.sec_client import SECClient
+from sec_mcp.sec_client import SECClient, fiscal_year_end_from_submissions
 from sec_mcp.surface.filings import _expand_forms
 
 
@@ -259,3 +259,21 @@ def test_month_index_includes_untagged_forms_and_amendments():
         month_filings("temporary service error", "2026-10")
     with pytest.raises(ValueError):
         ingest_month("2026-11", date(2026, 11, 21))
+
+
+def test_missing_fiscal_year_end_uses_latest_annual_report_date():
+    submissions = {
+        "fiscalYearEnd": None,
+        "filings": {
+            "recent": {
+                "form": ["6-K", "20-F", "20-F", "20-F"],
+                "reportDate": ["2026-08-20", "2025-03-31", "2026-03-31", ""],
+                "filingDate": ["2026-08-20", "2025-06-26", "2026-05-20", ""],
+            }
+        },
+    }
+    year_end = fiscal_year_end_from_submissions(submissions)
+    assert year_end == "0331"
+    assert interim.parse_release("BABA", BABA, "2026-08-20", year_end)[1] == (2027, "Q1")
+    assert fiscal_year_end_from_submissions({"fiscalYearEnd": "0930"}) == "0930"
+    assert fiscal_year_end_from_submissions({}) is None

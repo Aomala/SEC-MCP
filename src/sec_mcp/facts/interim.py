@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 
 from bs4 import BeautifulSoup
 
-from sec_mcp.sec_client import SEC_BASE, get_sec_client
+from sec_mcp.sec_client import SEC_BASE, fiscal_year_end_from_submissions, get_sec_client
 
 # Exhibit 99.1 release formats validated against the issuers' quarterly disclosures.
 # For other issuers the regular accession-scoped XBRL resolver supplies financials.
@@ -203,7 +203,7 @@ def release_quarters(ticker, limit, covered):
     from sec_mcp.core.fx import convert_metrics_to_usd
 
     cik, phrase = _RELEASES[ticker]
-    year_end = get_sec_client()._get_submissions(cik).get("fiscalYearEnd")
+    year_end = fiscal_year_end_from_submissions(get_sec_client()._get_submissions(cik))
     hits = _release_hits(cik, phrase, date.today())
     results = []
     for hit in sorted(hits, key=lambda h: h["_source"].get("file_date", ""), reverse=True):

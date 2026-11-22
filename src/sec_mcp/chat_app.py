@@ -41,7 +41,7 @@ import time
 import traceback
 from pathlib import Path
 
-from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1804,7 +1804,7 @@ def get_segments(ticker: str, period: str = "annual"):
 def get_financials_history(ticker: str, bg: BackgroundTasks,
                                   period: str = "annual",
                                   date_from: str = "", date_to: str = "",
-                                  limit: int = 10):
+                                  limit: int = 10, response: Response = None):
     """Multi-year income statement, balance sheet, and cash flow data from FMP.
 
     Used by the frontend for date-range chart rendering.
@@ -1839,6 +1839,8 @@ def get_financials_history(ticker: str, bg: BackgroundTasks,
             if date_to:
                 rows = [r for r in rows if r.get("date", "") <= date_to]
             out[key] = rows[:want]
+        if response is not None and not full.get("income"):
+            response.headers["Cache-Control"] = "no-store"
         out.pop("_cached_at", None)
         return out
 
@@ -1882,6 +1884,8 @@ def get_financials_history(ticker: str, bg: BackgroundTasks,
     try:
         return _slice(_compute_and_cache())
     except Exception as exc:
+        if response is not None:
+            response.headers["Cache-Control"] = "no-store"
         log.warning("SEC history fetch failed for %s: %s", tk, exc)
         return {"ticker": tk, "error": str(exc), "income": [], "balance": [], "cashflow": []}
 
