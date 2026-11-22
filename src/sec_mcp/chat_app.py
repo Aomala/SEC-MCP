@@ -1854,12 +1854,12 @@ def get_financials_history(ticker: str, bg: BackgroundTasks,
     cached = entry["data"] if entry else None
     # Old 6-K rows could echo another accession's figures. Rebuild those on read.
     from sec_mcp.facts.interim import has_release_format
-    if period == "quarter" and cached and not cached.get("interimVersion"):
-        if has_release_format(tk) or any(
-            (r.get("_meta") or {}).get("formType") in {"6-K", "6-K/A", "20-F", "40-F"}
-            for r in cached.get("income", [])
-        ):
-            cached = None
+    if (period == "quarter" and cached and not cached.get("interimVersion")
+            and (has_release_format(tk) or any(
+                (r.get("_meta") or {}).get("formType") in {"6-K", "6-K/A", "20-F", "40-F"}
+                for r in cached.get("income", [])
+            ))):
+        cached = None
     if cached:
         cached_at = cached.get("_cached_at") or 0
         # Refresh on EITHER trigger — a stale row past expiry AND a row older
