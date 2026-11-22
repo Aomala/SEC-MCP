@@ -108,7 +108,7 @@ def fiscal_year_end_from_submissions(data: dict) -> str | None:
         return stated
     recent = data.get("filings", {}).get("recent", {})
     annual_ends = []
-    for form, period in zip(recent.get("form", []), recent.get("reportDate", [])):
+    for form, period in zip(recent.get("form", []), recent.get("reportDate", []), strict=False):
         if form not in ("10-K", "20-F", "40-F") or not period:
             continue
         try:
