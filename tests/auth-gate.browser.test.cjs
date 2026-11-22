@@ -43,10 +43,11 @@ async function setup(options = {}) {
 }
 
 test('JWT goes only to the trusted exact API origin; external fetches remain untouched',async()=>{
-  const ctx=await setup({session:session()}); const {w,calls,dom}=ctx;
+  const signedInSession = session();
+  const ctx=await setup({session:signedInSession}); const {w,calls,dom}=ctx;
   await w.fetch('/api/entity/AAPL');
   assert.equal(calls.at(-1).url,api+'/api/entity/AAPL');
-  assert.equal(calls.at(-1).headers.get('Authorization'),'Bearer '+access());
+  assert.equal(calls.at(-1).headers.get('Authorization'),'Bearer '+signedInSession.access_token);
   assert.equal(calls.at(-1).redirect,'error');
   for(const url of ['https://attacker.example/api/entity/AAPL',api+'.attacker.example/api/entity/AAPL',api+'/public/logo.png','https://world.example/maps.json']){
     await w.fetch(url);assert.equal(calls.at(-1).url,url);assert.equal(calls.at(-1).headers.get('Authorization'),null);

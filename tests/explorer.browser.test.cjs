@@ -600,3 +600,17 @@ test('a quarter without normalized data offers access to the original filings', 
   assert.equal(link.hidden, false);
   assert.equal(new URL(link.href).searchParams.get('CIK'), 'TSM');
 });
+
+test('6-K exhibit metrics display in the filed currency and revalidate stale HTTP history', async t => {
+  const history = historyData();
+  const row = history.income[0];
+  Object.assign(row, { cik: 1046179, date: '2026-06-30', period: 'Q2', revenue: 38519222301,
+    netIncome: 21423666402, _meta: { formType: '6-K', accession: '0001046179-26-000451',
+      quality: 'standalone', filingCurrency: 'TWD', fxRate: 0.030321,
+      sources: { revenue: 'https://www.sec.gov/Archives/edgar/data/1046179/000104617926000451/a2q26e_withguidancexfinal.htm' } } });
+  const ctx = await setup({ history, url: 'https://fineasmcp.vercel.app/explorer?ticker=TSM&period=quarterly&year=2026&quarter=Q2' });
+  t.after(() => ctx.dom.window.close());
+  assert.equal(ctx.w.document.getElementById('kpi-rev').textContent, 'NT$1270.4B');
+  assert.match(ctx.w.document.getElementById('prov').textContent, /SEC filing exhibit/);
+  assert.equal(ctx.requests.find(req => req.url.pathname.includes('/financials-history/')).init.cache, 'no-cache');
+});

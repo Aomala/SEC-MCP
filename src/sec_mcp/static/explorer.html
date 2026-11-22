@@ -89,7 +89,9 @@ const BASE = {
 const API_BASE = window.FineasAccount.apiBase;
 
 async function getJSON(url, signal) {
-  const r = await fetch(url.startsWith("/api/") ? API_BASE + url : url, { signal });
+  const options = { signal };
+  if (url.startsWith("/api/financials-history/")) options.cache = "no-cache";
+  const r = await fetch(url.startsWith("/api/") ? API_BASE + url : url, options);
   const data = await r.json().catch(() => null);
   if (!r.ok) {
     const detail = data && (data.detail || data.error);
@@ -447,6 +449,19 @@ const companyNames = new Map(COMMON_COMPANIES.map(company => [company.ticker, co
 const finite = value => typeof value === "number" && Number.isFinite(value) ? value : null;
 const periodLabel = row => (row.fiscalPeriod === "FY" ? "FY " : row.fiscalPeriod + " FY ") + row.fiscalYear;
 
+function statementUnits(row) {
+  const meta = row._meta || {}, currency = row.reportedCurrency || "USD";
+  // Monetary 6-K metrics can arrive normalized to USD. Recover the filing units
+  // with the exact rate carried on this statement so the exhibit and UI reconcile.
+  if (/^6-K(?:\/A)?$/.test(meta.formType) && currency === "USD" &&
+      /^[A-Z]{3}$/.test(meta.filingCurrency) && meta.filingCurrency !== "USD" &&
+      Number.isFinite(meta.fxRate) && meta.fxRate > 0) {
+    return { currency: meta.filingCurrency, rate: meta.fxRate };
+  }
+  return { currency, rate: 1 };
+}
+const filedAmount = (value, units) => Number.isFinite(value) ? value / units.rate : null;
+
 function historyPeriods(history, mode) {
   const cashflows = new Map((history.cashflow || []).map(row => [row.date, row]));
   const periods = new Map();
@@ -456,20 +471,22 @@ function historyPeriods(history, mode) {
     if (!/^\d{4}$/.test(fiscalYear) || !/^\d{4}-\d{2}-\d{2}$/.test(row.date || "")) continue;
     if (mode === "quarter" ? !/^Q[1-4]$/.test(fiscalPeriod) || meta.isYtd || meta.quality === "ytd_fallback" : fiscalPeriod !== "FY") continue;
     const cf = cashflows.get(row.date) || {};
+    const units = statementUnits(row), cfUnits = statementUnits(cf);
     const cashflowMatches = String(cf.fiscalYear) === fiscalYear && cf.period === fiscalPeriod &&
-      (cf.reportedCurrency || "USD") === (row.reportedCurrency || "USD") &&
+      cfUnits.currency === units.currency &&
       !(mode === "quarter" && ((cf._meta || {}).isYtd || (cf._meta || {}).quality === "ytd_fallback"));
-    const revenue = finite(row.revenue), netIncome = finite(row.netIncome);
-    const ocf = cashflowMatches ? finite(cf.operatingCashFlow) : null;
-    const capex = cashflowMatches ? finite(cf.capitalExpenditure) : null;
+    const revenue = filedAmount(row.revenue, units), netIncome = filedAmount(row.netIncome, units);
+    const ocf = cashflowMatches ? filedAmount(cf.operatingCashFlow, cfUnits) : null;
+    const capex = cashflowMatches ? filedAmount(cf.capitalExpenditure, cfUnits) : null;
     const freeCashFlow = ocf != null && capex != null ? ocf - Math.abs(capex)
-      : cashflowMatches ? finite(cf.freeCashFlow) : null;
+      : cashflowMatches ? filedAmount(cf.freeCashFlow, cfUnits) : null;
     const value = {
-      endDate: row.date, fiscalYear, fiscalPeriod, currency: row.reportedCurrency || "USD",
+      endDate: row.date, fiscalYear, fiscalPeriod, currency: units.currency,
+      exhibit: /^https:\/\/www\.sec\.gov\/Archives\//.test(meta.sources?.revenue || ""),
       cik: row.cik, accession: meta.accession, formType: meta.formType, quality: meta.quality,
       metrics: { revenue, netIncome, freeCashFlow, operatingCashFlow: ocf, capitalExpenditure: capex,
-        grossProfit: finite(row.grossProfit),
-        operatingIncome: finite(row.operatingIncome), netMargin: revenue && netIncome != null ? netIncome / revenue : null },
+        grossProfit: filedAmount(row.grossProfit, units),
+        operatingIncome: filedAmount(row.operatingIncome, units), netMargin: revenue && netIncome != null ? netIncome / revenue : null },
     };
     const key = fiscalYear + fiscalPeriod;
     if (!periods.has(key) || periods.get(key).endDate < row.date) periods.set(key, value);
@@ -560,7 +577,7 @@ function renderDetails() {
   const latest = overview.latest || {};
   const matchesLatest = latest.endDate === selected.endDate && latest.fiscalPeriod === selected.fiscalPeriod && String(latest.fiscalYear) === selected.fiscalYear;
   const sameNumbers = matchesLatest && latest.metrics?.revenue === selected.metrics.revenue && latest.metrics?.netIncome === selected.metrics.netIncome;
-  renderProvenance({ latest: selected, crossCheck: sameNumbers ? overview.crossCheck : null, meta: { source: "edgar:xbrl_companyfacts" } }, loading);
+  renderProvenance({ latest: selected, crossCheck: sameNumbers ? overview.crossCheck : null, meta: { source: selected.exhibit ? "SEC filing exhibit" : "edgar:xbrl_companyfacts" } }, loading);
   $("t-geo").textContent = "Geographic Revenue · " + periodLabel(selected);
   $("t-seg").textContent = "Revenue by Segment · " + periodLabel(selected);
   $("status").textContent = ticker + " · " + (selected.formType || "") + " " + selected.fiscalPeriod + " " + selected.fiscalYear +
