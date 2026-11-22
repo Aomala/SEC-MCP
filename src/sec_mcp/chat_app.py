@@ -229,6 +229,12 @@ app.include_router(_account_router)
 install_error_handlers(app)
 install_rate_headers(app)
 
+# Install last: even cached/304 responses must pass account authentication and
+# the shared quota before data leaves the origin.
+from sec_mcp.commerce.account_gate import install_account_gate  # noqa: E402
+
+install_account_gate(app)
+
 
 @app.on_event("startup")
 async def _start_metering():

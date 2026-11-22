@@ -12,6 +12,7 @@ license = "MIT"
 dependencies = [
     # Direct SEC EDGAR HTTP client
     "requests>=2.31",
+    "httpx>=0.27",
     "beautifulsoup4>=4.12",
     # Per-filing dimensional XBRL (segments) + calc-tree graphs — lazy-imported
     # by graph/, but load-bearing in prod: without it segments silently degrade

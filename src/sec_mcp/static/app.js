@@ -52,12 +52,7 @@ const _dataCache = {};
  * API base URL: use Railway directly when deployed on Vercel to avoid
  * Vercel's 10s rewrite timeout. On localhost, use relative paths.
  */
-const API_BASE = (function() {
-  const host = window.location.hostname;
-  if (host === 'localhost' || host === '127.0.0.1') return '';
-  // Deployed on Vercel or elsewhere → call Railway API directly
-  return 'https://sec-mcp-production.up.railway.app';
-})();
+const API_BASE = window.FineasAccount.apiBase;
 
 /**
  * Demo budget: a persistent per-browser id lets the API meter public demo
@@ -79,13 +74,16 @@ const DEMO_ID = (function() {
 
 const _origFetch = window.fetch.bind(window);
 window.fetch = function(input, init) {
-  const url = typeof input === 'string' ? input : ((input && input.url) || '');
-  const isApi = API_BASE
-    ? url.indexOf(API_BASE) === 0
-    : url.indexOf('/api/') === 0;
+  const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+  const isApi = url.origin === new URL(API_BASE || window.location.origin).origin &&
+    /^\/(api|v1)(\/|$)/.test(url.pathname);
   if (DEMO_ID && isApi) {
-    init = init || {};
-    init.headers = Object.assign({}, init.headers || {}, { 'X-Demo-Id': DEMO_ID });
+    // Preserve a Request's headers/body/signal, including Headers instances.
+    const request = new Request(input instanceof Request ? input : url, init);
+    const headers = new Headers(request.headers);
+    headers.set('X-Demo-Id', DEMO_ID);
+    input = new Request(request, { headers });
+    init = undefined;
   }
   return _origFetch(input, init).then(function(res) {
     if (res.status === 429 && isApi) {
@@ -180,7 +178,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initResearchQueryClicks();
 
   // Load screener sector options
-  loadScreenerSectors();
+  const requestedView = new URLSearchParams(location.search).get('view');
+  if (['comps','filings','screener'].includes(requestedView)) switchView(requestedView);
 
   // Log initialization complete
   console.log('[Fineas.ai] Application initialized');
@@ -716,6 +715,7 @@ function initNavigation() {
  */
 function switchView(view) {
   _activeView = view;
+  if (!['comps','filings','screener'].includes(view)) delete document.body.dataset.tool;
 
   // Update sidebar active state
   document.querySelectorAll('.nav-item').forEach((i) => i.classList.remove('active'));
@@ -745,6 +745,8 @@ function switchView(view) {
     // Show the matching panel
     const panel = document.getElementById('panel-' + view);
     if (panel) { panel.style.display = 'block'; panel.classList.remove('fade-in'); void panel.offsetWidth; panel.classList.add('fade-in'); }
+
+    if (window.FineasTools?.activate(view)) return;
 
     // Trigger data loading for each view
     if (view === 'statements' && _curData) renderFullStatement('income');
@@ -4732,7 +4734,8 @@ function initKeyboardShortcuts() {
 /**
  * Export current dashboard data as JSON.
  */
-function exportData() {
+async function exportData() {
+  if (!await window.FineasAccount.allowExport()) return;
   if (!_curData) {
     showError('No data to export');
     return;
@@ -4972,7 +4975,8 @@ function refreshData() {
 // EXPORT MENU
 // ============================================================
 
-function showExportMenu() {
+async function showExportMenu() {
+  if (!await window.FineasAccount.allowExport()) return;
   if (!_tk) { showError('Load a company first'); return; }
   const modal = document.getElementById('modal');
   const title = document.getElementById('m-title');

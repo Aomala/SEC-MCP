@@ -1,202 +1,53 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <link rel="stylesheet" href="/static/auth-gate.css?v=1">
+  <script src="/static/auth-gate.js?v=1"></script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SEC Data Explorer</title>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="/static/styles/tokens.css?v=20261011-tools3">
 <style>
-  :root {
-    /* zinc tokens — one design language across /, /filings, /explorer */
-    --bg: #09090b; --panel: #18181b; --panel2: #1f1f23; --line: #27272a;
-    --text: #f4f4f5; --dim: #a1a1aa; --accent: #3b82f6;
-    --green: #10b981; --red: #ef4444; --gold: #f59e0b;
-  }
-  /* ── persistent app sidebar (same nav on every page) ── */
-  #appnav { position: fixed; inset: 0 auto 0 0; width: 184px; z-index: 20;
-            border-right: 1px solid var(--line); background: var(--bg);
-            display: flex; flex-direction: column; padding: 14px 10px; gap: 2px; }
-  #appnav .brand { display: flex; align-items: center; gap: 8px; padding: 2px 10px 14px;
-                   font-weight: 700; font-size: 14px; }
-  #appnav .brand img { border-radius: 50%; }
-  #appnav a { display: block; padding: 7px 10px; border-radius: 8px; color: var(--dim);
-              text-decoration: none; font-size: 13px; }
-  #appnav a:hover { background: #ffffff08; color: var(--text); }
-  #appnav a.on { background: var(--panel); color: var(--text); font-weight: 500;
-                 box-shadow: inset 0 0 0 1px var(--line); }
-  #appnav .grow { flex: 1; }
-  #appnav .foot { color: #71717a; font-size: 11px; padding: 8px 10px; }
-  header, main { margin-left: 184px; }
-  @media (max-width: 900px) { #appnav { display: none; } header, main { margin-left: 0; } }
-  * { box-sizing: border-box; margin: 0; }
-  body { background: var(--bg); color: var(--text);
-         font: 15px/1.6 -apple-system, "Inter", "Segoe UI", sans-serif;
-         -webkit-font-smoothing: antialiased; }
-
-  /* ── header: sticky, roomy ─────────────────────────────────────────── */
-  header { position: sticky; top: 0; z-index: 10; display: flex; align-items: center;
-           gap: 14px; padding: 16px 28px; background: rgba(11,13,16,.85);
-           backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 16px; font-weight: 650; letter-spacing: .2px; }
-  header .sub { color: var(--dim); font-size: 12.5px; margin-right: auto; }
-  input, select, button {
-    background: var(--panel); color: var(--text); border: 1px solid var(--line);
-    border-radius: 9px; padding: 9px 13px; font-size: 13px; outline: none;
-  }
-  input { width: 92px; text-transform: uppercase; font-weight: 600; letter-spacing: .5px; }
-  input:focus, select:focus { border-color: var(--accent); }
-  button { cursor: pointer; transition: background .15s, border-color .15s; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
-  button.primary:hover { background: #5d8df5; }
-  #status { color: var(--dim); font-size: 12px; }
-
-  /* ── single-column readable flow ───────────────────────────────────── */
-  main { max-width: 980px; margin: 0 auto; padding: 26px 28px 64px;
-         display: flex; flex-direction: column; gap: 26px; }
-  .section-title { font-size: 13px; font-weight: 650; color: var(--dim);
-                   text-transform: uppercase; letter-spacing: 1px;
-                   margin-bottom: 14px; display: flex; align-items: center; gap: 10px; }
-  .card { background: var(--panel); border: 1px solid var(--line);
-          border-radius: 16px; padding: 22px 24px; }
-  .chart { width: 100%; height: 320px; }
-
-  /* ── KPI tiles: count-up, generous ─────────────────────────────────── */
-  #kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-  .kpi { background: var(--panel); border: 1px solid var(--line);
-         border-radius: 16px; padding: 18px 20px; }
-  .kpi .k-label { font-size: 11px; font-weight: 600; color: var(--dim);
-                  text-transform: uppercase; letter-spacing: .7px;
-                  display: flex; align-items: center; gap: 7px; }
-  .kpi .k-value { font-size: 30px; font-weight: 680; letter-spacing: -.8px;
-                  margin-top: 8px; font-variant-numeric: tabular-nums; line-height: 1.1; }
-  .kpi .k-sub { font-size: 12.5px; color: var(--dim); margin-top: 5px;
-                font-variant-numeric: tabular-nums; }
-  .k-sub .up { color: var(--green); } .k-sub .down { color: var(--red); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
-         background: var(--dim); }
-  .dot.live { background: var(--green); box-shadow: 0 0 0 3px rgba(52,192,139,.18); }
-
-  /* ── provenance + form-type badge ──────────────────────────────────── */
-  #prov { display: flex; gap: 9px; align-items: center; flex-wrap: wrap;
-          font-size: 12.5px; color: var(--dim); }
-  .pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px;
-          background: var(--panel); white-space: nowrap; }
-  .pill.ok { color: var(--green); border-color: rgba(52,192,139,.35); }
-  .pill.warn { color: var(--gold); border-color: rgba(217,164,65,.35); }
-  /* the form-type badge — the proof the view is dynamic by filing */
-  .form-badge { font-weight: 700; letter-spacing: .4px; border-radius: 8px;
-                padding: 4px 11px; font-size: 12.5px; border: 1px solid transparent; }
-  .form-badge.annual { color: #9cc0ff; background: rgba(79,130,243,.13); border-color: rgba(79,130,243,.4); }
-  .form-badge.quarter { color: #74d6ac; background: rgba(52,192,139,.12); border-color: rgba(52,192,139,.4); }
-  .form-badge.event  { color: #e8c478; background: rgba(217,164,65,.12); border-color: rgba(217,164,65,.4); }
-
-  /* ── two-pane (chart + ranked list) for geo & segments ─────────────── */
-  .split { display: grid; grid-template-columns: 1.45fr 1fr; gap: 20px; align-items: stretch; }
-  .pane-chart { height: 340px; }
-  .ranked { display: flex; flex-direction: column; gap: 11px; justify-content: center;
-            max-height: 340px; overflow-y: auto; }
-  .rrow { opacity: 0; transform: translateY(6px);
-          transition: opacity .4s ease, transform .4s ease; }
-  .rrow.in { opacity: 1; transform: none; }
-  .rrow .r-head { display: flex; justify-content: space-between; align-items: baseline;
-                  font-size: 13px; margin-bottom: 5px; }
-  .rrow .r-name { color: var(--text); font-weight: 500; }
-  .rrow .r-val { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-  .rrow .r-bar { height: 6px; border-radius: 4px; background: var(--line); overflow: hidden; }
-  .rrow .r-fill { height: 100%; width: 0; border-radius: 4px;
-                  transition: width .8s cubic-bezier(.16,1,.3,1); }
-  .empty { color: var(--dim); font-size: 13px; padding: 28px 4px; text-align: center; }
-
-  @media (max-width: 820px) {
-    #kpis { grid-template-columns: repeat(2, 1fr); }
-    .split { grid-template-columns: 1fr; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .rrow, .rrow .r-fill { transition: none; }
-  }
-
-  /* ── deep-link focus ────────────────────────────────────────────────
-     fineas.ai links a figure straight here (?ticker=NVDA&focus=trend).
-     The visitor arrives mid-page looking for ONE number, so the target
-     announces itself for a beat instead of making them hunt. */
-  .focus-hit { animation: focus-pulse 2.4s ease-out 1; border-radius: 12px; }
-  @keyframes focus-pulse {
-    0%, 55% { box-shadow: 0 0 0 2px var(--accent), 0 0 26px -4px var(--accent); }
-    100%    { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .focus-hit { animation: none; box-shadow: 0 0 0 2px var(--accent); }
-  }
+*{box-sizing:border-box} [hidden]{display:none!important} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 "Avenir Next","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased} button,input,select,textarea{font:inherit} a{color:var(--accent);text-decoration:none} button,a,input,select,textarea{outline-offset:4px} :focus-visible{outline:2px solid var(--accent)} button{cursor:pointer} button:disabled{cursor:default;opacity:.45} input,select,textarea,button{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:9px 12px} button:hover:not(:disabled){background:var(--panel2)} button.primary{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:650} button.primary:hover:not(:disabled){filter:brightness(1.07);background:var(--accent)}
+.topbar{height:66px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 max(24px,calc((100vw - 1424px)/2));gap:24px}.brand{display:flex;align-items:center;gap:10px;font-size:19px;color:var(--text);font-weight:650}.brand img{border-radius:50%}.topbar nav{display:flex;gap:24px;font-size:13px}.topbar nav a{color:var(--dim)}.topbar nav a.on{color:var(--text)}
+header{max-width:1424px;margin:auto;padding:30px 24px 20px}.heading-row{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:22px}h1{font-size:30px;font-weight:600;letter-spacing:-1px;line-height:1.2;margin:0 0 6px}h2,h3,p{margin:0}.sub{color:var(--dim);font-size:13px}.period-controls,.explorer-controls,.control-bar{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.control-bar{padding:15px;background:var(--panel);border:1px solid var(--line);border-radius:12px;gap:18px}.period-filter{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--dim)}.period-filter select{min-width:103px}#ticker{width:86px;text-transform:uppercase;font-weight:650}#period{min-width:116px}#company-toggle{display:flex;align-items:center;gap:16px;white-space:nowrap}#company-toggle svg{width:14px;height:14px}.control-actions{display:flex;gap:6px;align-items:center;margin-left:auto}.period-step{padding:9px 13px}.status-row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:12px;font-size:12px;color:var(--dim)}#status:empty{display:none}.company-picker{position:relative}.company-popover{position:absolute;top:calc(100% + 8px);left:0;width:340px;max-width:calc(100vw - 48px);padding:10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);z-index:30}#company-search{width:100%}#company-search-status{padding:9px 8px 5px;font-size:12px;color:var(--dim)}#company-options{list-style:none;padding:0;margin:0;max-height:300px;overflow:auto}.company-option{display:flex;gap:12px;padding:10px 8px;border-radius:6px;cursor:pointer}.company-option:hover,.company-option[aria-selected=true]{background:var(--panel2)}.company-symbol{min-width:55px;font-weight:650}.company-name{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.workspace{max-width:1424px;margin:auto;padding:0 24px 48px;display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:24px;align-items:start}main{min-width:0}.view-tabs{display:flex;border-bottom:1px solid var(--line);gap:24px;margin-bottom:20px}.view-tabs button{border:0;border-radius:0;background:transparent;padding:12px 0;color:var(--dim);border-bottom:2px solid transparent}.view-tabs button[aria-selected=true]{color:var(--text);border-bottom-color:var(--accent)}#kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0 0 24px;border-bottom:1px solid var(--line);padding-bottom:20px;gap:18px}.kpi{min-width:0}.kpi+.kpi{border-left:1px solid var(--line);padding-left:18px}.k-label{font-size:12px;color:var(--dim);display:flex;gap:6px;flex-wrap:wrap}.k-value{font-size:30px;font-weight:600;letter-spacing:-1px;line-height:1.2;margin:9px 0 5px;font-variant-numeric:tabular-nums}.k-sub{color:var(--dim);font-size:12px;font-variant-numeric:tabular-nums}.up{color:var(--green)}.down{color:var(--red)}#card-price{text-align:right}#card-price .k-label{justify-content:flex-end}#card-price .k-value{font-size:22px;margin:3px 0}.dot{width:6px;height:6px;background:var(--dim);border-radius:50%;display:inline-block;align-self:center}.dot.live{background:var(--green)}
+.section-head{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:15px}.section-title{font-size:15px;font-weight:600;letter-spacing:-.2px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}.chart{width:100%;height:310px}.chart-hint{color:var(--dim);font-size:11px;margin-top:10px}.brief{margin-bottom:24px;border-left:2px solid var(--accent);padding-left:15px}.brief h2{font-size:14px;margin-bottom:8px}.brief p{font-size:13px;color:var(--dim);margin:6px 0}.brief strong{color:var(--text);font-weight:550}#sec-trend{margin-bottom:24px}#prov{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--dim);padding:17px 0;border-top:1px solid var(--line)}.pill{padding:0 9px 0 0;border-right:1px solid var(--line)}.pill.ok{color:var(--green)}.pill.warn{color:var(--gold)}.form-badge{color:var(--accent);font-weight:650}#filing-link{display:inline-block;font-size:12px;margin-bottom:16px}.split{display:grid;grid-template-columns:1fr 1fr;gap:20px}.split:has(.pane-chart[hidden]){display:block}.pane-chart{height:250px}.ranked{display:flex;flex-direction:column;gap:13px;justify-content:center;max-height:320px;overflow:auto}.r-head{display:flex;justify-content:space-between;gap:12px;font-size:12px;margin-bottom:6px}.r-val{color:var(--dim);white-space:nowrap}.r-bar{height:5px;border-radius:3px;background:var(--line);overflow:hidden}.r-fill{height:100%;width:0;border-radius:3px;transition:width .25s}.empty{color:var(--dim);font-size:13px;padding:22px 8px}.breakdown-section{margin-bottom:20px}.table-scroll{overflow:auto;border:1px solid var(--line);border-radius:10px}.financial-table{border-collapse:collapse;width:100%;font-size:12px;white-space:nowrap}.financial-table th,.financial-table td{padding:13px 15px;border-bottom:1px solid var(--line);text-align:right;font-variant-numeric:tabular-nums}.financial-table th:first-child{position:sticky;left:0;background:var(--panel);text-align:left;z-index:1;font-weight:500}.financial-table td.selected{background:var(--panel2)}.financial-table button{font-size:11px;padding:6px 9px}.financial-table button[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}.financial-table caption{text-align:left;color:var(--dim);padding:12px 15px;font-size:12px}.financial-table tr:last-child td,.financial-table tr:last-child th{border-bottom:0}
+.analyst{position:sticky;top:20px;border:1px solid var(--line);border-radius:14px;background:var(--panel);display:flex;flex-direction:column;min-height:530px;max-height:calc(100vh - 40px);overflow:hidden}.analyst-head{padding:20px;border-bottom:1px solid var(--line)}.analyst-head h2{font-size:18px;font-weight:600;margin-bottom:5px}.analyst-context{font-size:12px;color:var(--accent)}.chat-messages{overflow:auto;flex:1;padding:20px;min-height:170px;scroll-behavior:smooth}.chat-intro{font-size:13px;color:var(--dim);margin-bottom:18px}.suggestions{display:flex;flex-direction:column;gap:8px}.suggestions button{text-align:left;font-size:12px;padding:10px 12px;background:transparent}.chat-message{margin-bottom:20px;font-size:13px;line-height:1.65;overflow-wrap:anywhere}.chat-message.user{border-left:2px solid var(--accent);padding:8px 11px;background:var(--panel2);border-radius:0 8px 8px 0}.message-label{font-size:11px;color:var(--dim);margin-bottom:5px}.answer-text{white-space:pre-wrap}.chat-sources{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.chat-sources a{border:1px solid var(--line);border-radius:5px;padding:3px 7px;font-size:11px;max-width:100%;overflow-wrap:anywhere}.chat-form{padding:14px;border-top:1px solid var(--line)}.chat-form textarea{resize:vertical;width:100%;min-height:76px;max-height:170px;background:var(--bg);font-size:13px}.chat-form footer{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}.chat-form footer span{font-size:10px;color:var(--dim)}#chat-status{color:var(--dim);font-size:12px;padding:0 20px 10px}#chat-status:empty{display:none}.focus-hit{outline:2px solid var(--accent);outline-offset:6px;border-radius:8px}#ask-shortcut{display:none}
+@media(max-width:1120px){.workspace{grid-template-columns:minmax(0,1fr)}.analyst{position:static;max-height:640px;min-height:430px}#ask-shortcut{display:inline-block}.chat-messages{max-height:360px}.control-actions{margin-left:0}.topbar{padding:0 24px}}@media(max-width:600px){.topbar{height:56px;padding:0 16px}.topbar nav{gap:14px}.topbar nav .secondary{display:none}header{padding:22px 16px 18px}.workspace{padding:0 16px 32px;gap:18px}h1{font-size:25px}.heading-row .sub{max-width:210px;font-size:12px}.control-bar{padding:12px;gap:12px}.period-controls{gap:8px}.period-filter select{min-width:85px;padding:8px}#company-toggle{gap:8px}#period{min-width:98px}#kpis{gap:10px}.kpi+.kpi{padding-left:10px}.k-value{font-size:23px}.k-label,.k-sub{font-size:11px}.view-tabs{gap:20px}.section-head{flex-wrap:wrap}.split{grid-template-columns:1fr}.chart{height:280px}.card{padding:12px}#trend-metric{font-size:12px}.control-actions{margin-left:auto}.chart-hint{max-width:250px}.topbar nav a{font-size:12px}}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
 </style>
+<link rel="stylesheet" href="/static/workspace.css?v=20261011-tools3">
 </head>
 <body>
-<aside id="appnav">
-  <div class="brand"><img src="/static/logo-32.png" width="20" height="20" alt=""> Fineas</div>
-  <a href="/">Dashboard</a>
-  <a href="/filings">Filings Reader</a>
-  <a href="/explorer" class="on">Data Explorer</a>
-  <a href="/docs" target="_blank">API Docs</a>
-  <div class="grow"></div>
-  <div class="foot">fineasmcp · SEC-native data</div>
-</aside>
+<div id="fineas-navigation"></div>
+<script src="/static/workspace-shell.js?v=20261011-tools3"></script>
 <header>
-  <h1>SEC Data Explorer</h1>
-  <span class="sub">every number traceable to its filing</span>
-  <input id="ticker" value="AAPL" spellcheck="false">
-  <select id="period">
-    <option value="annual">Annual</option>
-    <option value="quarter">Quarterly</option>
-  </select>
-  <button class="primary" onclick="loadAll()">Load</button>
-  <span id="status"></span>
+ <div class="heading-row"><div><h1 id="company-title">Company explorer</h1><p class="sub">The numbers, the filing, and what changed.</p></div>
+ <div class="kpi" id="card-price"><div class="k-label"><span class="dot" id="dot-price"></span><span id="lbl-price">Current price</span></div><div class="k-value" id="kpi-price">—</div><div class="k-sub" id="sub-price"></div></div></div>
+ <div class="control-bar">
+  <div class="explorer-controls"><div class="company-picker" id="company-picker"><button id="company-toggle" type="button" aria-expanded="false" aria-controls="company-popover">Company<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button><div class="company-popover" id="company-popover" hidden><input id="company-search" type="text" placeholder="Search company or ticker…" aria-label="Search company or ticker" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="company-options" autocomplete="off" spellcheck="false"><p id="company-search-status" role="status" aria-live="polite"></p><ul id="company-options" role="listbox" aria-label="Companies"></ul></div></div><input id="ticker" value="AAPL" spellcheck="false" aria-label="Ticker"><select id="period" aria-label="Reporting period"><option value="annual">Annual</option><option value="quarter">Quarterly</option></select></div>
+  <div class="period-controls"><label class="period-filter">Fiscal year<select id="fiscal-year" aria-label="Fiscal year" disabled><option value="">Loading years…</option></select></label><label class="period-filter" id="quarter-filter" hidden>Quarter<select id="fiscal-quarter" aria-label="Fiscal quarter" disabled><option value="">Loading quarters…</option></select></label></div>
+  <div class="control-actions"><button class="period-step" id="previous-period" aria-label="Previous period" title="Previous period" disabled>‹</button><button class="period-step" id="next-period" aria-label="Next period" title="Next period" disabled>›</button><button class="primary" id="reload-data" onclick="loadAll()">Load</button></div>
+ </div><div class="status-row"><span id="period-note"></span><a id="ask-shortcut" href="#analyst">Ask about these numbers</a><span id="status" role="status"></span></div>
 </header>
-
-<main>
-  <!-- KPI strip -->
-  <section id="kpis">
-    <div class="kpi" id="card-price"><div class="k-label"><span class="dot" id="dot-price"></span>
-      <span id="lbl-price">Price</span></div>
-      <div class="k-value" id="kpi-price">—</div><div class="k-sub" id="sub-price"></div></div>
-    <div class="kpi" id="card-revenue"><div class="k-label">Revenue <span id="lbl-rev-period"></span></div>
-      <div class="k-value" id="kpi-rev">—</div><div class="k-sub" id="sub-rev"></div></div>
-    <div class="kpi" id="card-margin"><div class="k-label">Net margin</div>
-      <div class="k-value" id="kpi-margin">—</div><div class="k-sub" id="sub-margin"></div></div>
-    <div class="kpi" id="card-fcf"><div class="k-label">Free cash flow</div>
-      <div class="k-value" id="kpi-fcf">—</div><div class="k-sub" id="sub-fcf"></div></div>
-  </section>
-
-  <!-- provenance: source + form-type badge + cross-check -->
-  <section id="prov"></section>
-
-  <!-- Revenue & margins (the headline trend) -->
-  <section id="sec-trend">
-    <div class="section-title">Revenue &amp; Margins</div>
-    <div class="card"><div id="c-trend" class="chart"></div></div>
-  </section>
-
-  <!-- Geographic revenue (the hero) -->
-  <section id="sec-geo">
-    <div class="section-title" id="t-geo">Geographic Revenue</div>
-    <div class="card"><div class="split">
-      <div id="c-geo" class="pane-chart"></div>
-      <div id="geo-list" class="ranked"></div>
-    </div></div>
-  </section>
-
-  <!-- Revenue by segment -->
-  <section id="sec-seg">
-    <div class="section-title" id="t-seg">Revenue by Segment</div>
-    <div class="card"><div class="split">
-      <div id="c-seg" class="pane-chart"></div>
-      <div id="seg-list" class="ranked"></div>
-    </div></div>
-  </section>
-</main>
-
+<div class="workspace"><main>
+ <div class="view-tabs" role="tablist" aria-label="Company data views"><button id="tab-overview" role="tab" aria-selected="true" aria-controls="view-overview" data-view="overview">Overview</button><button id="tab-financials" role="tab" aria-selected="false" aria-controls="view-financials" data-view="financials" tabindex="-1">Financials</button><button id="tab-breakdown" role="tab" aria-selected="false" aria-controls="view-breakdown" data-view="breakdown" tabindex="-1">Revenue breakdown</button></div>
+ <section id="kpis" aria-label="Selected period metrics"><div class="kpi" id="card-revenue"><div class="k-label">Revenue <span id="lbl-rev-period"></span></div><div class="k-value" id="kpi-rev">—</div><div class="k-sub" id="sub-rev"></div></div><div class="kpi" id="card-margin"><div class="k-label">Net margin</div><div class="k-value" id="kpi-margin">—</div><div class="k-sub" id="sub-margin"></div></div><div class="kpi" id="card-fcf"><div class="k-label">Free cash flow</div><div class="k-value" id="kpi-fcf">—</div><div class="k-sub" id="sub-fcf"></div></div></section>
+ <div id="view-overview" role="tabpanel" aria-labelledby="tab-overview"><section class="brief" id="period-brief" hidden><h2>What changed</h2><div id="brief-facts"></div></section><section id="sec-trend"><div class="section-head"><h2 class="section-title">Revenue &amp; margins</h2><select id="trend-metric" aria-label="Chart metric"><option value="revenue">Revenue &amp; margins</option><option value="profit">Profitability</option><option value="cashflow">Cash flow</option></select></div><div class="card"><div id="c-trend" class="chart"></div></div><p class="chart-hint">Click a chart period to inspect it. Faded bars mark derived quarters.</p></section></div>
+ <div id="view-financials" role="tabpanel" aria-labelledby="tab-financials" hidden><div class="section-head"><h2 class="section-title">Financial history</h2><span class="sub">Select a column to inspect that period</span></div><div class="table-scroll" id="financial-table"><div class="empty">Choose a company to load its financial history.</div></div></div>
+ <div id="view-breakdown" role="tabpanel" aria-labelledby="tab-breakdown" hidden><section id="sec-geo" class="breakdown-section"><div class="section-head"><h2 class="section-title" id="t-geo">Geographic revenue</h2></div><div class="card"><div class="split"><div id="c-geo" class="pane-chart"></div><div id="geo-list" class="ranked"></div></div></div></section><section id="sec-seg" class="breakdown-section"><div class="section-head"><h2 class="section-title" id="t-seg">Revenue by segment</h2></div><div class="card"><div class="split"><div id="c-seg" class="pane-chart"></div><div id="seg-list" class="ranked"></div></div></div></section></div>
+ <section id="prov" aria-label="Data sources"></section><a id="filing-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open the SEC filing</a>
+ </main>
+ <aside class="analyst" id="analyst" aria-labelledby="analyst-title"><div class="analyst-head"><h2 id="analyst-title">Ask Fineas</h2><p class="analyst-context" id="chat-context">Choose a company and period</p></div><div class="chat-messages" id="chat-messages" role="log" aria-label="Conversation"><div id="chat-welcome"><p class="chat-intro">Explore the selected figures with Google-grounded research and source links.</p><div class="suggestions"><button type="button" data-question="What changed in revenue compared with the same period last year?" disabled>What drove revenue growth?</button><button type="button" data-question="Explain the net margin and how it compares with the same period last year." disabled>How profitable is the business?</button><button type="button" data-question="How much profit turns into free cash flow in this period? Explain the main differences." disabled>Does profit turn into cash?</button></div></div></div><p id="chat-status" role="status"></p><form class="chat-form" id="chat-form"><textarea id="chat-input" aria-label="Ask about the selected financials" placeholder="Ask about these numbers…" maxlength="4000" disabled></textarea><footer><span>Uses this period + web sources</span><button type="button" id="chat-stop" hidden>Stop</button><button class="primary" type="submit" id="chat-send" disabled>Ask Fineas</button></footer></form></aside>
+</div>
 <script>
 const $ = id => document.getElementById(id);
 const charts = {};
-const PALETTE = ["#4f82f3", "#34c08b", "#e5634c", "#d9a441", "#9b7ef0", "#5fb7d4", "#c47fb8"];
+const themeColor = name => getComputedStyle(document.documentElement).getPropertyValue('--' + name).trim();
+const THEME = Object.fromEntries(['panel', 'panel2', 'line', 'text', 'dim', 'accent'].map(name => [name, themeColor(name)]));
+const PALETTE = ['accent', 'green', 'red', 'gold', 'violet', 'cyan', 'rose'].map(themeColor);
 const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 function chart(id) {
@@ -209,23 +60,20 @@ const fmtB = v => v == null ? "—" :
 // fundamentals print in the FILING currency — FPIs report EUR/TWD/etc.
 const CCY = { USD: "$", EUR: "€", GBP: "£", JPY: "¥", CNY: "CN¥", TWD: "NT$", KRW: "₩" };
 let ccy = "$";
-const fmtCcy = v => v == null ? "—" : ccy + fmtB(v);
+const fmtCcy = v => v == null ? "—" : (v < 0 ? "−" : "") + ccy + fmtB(Math.abs(v));
 
-const ANIM = REDUCED ? { animation: false } : {
-  animationDuration: 900, animationEasing: "quarticOut",
-  animationDelay: i => i * 45,
-};
+const ANIM = { animation: false };
 const BASE = {
   backgroundColor: "transparent", ...ANIM,
   grid: { left: 58, right: 54, top: 36, bottom: 30 },
-  textStyle: { color: "#9aa3af", fontSize: 11 },
-  tooltip: { trigger: "axis", backgroundColor: "#161a20", borderColor: "#2a313b",
-             textStyle: { color: "#f2f4f7", fontSize: 12 }, valueFormatter: fmtB },
-  xAxis: { type: "category", axisLine: { lineStyle: { color: "#1f242c" } },
+  textStyle: { color: THEME.dim, fontSize: 11 },
+  tooltip: { trigger: "axis", backgroundColor: THEME.panel, borderColor: THEME.line,
+             textStyle: { color: THEME.text, fontSize: 12 }, valueFormatter: fmtB },
+  xAxis: { type: "category", axisLine: { lineStyle: { color: THEME.line } },
            axisTick: { show: false } },
-  yAxis: { type: "value", splitLine: { lineStyle: { color: "#171b21" } },
+  yAxis: { type: "value", splitLine: { lineStyle: { color: THEME.panel2 } },
            axisLabel: { formatter: fmtB } },
-  legend: { top: 0, right: 0, textStyle: { color: "#9aa3af", fontSize: 11.5 }, icon: "roundRect" },
+  legend: { top: 0, right: 0, textStyle: { color: THEME.dim, fontSize: 11.5 }, icon: "roundRect" },
 };
 
 /* ── where the data comes from ─────────────────────────────────────────────
@@ -238,32 +86,138 @@ const BASE = {
    The Vercel copy was therefore a shell that rendered "error: 404" for every
    panel. Resolving the API host at runtime instead of assuming same-origin
    makes the pretty URL a fully working page, and CORS is already open. */
-const API_BASE = (() => {
-  const h = location.hostname;
-  // Same-origin wherever the backend actually is: Railway, or a local dev run.
-  if (h.endsWith("railway.app") || h === "localhost" || h === "127.0.0.1") return "";
-  // ?api= lets a preview deployment aim at a branch backend without a rebuild.
-  const override = new URLSearchParams(location.search).get("api");
-  if (override && /^https:\/\/[\w.-]+$/.test(override)) return override.replace(/\/+$/, "");
-  return "https://sec-mcp-production.up.railway.app";
-})();
+const API_BASE = window.FineasAccount.apiBase;
 
-async function getJSON(url) {
-  const r = await fetch(url.startsWith("/api/") ? API_BASE + url : url);
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
-  return r.json();
+async function getJSON(url, signal) {
+  const r = await fetch(url.startsWith("/api/") ? API_BASE + url : url, { signal });
+  const data = await r.json().catch(() => null);
+  if (!r.ok) {
+    const detail = data && (data.detail || data.error);
+    throw new Error(typeof detail === "string" ? detail :
+      `SEC data request failed (HTTP ${r.status}). Please try again.`);
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new Error("SEC data service returned an invalid response. Please try again.");
+  }
+  return data;
 }
 
-// ── count-up: rAF tween, expo-out, format mid-flight ─────────────────────
-function countUp(el, target, fmt, ms = 800) {
-  if (target == null) { el.textContent = "—"; return; }
-  if (REDUCED) { el.textContent = fmt(target); return; }
-  const t0 = performance.now();
-  (function tick(now) {
-    const p = Math.min((now - t0) / ms, 1);
-    el.textContent = fmt(target * (1 - Math.pow(2, -10 * p)));
-    if (p < 1) requestAnimationFrame(tick); else el.textContent = fmt(target);
-  })(t0);
+// Search uses the same API routing/account wrapper as the financial requests.
+const COMMON_COMPANIES = [
+  { ticker: "AAPL", name: "Apple Inc." }, { ticker: "MSFT", name: "Microsoft Corporation" },
+  { ticker: "NVDA", name: "NVIDIA Corporation" }, { ticker: "AMZN", name: "Amazon.com, Inc." },
+  { ticker: "GOOGL", name: "Alphabet Inc." }, { ticker: "META", name: "Meta Platforms, Inc." },
+  { ticker: "TSLA", name: "Tesla, Inc." }, { ticker: "JPM", name: "JPMorgan Chase & Co." },
+];
+let companyResults = [], companyActive = -1, companySearchSeq = 0, companyTimer;
+
+function highlightCompany(index) {
+  companyActive = index;
+  const options = $("company-options").children;
+  Array.from(options).forEach((option, i) => option.setAttribute("aria-selected", String(i === index)));
+  if (options[index]) {
+    $("company-search").setAttribute("aria-activedescendant", options[index].id);
+    options[index].scrollIntoView({ block: "nearest" });
+  } else $("company-search").removeAttribute("aria-activedescendant");
+}
+
+function showCompanies(results, message) {
+  companyResults = results;
+  companyActive = -1;
+  $("company-search").removeAttribute("aria-activedescendant");
+  $("company-options").replaceChildren();
+  $("company-search-status").textContent = message;
+  results.forEach((company, i) => {
+    const option = document.createElement("li");
+    option.id = "company-option-" + i;
+    option.className = "company-option";
+    option.setAttribute("role", "option");
+    option.setAttribute("aria-selected", "false");
+    const symbol = document.createElement("span");
+    symbol.className = "company-symbol";
+    symbol.textContent = company.ticker;
+    const name = document.createElement("span");
+    name.className = "company-name";
+    name.textContent = company.name || company.ticker;
+    option.append(symbol, name);
+    option.addEventListener("mousedown", e => e.preventDefault());
+    option.addEventListener("click", () => selectCompany(company));
+    $("company-options").append(option);
+  });
+}
+
+function closeCompanies(restoreFocus = false) {
+  clearTimeout(companyTimer);
+  ++companySearchSeq;
+  $("company-popover").hidden = true;
+  $("company-toggle").setAttribute("aria-expanded", "false");
+  $("company-search").setAttribute("aria-expanded", "false");
+  $("company-search").removeAttribute("aria-activedescendant");
+  if (restoreFocus) $("company-toggle").focus();
+}
+
+function openCompanies() {
+  $("company-popover").hidden = false;
+  $("company-toggle").setAttribute("aria-expanded", "true");
+  $("company-search").setAttribute("aria-expanded", "true");
+  $("company-search").value = "";
+  showCompanies(COMMON_COMPANIES, "Common companies");
+  $("company-search").focus();
+}
+
+function selectCompany(company) {
+  companyNames.set(company.ticker, company.name || company.ticker);
+  $("ticker").value = company.ticker;
+  closeCompanies(true);
+  syncUrl();
+  loadAll();
+}
+
+$("company-toggle").addEventListener("click", () => {
+  $("company-popover").hidden ? openCompanies() : closeCompanies();
+});
+$("company-search").addEventListener("input", () => {
+  clearTimeout(companyTimer);
+  const seq = ++companySearchSeq;
+  const query = $("company-search").value.trim();
+  if (!query) { showCompanies(COMMON_COMPANIES, "Common companies"); return; }
+  showCompanies([], "Searching…");
+  companyTimer = setTimeout(async () => {
+    try {
+      const data = await getJSON("/api/search?q=" + encodeURIComponent(query) + "&limit=12");
+      if (seq !== companySearchSeq) return;
+      const results = (Array.isArray(data.results) ? data.results : []).filter(company =>
+        company && typeof company.ticker === "string" && /^[A-Z0-9.\-]{1,12}$/.test(company.ticker));
+      showCompanies(results, results.length ? "Select a company" : "No companies found. Try another name or ticker.");
+    } catch (e) {
+      if (seq === companySearchSeq) showCompanies([], "Search unavailable. Try again or enter a ticker directly.");
+    }
+  }, 250);
+});
+$("company-search").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const count = companyResults.length;
+    if (count) highlightCompany(companyActive < 0 ? (e.key === "ArrowDown" ? 0 : count - 1)
+      : (companyActive + (e.key === "ArrowDown" ? 1 : -1) + count) % count);
+  } else if (e.key === "Enter" && companyResults.length) {
+    e.preventDefault();
+    selectCompany(companyResults[companyActive < 0 ? 0 : companyActive]);
+  }
+});
+$("company-picker").addEventListener("keydown", e => {
+  if (e.key === "Escape") { e.preventDefault(); closeCompanies(true); }
+});
+document.addEventListener("click", e => {
+  if (!$("company-picker").contains(e.target)) closeCompanies();
+});
+$("company-picker").addEventListener("focusout", e => {
+  if (!$("company-picker").contains(e.relatedTarget)) closeCompanies();
+});
+
+// Show the exact value immediately; a counting animation delays reading it.
+function showValue(el, value, format) {
+  el.textContent = value == null ? "—" : format(value);
 }
 
 function qualityMark(series) {
@@ -288,48 +242,58 @@ function formBadge(formType) {
 
 // ── KPI strip + provenance ───────────────────────────────────────────────
 const SESSION_LABEL = { regular: "Live", pre: "Pre-market", after: "After hours", closed: "At close" };
-function renderKpis(ov) {
-  ccy = CCY[(ov.latest || {}).currency] || ((ov.latest || {}).currency || "$");
-  const q = ov.quote || {};
-  const m = (ov.latest || {}).metrics || {};
-  const series = ov.chartSeries || {};
-  $("lbl-price").textContent = "Price · " + (SESSION_LABEL[q.session] || "—");
+function renderQuote(q = {}, loading = false) {
+  $("card-price").setAttribute("aria-busy", String(loading));
+  $("lbl-price").textContent = "Current price · " + (SESSION_LABEL[q.session] || "—");
   $("dot-price").className = "dot" + (q.session === "regular" ? " live" : "");
   if (q.price != null) {
-    countUp($("kpi-price"), q.price, v => "$" + v.toFixed(2));
+    showValue($("kpi-price"), q.price, v => "$" + v.toFixed(2));
     const up = (q.changePct ?? 0) >= 0;
     $("sub-price").innerHTML = q.changePct == null ? "" :
       `<span class="${up ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(q.changePct).toFixed(2)}%</span>` +
       (q.ageSeconds > 120 ? ` · ${Math.round(q.ageSeconds / 60)}m old` : "");
-  } else { $("kpi-price").textContent = "—"; $("sub-price").textContent = q.error || ""; }
+  } else {
+    $("kpi-price").textContent = "—";
+    $("sub-price").textContent = loading ? "Loading current price…" : q.error || "Current quote unavailable";
+  }
+}
 
-  const yoy = arr => arr && arr.length >= 2 && arr.at(-2) != null && arr.at(-1) != null
-    ? (arr.at(-1) - arr.at(-2)) / Math.abs(arr.at(-2)) * 100 : null;
+function renderKpis(ov) {
+  ccy = CCY[(ov.latest || {}).currency] || ((ov.latest || {}).currency || "$");
+  const m = (ov.latest || {}).metrics || {};
+  const yoy = key => {
+    const previous = (ov.previous || {}).metrics || {};
+    return m[key] != null && previous[key] != null && previous[key] !== 0
+      ? (m[key] - previous[key]) / Math.abs(previous[key]) * 100 : null;
+  };
   const delta = (el, pct, suffix) => {
     if (pct == null) { el.textContent = ""; return; }
     const up = pct >= 0;
     el.innerHTML = `<span class="${up ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}%</span> ${suffix}`;
   };
   $("lbl-rev-period").textContent = "· " + (ov.latest.fiscalPeriod || "") + " " + (ov.latest.fiscalYear || "");
-  countUp($("kpi-rev"), m.revenue, fmtCcy);
-  delta($("sub-rev"), yoy(series.revenue), "YoY");
-  countUp($("kpi-margin"), (m.netMargin ?? 0) * 100, v => v.toFixed(1) + "%");
+  showValue($("kpi-rev"), m.revenue, fmtCcy);
+  delta($("sub-rev"), yoy("revenue"), "YoY");
+  showValue($("kpi-margin"), m.netMargin == null ? null : m.netMargin * 100, v => v.toFixed(1) + "%");
   $("sub-margin").textContent = m.netIncome != null ? fmtCcy(m.netIncome) + " net income" : "";
-  countUp($("kpi-fcf"), m.freeCashFlow, fmtCcy);
-  delta($("sub-fcf"), yoy(series.freeCashFlow), "YoY");
+  showValue($("kpi-fcf"), m.freeCashFlow, fmtCcy);
+  delta($("sub-fcf"), yoy("freeCashFlow"), "YoY");
+}
 
+function renderProvenance(ov, loading) {
   // provenance: source · FORM BADGE · period · cross-check · accession
   const cc = ov.crossCheck || {};
   const ccPill = cc.status === "ok"
     ? '<span class="pill ok">cross-checked ✓ polygon</span>'
     : cc.status === "mismatch"
       ? '<span class="pill warn">cross-check mismatch — citing SEC</span>'
-      : '<span class="pill">cross-check unavailable</span>';
+      : `<span class="pill">${loading ? "Checking sources…" : "cross-check unavailable"}</span>`;
   $("prov").innerHTML =
     formBadge(ov.latest.formType) +
     `<span class="pill">${(ov.meta || {}).source || "sec"}</span>` + ccPill +
     `<span class="pill">as of ${ov.latest.endDate || "—"}</span>` +
-    (ov.latest.accession ? `<span class="pill">filing ${ov.latest.accession}</span>` : "");
+    (ov.latest.accession ? `<span class="pill">filing ${ov.latest.accession}</span>` : "") +
+    (ov.latest.quality === "q4_synthesized" ? '<span class="pill">Q4 derived from annual less Q1–Q3</span>' : "");
 }
 
 // ── ranked list (shared by geo + segments): staggered rows, sweeping fills ─
@@ -394,8 +358,11 @@ function loadWorld() {
   return worldReady;
 }
 
+let geoRenderSeq = 0;
 async function renderGeo(geo) {
+  const seq = ++geoRenderSeq;
   const has = renderRanked("geo-list", geo, () => "var(--accent)");
+  $("c-geo").hidden = !has;
   if (!has) {
     $("geo-list").innerHTML = '<div class="empty">No geographic breakdown disclosed in this filing.</div>';
     chart("c-geo").clear();
@@ -403,6 +370,7 @@ async function renderGeo(geo) {
   }
   const maxPct = Math.max(...geo.map(s => s.pct || 0)) || 1;
   const names = await loadWorld();
+  if (seq !== geoRenderSeq) return;
   if (!names) { chart("c-geo").clear(); return; }
   const claimed = new Set(); const data = []; const regionOf = {}; const unmapped = [];
   const byLower = {}; names.forEach(n => byLower[n.toLowerCase()] = n);
@@ -421,15 +389,15 @@ async function renderGeo(geo) {
   }
   chart("c-geo").setOption({
     backgroundColor: "transparent", ...ANIM,
-    tooltip: { backgroundColor: "#161a20", borderColor: "#2a313b",
-               textStyle: { color: "#f2f4f7", fontSize: 12 },
+    tooltip: { backgroundColor: THEME.panel, borderColor: THEME.line,
+               textStyle: { color: THEME.text, fontSize: 12 },
                formatter: p => { const s = regionOf[p.name];
                  return s ? `${s.name}<br>${fmtCcy(s.value)} · ${s.pct}%` : p.name; } },
     visualMap: { show: false, min: 0, max: maxPct,
-                 inRange: { color: ["rgba(79,130,243,.16)", "rgba(79,130,243,.95)"] } },
+                 inRange: { color: [THEME.panel2, PALETTE[0]] } },
     series: [{ type: "map", map: "world", roam: false, left: 0, right: 0, top: 6, bottom: 0,
-               itemStyle: { areaColor: "#171b21", borderColor: "#242a33", borderWidth: .5 },
-               emphasis: { label: { show: false }, itemStyle: { areaColor: "#d9a441" } },
+               itemStyle: { areaColor: THEME.panel2, borderColor: THEME.line, borderWidth: .5 },
+               emphasis: { label: { show: false }, itemStyle: { areaColor: PALETTE[3] } },
                select: { disabled: true }, data }],
   }, true);
 }
@@ -451,52 +419,252 @@ function renderSegments(productRaw) {
     }
   }
   const otherIdx = product ? product.findIndex(s => s.name === "Other / unallocated") : -1;
-  const colorAt = i => i === otherIdx ? "#3a414c" : PALETTE[i % PALETTE.length];
+  const colorAt = i => i === otherIdx ? THEME.line : PALETTE[i % PALETTE.length];
   const has = renderRanked("seg-list", product, colorAt);
+  $("c-seg").hidden = !has;
   if (!has) {
-    $("t-seg").textContent = "Revenue by Segment — not disclosed";
     $("seg-list").innerHTML = '<div class="empty">No product/segment breakdown disclosed in this filing.</div>';
     chart("c-seg").clear();
     return;
   }
-  $("t-seg").textContent = "Revenue by Segment";
   chart("c-seg").setOption({
     backgroundColor: "transparent",
     ...(REDUCED ? { animation: false } : { animationDuration: 650, animationEasing: "cubicOut" }),
-    tooltip: { trigger: "item", backgroundColor: "#161a20", borderColor: "#2a313b",
-               textStyle: { color: "#f2f4f7", fontSize: 12 },
+    tooltip: { trigger: "item", backgroundColor: THEME.panel, borderColor: THEME.line,
+               textStyle: { color: THEME.text, fontSize: 12 },
                formatter: p => `${p.name}<br>${fmtCcy(p.value)} · ${p.data.pct ?? "—"}%` },
     series: [{ type: "pie", radius: ["56%", "82%"], center: ["50%", "50%"],
                startAngle: 90, padAngle: 1.4,
-               itemStyle: { borderRadius: 5, borderColor: "#12151a", borderWidth: 2 },
+               itemStyle: { borderRadius: 5, borderColor: THEME.panel, borderWidth: 2 },
                label: { show: false }, emphasis: { scale: true, scaleSize: 5 },
                data: product.map((s, i) => ({ name: s.name, value: s.value, pct: s.pct,
                  itemStyle: { color: colorAt(i) } })) }],
   }, true);
 }
 
-let loadSeq = 0;                                        // latest-request-wins guard
+let loadSeq = 0, loadController = null, explorerData = null, pendingSelection = null;
+const companyNames = new Map(COMMON_COMPANIES.map(company => [company.ticker, company.name]));
+const finite = value => typeof value === "number" && Number.isFinite(value) ? value : null;
+const periodLabel = row => (row.fiscalPeriod === "FY" ? "FY " : row.fiscalPeriod + " FY ") + row.fiscalYear;
+
+function historyPeriods(history, mode) {
+  const cashflows = new Map((history.cashflow || []).map(row => [row.date, row]));
+  const periods = new Map();
+  for (const row of history.income || []) {
+    const meta = row._meta || {}, fiscalYear = String(row.fiscalYear || "");
+    const fiscalPeriod = row.period;
+    if (!/^\d{4}$/.test(fiscalYear) || !/^\d{4}-\d{2}-\d{2}$/.test(row.date || "")) continue;
+    if (mode === "quarter" ? !/^Q[1-4]$/.test(fiscalPeriod) || meta.isYtd || meta.quality === "ytd_fallback" : fiscalPeriod !== "FY") continue;
+    const cf = cashflows.get(row.date) || {};
+    const cashflowMatches = String(cf.fiscalYear) === fiscalYear && cf.period === fiscalPeriod &&
+      (cf.reportedCurrency || "USD") === (row.reportedCurrency || "USD") &&
+      !(mode === "quarter" && ((cf._meta || {}).isYtd || (cf._meta || {}).quality === "ytd_fallback"));
+    const revenue = finite(row.revenue), netIncome = finite(row.netIncome);
+    const ocf = cashflowMatches ? finite(cf.operatingCashFlow) : null;
+    const capex = cashflowMatches ? finite(cf.capitalExpenditure) : null;
+    const freeCashFlow = ocf != null && capex != null ? ocf - Math.abs(capex)
+      : cashflowMatches ? finite(cf.freeCashFlow) : null;
+    const value = {
+      endDate: row.date, fiscalYear, fiscalPeriod, currency: row.reportedCurrency || "USD",
+      cik: row.cik, accession: meta.accession, formType: meta.formType, quality: meta.quality,
+      metrics: { revenue, netIncome, freeCashFlow, operatingCashFlow: ocf, capitalExpenditure: capex,
+        grossProfit: finite(row.grossProfit),
+        operatingIncome: finite(row.operatingIncome), netMargin: revenue && netIncome != null ? netIncome / revenue : null },
+    };
+    const key = fiscalYear + fiscalPeriod;
+    if (!periods.has(key) || periods.get(key).endDate < row.date) periods.set(key, value);
+  }
+  return [...periods.values()].sort((a, b) => b.endDate.localeCompare(a.endDate));
+}
+
+function clearFinancials() {
+  ++geoRenderSeq;
+  ["kpi-price", "kpi-rev", "kpi-margin", "kpi-fcf"].forEach(id => showValue($(id), null, String));
+  ["sub-price", "sub-rev", "sub-margin", "sub-fcf", "lbl-rev-period", "prov", "geo-list", "seg-list", "period-note"].forEach(id => $(id).replaceChildren());
+  Object.values(charts).forEach(c => c.clear());
+  $("period-brief").hidden = $("filing-link").hidden = true;
+  $("financial-table").replaceChildren();
+  $("previous-period").disabled = $("next-period").disabled = true;
+  ["card-price", "card-revenue", "card-margin", "card-fcf", "sec-trend", "sec-geo", "sec-seg"].forEach(id => $(id).setAttribute("aria-busy", "false"));
+}
+
+function setFinancialsLoading(loading) {
+  ["card-revenue", "card-margin", "card-fcf", "sec-trend"].forEach(id => $(id).setAttribute("aria-busy", String(loading)));
+  ["sub-rev", "sub-margin", "sub-fcf"].forEach(id => $(id).textContent = loading ? "Loading financials…" : "");
+}
+
+function showBreakdownMessage(message, loading = false) {
+  ++geoRenderSeq;
+  for (const part of ["geo", "seg"]) {
+    $("sec-" + part).setAttribute("aria-busy", String(loading));
+    charts["c-" + part]?.clear();
+    $("c-" + part).hidden = true;
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = message;
+    $(part + "-list").replaceChildren(empty);
+  }
+}
+
+function fillSelect(id, choices, value, missingLabel) {
+  const select = $(id);
+  select.replaceChildren();
+  if (!choices.some(choice => choice.value === value)) {
+    const option = new Option(missingLabel, value);
+    option.disabled = true;
+    select.add(option);
+  }
+  choices.forEach(choice => select.add(new Option(choice.label, choice.value)));
+  select.value = value;
+  select.disabled = choices.length === 0;
+}
+
+function renderSelectedPeriod(year, quarter, strict = false) {
+  if (!explorerData?.periods.length) return;
+  const { periods, ticker, mode } = explorerData;
+  const years = [...new Set(periods.map(row => row.fiscalYear))];
+  const chosenYear = years.includes(year) || strict && year ? year : periods[0].fiscalYear;
+  const inYear = periods.filter(row => row.fiscalYear === chosenYear);
+  const chosenQuarter = mode === "annual" ? "FY" :
+    (inYear.some(row => row.fiscalPeriod === quarter) || strict && quarter ? quarter : inYear[0]?.fiscalPeriod || "");
+  fillSelect("fiscal-year", years.map(value => ({ value, label: "FY " + value })), chosenYear, "FY " + chosenYear + " — unavailable");
+  fillSelect("fiscal-quarter", inYear.map(row => ({ value: row.fiscalPeriod, label: row.fiscalPeriod })), chosenQuarter, (chosenQuarter || "Quarter") + " — unavailable");
+  $("quarter-filter").hidden = mode !== "quarter";
+  const selected = inYear.find(row => row.fiscalPeriod === chosenQuarter);
+  explorerData.selected = selected;
+  if (!selected) {
+    clearFinancials();
+    setChatReady(false);
+    $("status").textContent = `No data for ${ticker} ${chosenQuarter === "FY" ? "" : chosenQuarter + " "}FY ${chosenYear}. Choose an available period.`;
+    showCompanyFilings(ticker);
+    syncUrl();
+    return;
+  }
+  const previous = periods.find(row => Number(row.fiscalYear) === Number(selected.fiscalYear) - 1 &&
+    row.fiscalPeriod === selected.fiscalPeriod && row.currency === selected.currency);
+  renderKpis({ latest: selected, previous });
+  renderDetails();
+  renderTrend(periods.filter(row => row.endDate <= selected.endDate).reverse());
+  renderWorkspace(selected, previous);
+  $("period-note").textContent = `Period ended ${selected.endDate} · ${periods.length} available ${mode === "quarter" ? "quarters" : "years"}`;
+  syncUrl();
+}
+
+// Late overview responses enrich the currently selected period without
+// resetting the picker, repainting the trend or replacing its core numbers.
+function renderDetails() {
+  const { overview, overviewState, selected, ticker } = explorerData;
+  if (!selected) return;
+  const loading = overviewState === "loading";
+  renderQuote(overview.quote, loading);
+  const latest = overview.latest || {};
+  const matchesLatest = latest.endDate === selected.endDate && latest.fiscalPeriod === selected.fiscalPeriod && String(latest.fiscalYear) === selected.fiscalYear;
+  const sameNumbers = matchesLatest && latest.metrics?.revenue === selected.metrics.revenue && latest.metrics?.netIncome === selected.metrics.netIncome;
+  renderProvenance({ latest: selected, crossCheck: sameNumbers ? overview.crossCheck : null, meta: { source: "edgar:xbrl_companyfacts" } }, loading);
+  $("t-geo").textContent = "Geographic Revenue · " + periodLabel(selected);
+  $("t-seg").textContent = "Revenue by Segment · " + periodLabel(selected);
+  $("status").textContent = ticker + " · " + (selected.formType || "") + " " + selected.fiscalPeriod + " " + selected.fiscalYear +
+    (loading ? " · Figures ready; quote and breakdowns loading…" : "");
+  if (loading || overviewState === "error") {
+    showBreakdownMessage(loading ? `Loading breakdowns for ${periodLabel(selected)}…`
+      : "Breakdowns temporarily unavailable. Select Load to retry.", loading);
+    return;
+  }
+  ["sec-geo", "sec-seg"].forEach(id => $(id).setAttribute("aria-busy", "false"));
+
+  // Never substitute the latest filing's breakdown for a historical selection.
+  const segments = overview.segments || {}, source = segments.sourceMeta || {};
+  const segmentsMatch = matchesLatest && source.reportDate === selected.endDate &&
+    String(source.fiscalYear) === selected.fiscalYear && source.fiscalPeriod === selected.fiscalPeriod &&
+    source.currency === selected.currency && selected.quality !== "q4_synthesized";
+  const matchingBreakdown = rows => {
+    if (!segmentsMatch || !Array.isArray(rows) || !rows.length || !(selected.metrics.revenue > 0)) return [];
+    if (rows.some(row => finite(row.value) == null || row.value < 0)) return [];
+    if (rows.reduce((sum, row) => sum + row.value, 0) > selected.metrics.revenue * 1.05) return [];
+    return rows.map(row => ({ ...row, pct: +(row.value / selected.metrics.revenue * 100).toFixed(1) }));
+  };
+  const geo = matchingBreakdown(segments.geographic), product = matchingBreakdown(segments.product);
+  renderGeo(geo);
+  renderSegments(product);
+  for (const [id, rows] of [["geo-list", geo], ["seg-list", product]]) {
+    if (!rows.length) {
+      const empty = document.createElement("div"); empty.className = "empty";
+      empty.textContent = `A breakdown for ${periodLabel(selected)} is not available.`;
+      $(id).replaceChildren(empty);
+    }
+  }
+}
+
 async function loadAll() {
   const t = $("ticker").value.trim().toUpperCase();
   const p = $("period").value;                          // "annual" | "quarter"
   const apiPeriod = p === "quarter" ? "quarterly" : "annual";  // overview vocab
   if (!t) return;
+  const wanted = pendingSelection || { year: $("fiscal-year").value, quarter: $("fiscal-quarter").value };
+  pendingSelection = null;
   const seq = ++loadSeq;                                // this call's ticket
-  $("status").textContent = "loading " + t + "…";
-  try {
-    // overview now honors period → KPIs, segments AND geo switch annual↔quarterly
-    const [ov, cd] = await Promise.all([
-      getJSON(`/api/v2/overview/${t}?period=${apiPeriod}`),
-      getJSON(`/api/v1/chart-data/${t}?period=${p}&limit=12&metrics=` +
-        "revenue,net_income,gross_profit,operating_income"),
-    ]);
-    if (seq !== loadSeq) return;                        // a newer load superseded us
-    renderKpis(ov);
-    renderGeo((ov.segments || {}).geographic);
-    renderSegments((ov.segments || {}).product);
+  stopChat();
+  setChatReady(false);
+  loadController?.abort();
+  loadController = new AbortController();
+  const { signal } = loadController;
+  const data = explorerData = { ticker: t, mode: p, periods: [], overview: {}, overviewState: "loading", selected: null };
+  clearFinancials();
+  $("company-title").textContent = companyNames.get(t) || t;
+  setFinancialsLoading(true);
+  renderQuote({}, true);
+  showBreakdownMessage("Loading breakdowns…", true);
+  $("fiscal-year").disabled = $("fiscal-quarter").disabled = true;
+  $("quarter-filter").hidden = p !== "quarter";
+  $("status").textContent = "Loading " + t + " financials…";
 
-    const S = {}; cd.series.forEach(s => S[s.name] = s);
-    const labels = cd.labels;
+  // Start both requests together, but let each reveal its own data immediately.
+  // Handle overview failures independently so they never hide usable figures.
+  const finishOverview = (overview, state) => {
+    if (seq !== loadSeq) return;
+    data.overview = overview;
+    data.overviewState = state;
+    if (data.selected) renderDetails();
+    else if (!data.periods.length) renderQuote(overview.quote);
+  };
+  getJSON(`/api/v2/overview/${t}?period=${apiPeriod}`, signal).then(
+    overview => finishOverview(overview, "ready"),
+    () => finishOverview({ quote: { error: "Current quote unavailable" } }, "error")
+  );
+  try {
+    const history = await getJSON(`/api/financials-history/${t}?period=${p}&limit=12`, signal);
+    if (seq !== loadSeq) return;                        // a newer load superseded us
+    const periods = historyPeriods(history, p);
+    if (!periods.length) {
+      if (history.error) throw new Error(history.error);
+      setFinancialsLoading(false);
+      $("status").textContent = p === "quarter"
+        ? "No standalone quarterly figures are available. View the issuer’s filings for reported results."
+        : "No annual financial history is available.";
+      showCompanyFilings(t);
+      return;
+    }
+    data.periods = periods;
+    setFinancialsLoading(false);
+    renderSelectedPeriod(wanted.year, wanted.quarter, wanted.strict);
+  } catch (e) {
+    if (seq !== loadSeq) return;
+    setFinancialsLoading(false);
+    showBreakdownMessage("Load financials to view a period's breakdown.");
+    $("status").textContent = "error: " + e.message;
+  }
+}
+
+function renderTrend(periods) {
+    if (!periods.length) return;
+    const mode = $("trend-metric").value;
+    const S = {};
+    for (const [name, field] of [["revenue", "revenue"], ["net_income", "netIncome"], ["gross_profit", "grossProfit"], ["operating_income", "operatingIncome"]]) {
+      S[name] = { data: periods.map(row => row.metrics[field]), quality: periods.map(row => row.quality) };
+    }
+    const labels = periods.map(periodLabel);
+    $("sec-trend").querySelector(".section-title").textContent =
+      ({ revenue: "Revenue & margins", profit: "Profitability", cashflow: "Cash flow" }[mode]) + " · through " + periodLabel(periods.at(-1));
     const margin = (num, den) => (num.data || []).map((v, i) =>
       v != null && den.data[i] ? +(100 * v / den.data[i]).toFixed(1) : null);
 
@@ -516,14 +684,14 @@ async function loadAll() {
       legend: { ...BASE.legend, data: ["Revenue", "Gross", "Operating", "Net"] },
       xAxis: { ...BASE.xAxis, data: labels },
       yAxis: [
-        { type: "value", splitLine: { lineStyle: { color: "#171b21" } },
+        { type: "value", splitLine: { lineStyle: { color: THEME.panel2 } },
           axisLabel: { formatter: fmtB } },
         { type: "value", position: "right", splitLine: { show: false },
-          axisLabel: { formatter: "{value}%" }, min: 0 },
+          axisLabel: { formatter: "{value}%" } },
       ],
       series: [
         { name: "Revenue", type: "bar", yAxisIndex: 0, data: qualityMark(S.revenue),
-          itemStyle: { color: "rgba(79,130,243,.55)", borderRadius: [4, 4, 0, 0] },
+          itemStyle: { color: PALETTE[0], borderRadius: [4, 4, 0, 0] },
           barWidth: "52%" },
         { name: "Gross", type: "line", yAxisIndex: 1, smooth: true, symbol: "none",
           data: margin(S.gross_profit, S.revenue), lineStyle: { width: 2 }, itemStyle: { color: PALETTE[4] } },
@@ -532,16 +700,242 @@ async function loadAll() {
         { name: "Net", type: "line", yAxisIndex: 1, smooth: true, symbol: "circle", symbolSize: 5,
           data: margin(S.net_income, S.revenue), lineStyle: { width: 2.5 }, itemStyle: { color: PALETTE[1] } },
       ]}, true);
+    if (mode !== "revenue") {
+      const fields = mode === "profit" ? [["Gross profit", "grossProfit"], ["Operating income", "operatingIncome"], ["Net income", "netIncome"]]
+        : [["Operating cash flow", "operatingCashFlow"], ["Free cash flow", "freeCashFlow"]];
+      chart("c-trend").setOption({ ...BASE, animation: false, xAxis: { ...BASE.xAxis, data: labels },
+        legend: { ...BASE.legend, data: fields.map(([label]) => label) },
+        series: fields.map(([name, field], i) => ({ name, type: "bar", data: qualityMark({ data: periods.map(row => row.metrics[field]), quality: periods.map(row => row.quality) }),
+          itemStyle: { color: PALETTE[i], borderRadius: [3, 3, 0, 0] } })) }, true);
+    }
+    chart("c-trend").off?.("click");
+    chart("c-trend").on?.("click", event => {
+      const row = periods[event.dataIndex];
+      if (row) renderSelectedPeriod(row.fiscalYear, row.fiscalPeriod);
+    });
+}
 
-    $("status").textContent = t + " · " + (ov.latest.formType || "") +
-      " " + (ov.latest.fiscalPeriod || "") + " " + (ov.latest.fiscalYear || "");
-  } catch (e) {
-    $("status").textContent = "error: " + e.message;
+// The selected filing is the shared context for charts, tables and research.
+function filingUrl(row) {
+  const accession = row?.accession || '';
+  if (!/^\d{10}-\d{2}-\d{6}$/.test(accession)) return null;
+  const cik = String(row.cik || '');
+  if (!/^\d{1,10}$/.test(cik) || Number(cik) === 0) {
+    return 'https://www.sec.gov/edgar/search/#/q=' + encodeURIComponent(accession);
+  }
+  return `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accession.replace(/-/g, '')}/${accession}-index.htm`;
+}
+function showCompanyFilings(ticker) {
+  const link = $('filing-link');
+  link.href = 'https://www.sec.gov/edgar/browse/?' + new URLSearchParams({ CIK: ticker, owner: 'exclude' });
+  link.textContent = 'Browse company filings on EDGAR';
+  link.hidden = false;
+}
+function switchView(view) {
+  for (const button of document.querySelectorAll('[data-view]')) {
+    const active = button.dataset.view === view;
+    button.setAttribute('aria-selected', String(active));
+    button.tabIndex = active ? 0 : -1;
+    $('view-' + button.dataset.view).hidden = !active;
+  }
+  Object.values(charts).forEach(c => c.resize());
+}
+for (const button of document.querySelectorAll('[data-view]')) {
+  button.addEventListener('click', () => switchView(button.dataset.view));
+  button.addEventListener('keydown', event => {
+    const tabs = Array.from(document.querySelectorAll('[data-view]'));
+    const offset = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+    if (!offset) return;
+    event.preventDefault();
+    const target = tabs[(tabs.indexOf(button) + offset + tabs.length) % tabs.length];
+    switchView(target.dataset.view); target.focus();
+  });
+}
+function renderWorkspace(selected, previous) {
+  const { periods, ticker } = explorerData;
+  const i = periods.indexOf(selected);
+  $('previous-period').disabled = i === periods.length - 1;
+  $('next-period').disabled = i === 0;
+  const m = selected.metrics, old = previous?.metrics || {};
+  $('brief-facts').replaceChildren();
+  const facts = [];
+  if (m.revenue != null && old.revenue > 0) {
+    const growth = (m.revenue / old.revenue - 1) * 100;
+    facts.push(`Revenue ${growth >= 0 ? 'grew' : 'fell'} ${Math.abs(growth).toFixed(1)}% from ${periodLabel(previous)}.`);
+  }
+  if (m.netMargin != null && old.netMargin != null) {
+    const change = (m.netMargin - old.netMargin) * 100;
+    facts.push(`Net margin ${change >= 0 ? 'improved' : 'declined'} ${Math.abs(change).toFixed(1)} percentage points year over year.`);
+  }
+  if (m.freeCashFlow != null && m.revenue > 0) facts.push(`Free cash flow was ${(m.freeCashFlow / m.revenue * 100).toFixed(1)}% of revenue.`);
+  if (selected.quality === 'q4_synthesized') facts.push('Q4 is derived from the full year less Q1–Q3; the annual filing is its source.');
+  for (const text of facts) { const p = document.createElement('p'); p.textContent = text; $('brief-facts').append(p); }
+  $('period-brief').hidden = !facts.length;
+  const source = filingUrl(selected);
+  $('filing-link').hidden = !source;
+  if (source) {
+    $('filing-link').href = source;
+    $('filing-link').textContent = 'Open the SEC filing';
+  }
+  renderFinancialTable(periods, selected);
+  updateChatContext(`${ticker} | ${selected.fiscalYear} | ${selected.fiscalPeriod}`);
+  $('chat-context').textContent = `${ticker} · ${periodLabel(selected)}`;
+  setChatReady(true);
+  window.FineasShell?.refresh('explorer');
+}
+function renderFinancialTable(periods, selected) {
+  const table = document.createElement('table'); table.className = 'financial-table';
+  const caption = table.createCaption(); caption.textContent = `Reported in ${selected.currency}. — means unavailable. Q4* is derived from the full year less Q1–Q3.`;
+  const head = table.createTHead().insertRow(); const metric = document.createElement('th'); metric.scope = 'col'; metric.textContent = 'Metric'; head.append(metric);
+  for (const row of periods) {
+    const th = document.createElement('th'); th.scope = 'col';
+    const button = document.createElement('button'); button.type = 'button';
+    button.textContent = periodLabel(row) + (row.quality === 'q4_synthesized' ? '*' : '');
+    button.setAttribute('aria-pressed', String(row === selected));
+    button.addEventListener('click', () => renderSelectedPeriod(row.fiscalYear, row.fiscalPeriod));
+    th.append(button); head.append(th);
+  }
+  const body = table.createTBody();
+  for (const [label, field] of [['Revenue','revenue'],['Gross profit','grossProfit'],['Operating income','operatingIncome'],['Net income','netIncome'],['Net margin','netMargin'],['Operating cash flow','operatingCashFlow'],['Capital expenditure','capitalExpenditure'],['Free cash flow','freeCashFlow']]) {
+    const tr = body.insertRow(), th = document.createElement('th'); th.scope = 'row'; th.textContent = label; tr.append(th);
+    for (const row of periods) {
+      const td = tr.insertCell(), value = row.metrics[field];
+      td.textContent = value == null ? '—' : field === 'netMargin' ? (value * 100).toFixed(1) + '%' : fmtCcy(value);
+      if (row === selected) td.className = 'selected';
+    }
+  }
+  $('financial-table').replaceChildren(table);
+}
+for (const [id, offset] of [['previous-period',1],['next-period',-1]]) $(id).addEventListener('click', () => {
+  const row = explorerData?.periods[explorerData.periods.indexOf(explorerData.selected) + offset];
+  if (row) renderSelectedPeriod(row.fiscalYear, row.fiscalPeriod);
+});
+$('trend-metric').addEventListener('change', () => {
+  if (explorerData?.selected) renderTrend(explorerData.periods.filter(row => row.endDate <= explorerData.selected.endDate).reverse());
+});
+
+// Existing Google-grounded Railway service; no provider secret enters the browser.
+const RESEARCH_URL = 'https://gemini-search-api-production.up.railway.app/search';
+// Enable after the Railway service's retired Gemini model is replaced and a live answer is verified.
+const RESEARCH_ENABLED = false;
+if (!RESEARCH_ENABLED) {
+  $('analyst').style.minHeight = '0';
+  $('chat-welcome').replaceChildren();
+  const note = document.createElement('p'); note.className = 'chat-intro';
+  note.textContent = 'AI research is temporarily unavailable. Explore the financials and the linked SEC filing while we reconnect the service.';
+  $('chat-welcome').append(note);
+  $('chat-messages').style.minHeight = '0';
+  $('chat-form').hidden = true;
+  $('ask-shortcut').textContent = 'AI research status';
+}
+let chatKey = '', chatHistory = [], chatController = null, chatSeq = 0, chatPending = null;
+const chatWelcome = $('chat-welcome').cloneNode(true);
+function setChatReady(ready) {
+  ready = ready && RESEARCH_ENABLED;
+  $('chat-input').disabled = !ready;
+  $('chat-send').disabled = !ready || !!chatController;
+  document.querySelectorAll('[data-question]').forEach(button => button.disabled = !ready || !!chatController);
+}
+function stopChat() {
+  ++chatSeq;
+  chatController?.abort(); chatController = null;
+  if (chatPending) { chatPending.textContent = 'Response stopped.'; chatPending = null; }
+  $('chat-stop').hidden = true; $('chat-status').textContent = '';
+  setChatReady(!!explorerData?.selected);
+}
+function updateChatContext(key) {
+  if (key === chatKey) return;
+  stopChat(); chatKey = key; chatHistory = [];
+  $('chat-messages').replaceChildren(chatWelcome.cloneNode(true));
+}
+function safeSourceUrl(raw) {
+  try { const u = new URL(raw); return /^https?:$/.test(u.protocol) && !u.username && !u.password ? u.href : null; }
+  catch { return null; }
+}
+function appendAnswerText(container, text) {
+  // Render only text, emphasis and safe links; never inject model-generated HTML.
+  const parts = /\*\*([^*]+)\*\*|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  let start = 0;
+  for (const match of text.matchAll(parts)) {
+    container.append(document.createTextNode(text.slice(start, match.index)));
+    if (match[1]) { const strong = document.createElement('strong'); strong.textContent = match[1]; container.append(strong); }
+    else {
+      const url = safeSourceUrl(match[3]);
+      if (url) { const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = match[2]; container.append(a); }
+      else container.append(document.createTextNode(match[2]));
+    }
+    start = match.index + match[0].length;
+  }
+  container.append(document.createTextNode(text.slice(start)));
+}
+function chatMessage(role, text) {
+  const welcome = $('chat-welcome'); if (welcome) welcome.remove();
+  const article = document.createElement('article'); article.className = 'chat-message ' + role;
+  const label = document.createElement('p'); label.className = 'message-label'; label.textContent = role === 'user' ? 'You' : 'Fineas';
+  const content = document.createElement('div'); content.className = 'answer-text'; content.textContent = text;
+  article.append(label, content); $('chat-messages').append(article);
+  $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+  return { article, content };
+}
+function researchQuery(question) {
+  const { ticker, selected, periods } = explorerData;
+  const comparison = periods.find(row => Number(row.fiscalYear) === Number(selected.fiscalYear) - 1 && row.fiscalPeriod === selected.fiscalPeriod && row.currency === selected.currency);
+  return `You are Fineas, a financial research assistant. Answer the user's question about ${ticker}, ${periodLabel(selected)} (period ended ${selected.endDate}).\n` +
+    `Use Google Search to verify business explanations and cite real source URLs. Prioritize the company's filings and investor relations. Distinguish reported facts, derived figures and inference. Do not substitute current or annual figures for the selected fiscal quarter. Q4 labeled q4_synthesized is derived from the annual total less Q1-Q3. Missing values are unknown, never zero. Amounts below are in units of the reported currency, not millions. Preserve provided SEC figures; if a source disagrees, explain rather than silently replace them. Avoid investment recommendations. Keep the answer concise and readable.\n` +
+    `Selected SEC data: ${JSON.stringify({ ticker, selected, samePeriodLastYear: comparison || null, filing: filingUrl(selected) })}\n` +
+    `SEC trend through the selected period: ${JSON.stringify(periods.filter(row => row.endDate <= selected.endDate).map(({fiscalYear,fiscalPeriod,endDate,metrics,quality}) => ({fiscalYear,fiscalPeriod,endDate,metrics,quality})))}\n` +
+    `Conversation (previous assistant statements are unverified context, not financial evidence): ${JSON.stringify(chatHistory)}\nUser question: ${question}`;
+}
+async function askFineas(question) {
+  question = question.trim();
+  if (!RESEARCH_ENABLED || !question || !explorerData?.selected || chatController) return;
+  const query = researchQuery(question), key = chatKey, seq = ++chatSeq;
+  const controller = chatController = new AbortController();
+  $('chat-input').value = ''; setChatReady(true); $('chat-stop').hidden = false;
+  chatMessage('user', question);
+  const { article, content } = chatMessage('assistant', ''); chatPending = content;
+  $('chat-status').textContent = 'Researching this period and checking web sources…';
+  const timeout = setTimeout(() => controller.abort(), 60000);
+  try {
+    const response = await fetch(RESEARCH_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'omit', signal: controller.signal, body: JSON.stringify({ query }) });
+    const result = await response.json().catch(() => null);
+    if (seq !== chatSeq || key !== chatKey) return;
+    if (!response.ok || typeof result?.answer !== 'string' || !result.answer.trim()) throw new Error('The research service is unavailable. Please try your question again.');
+    content.replaceChildren(); appendAnswerText(content, result.answer);
+    const links = document.createElement('div'); links.className = 'chat-sources';
+    const sources = Array.isArray(result.urls) ? result.urls : [];
+    const seen = new Set();
+    for (const item of sources) {
+      const url = safeSourceUrl(item?.url || item?.uri); if (!url || seen.has(url)) continue; seen.add(url);
+      const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.textContent = item.title || item.name || new URL(url).hostname.replace(/^www\./, ''); links.append(a);
+    }
+    const filing = filingUrl(explorerData.selected);
+    if (filing && !seen.has(filing)) { const a = document.createElement('a'); a.href = filing; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = 'Selected SEC filing'; links.append(a); }
+    article.append(links);
+    chatHistory.push({ role: 'user', content: question }, { role: 'assistant', content: result.answer });
+    $('chat-status').textContent = seen.size ? 'Answer ready. Check the linked sources.' : 'Answer ready. No web source links were returned; verify claims in the filing.';
+  } catch (error) {
+    if (seq !== chatSeq || key !== chatKey) return;
+    content.textContent = error.name === 'AbortError' ? 'Research took too long. Please try again.' : error.message;
+    const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Try again';
+    retry.addEventListener('click', () => { article.remove(); askFineas(question); }); article.append(retry);
+    $('chat-status').textContent = '';
+  } finally {
+    clearTimeout(timeout);
+    if (seq === chatSeq) { chatController = null; chatPending = null; $('chat-stop').hidden = true; setChatReady(!!explorerData?.selected); }
   }
 }
+$('chat-form').addEventListener('submit', event => { event.preventDefault(); askFineas($('chat-input').value); });
+$('chat-input').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askFineas($('chat-input').value); } });
+$('chat-stop').addEventListener('click', stopChat);
+$('chat-messages').addEventListener('click', event => { const question = event.target.closest('[data-question]'); if (question && !question.disabled) askFineas(question.dataset.question); });
 
 $("ticker").addEventListener("keydown", e => { if (e.key === "Enter") loadAll(); });
 $("period").addEventListener("change", loadAll);       // toggle re-pulls the filing
+$("fiscal-year").addEventListener("change", () => renderSelectedPeriod($("fiscal-year").value, $("fiscal-quarter").value));
+$("fiscal-quarter").addEventListener("change", () => renderSelectedPeriod($("fiscal-year").value, $("fiscal-quarter").value));
 window.addEventListener("resize", () => Object.values(charts).forEach(c => c.resize()));
 
 /* ── deep links ───────────────────────────────────────────────────────────
@@ -571,6 +965,7 @@ const FOCUS_TARGETS = {
 function applyFocus(focus) {
   const el = $(FOCUS_TARGETS[String(focus || "").toLowerCase().replace(/[^a-z]/g, "")]);
   if (!el) return;
+  switchView(["sec-geo", "sec-seg"].includes(el.id) ? "breakdown" : "overview");
   el.scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "center" });
   el.classList.remove("focus-hit");
   void el.offsetWidth;                                 // restart the animation
@@ -579,6 +974,15 @@ function applyFocus(focus) {
 }
 
 const params = new URLSearchParams(location.search);
+// A bare Explore link resumes the last view; explicit links always win.
+if (!['ticker', 'period', 'year', 'quarter'].some(key => params.has(key))) {
+  try {
+    const saved = JSON.parse(localStorage.getItem('fineas_explorer_selection_v1') || 'null');
+    if (saved && typeof saved === 'object') {
+      for (const key of ['ticker', 'period', 'year', 'quarter']) if (typeof saved[key] === 'string') params.set(key, saved[key]);
+    }
+  } catch { /* Storage restrictions must never stop data from loading. */ }
+}
 const qTicker = (params.get("ticker") || "").trim().toUpperCase();
 const qPeriod = (params.get("period") || "").trim().toLowerCase();
 const qFocus = params.get("focus");
@@ -586,6 +990,11 @@ if (/^[A-Z.\-]{1,10}$/.test(qTicker)) $("ticker").value = qTicker;
 // The link vocabulary is the API's ("quarterly"); the <select>'s is "quarter".
 if (qPeriod === "quarter" || qPeriod === "quarterly") $("period").value = "quarter";
 else if (qPeriod === "annual") $("period").value = "annual";
+const qYear = params.get("year"), qQuarter = (params.get("quarter") || "").toUpperCase().replace(/^([1-4])$/, "Q$1");
+if (/^\d{4}$/.test(qYear || "") || /^Q[1-4]$/.test(qQuarter)) pendingSelection = {
+  year: /^\d{4}$/.test(qYear || "") ? qYear : null, quarter: /^Q[1-4]$/.test(qQuarter) ? qQuarter : null, strict: true,
+};
+if (/^Q[1-4]$/.test(qQuarter)) $("period").value = "quarter";
 
 // Keep the address bar honest as the visitor changes ticker/period, so the URL
 // they copy out is the view they're actually looking at.
@@ -593,10 +1002,20 @@ function syncUrl() {
   const u = new URL(location.href);
   u.searchParams.set("ticker", $("ticker").value.trim().toUpperCase());
   u.searchParams.set("period", $("period").value === "quarter" ? "quarterly" : "annual");
+  if ($("fiscal-year").value) u.searchParams.set("year", $("fiscal-year").value);
+  else u.searchParams.delete("year");
+  if ($("period").value === "quarter" && /^Q[1-4]$/.test($("fiscal-quarter").value)) u.searchParams.set("quarter", $("fiscal-quarter").value);
+  else u.searchParams.delete("quarter");
   u.searchParams.delete("focus");
   history.replaceState(null, "", u);
+  if (explorerData?.selected && explorerData.ticker === u.searchParams.get('ticker') &&
+      explorerData.mode === $('period').value) {
+    try { localStorage.setItem('fineas_explorer_selection_v1', JSON.stringify(Object.fromEntries(
+      ['ticker', 'period', 'year', 'quarter'].filter(key => u.searchParams.has(key)).map(key => [key, u.searchParams.get(key)])
+    ))); } catch { /* Optional convenience only. */ }
+  }
 }
-$("ticker").addEventListener("change", syncUrl);
+$("ticker").addEventListener("change", loadAll);
 $("period").addEventListener("change", syncUrl);
 
 // Focus only after the data lands — scrolling to an empty card is worse than

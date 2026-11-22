@@ -18,13 +18,14 @@ import re
 import threading
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from sec_mcp.commerce import billing, usage
 from sec_mcp.commerce import keys as key_store
 from sec_mcp.commerce import plans as plan_catalogue
+from sec_mcp.commerce.account_gate import account_gate_enabled
 
 log = logging.getLogger(__name__)
 
@@ -60,14 +61,28 @@ def _client_ip(request: Request) -> str:
 
 
 class SignupRequest(BaseModel):
-    email: str = Field(..., description="Where the key belongs")
+    email: str = Field("", description="Must match the signed-in account when account gating is enabled")
     name: str = Field("default", description="Label for this key")
+
+
+def _owner(request: Request, requested_email: str = "") -> dict:
+    """Only the verified account may manage keys; submitted emails prove nothing."""
+    user = getattr(request.state, "fineas_user", None)
+    if not user or not user.get("email_confirmed_at") or not user.get("email"):
+        raise HTTPException(403, "A verified Fineas email is required to manage this account.")
+    email = user["email"].strip().lower()
+    if requested_email and requested_email.strip().lower() != email:
+        raise HTTPException(403, "Use the email belonging to your signed-in Fineas account.")
+    return {"id": user["id"], "email": email}
 
 
 @router.post("/v1/keys", summary="Create a free API key")
 def create_key(body: SignupRequest, request: Request):
     """Issue a free-tier key. The secret is returned ONCE and never again."""
     email = (body.email or "").strip().lower()
+    owner = _owner(request, email) if account_gate_enabled() else None
+    if owner:
+        email = owner["email"]
     if not _EMAIL_RE.match(email):
         return JSONResponse(status_code=422, content={
             "error": "A valid email address is required.",
@@ -80,14 +95,16 @@ def create_key(body: SignupRequest, request: Request):
             "code": "signup_throttled",
             "hint": "Reuse your existing key, or contact us for a higher tier."})
 
-    existing = [k for k in key_store.list_for_owner(email) if k.get("status") == "active"]
+    owned = key_store.list_for_user(owner["id"]) if owner else key_store.list_for_owner(email)
+    existing = [k for k in owned if k.get("status") == "active"]
     if len(existing) >= _MAX_KEYS_PER_EMAIL:
         return JSONResponse(status_code=429, content={
             "error": f"This email already has {len(existing)} active keys.",
             "code": "key_limit",
             "hint": "Revoke one at DELETE /v1/keys/{prefix} before creating another."})
 
-    created = key_store.create(email, plan="free", name=body.name or "default")
+    created = key_store.create(email, plan="free", name=body.name or "default",
+                               metadata={"fineas_user_id": owner["id"]} if owner else None)
     if not created:
         return JSONResponse(status_code=503, content={
             "error": "Key store unavailable — could not issue a key.",
@@ -105,17 +122,22 @@ def create_key(body: SignupRequest, request: Request):
             "scopes": plan.get("scopes"),
         },
         "quickstart": {
-            "curl": ("curl -H 'X-API-Key: <your key>' "
+            "curl": (("curl -H 'Authorization: Bearer <Fineas access token>' " if owner else
+                       "curl -H 'X-API-Key: <your key>' ") +
                      "https://sec-mcp-production.up.railway.app/v1/fundamentals/AAPL"),
             "docs": "/docs",
         },
+        **({"authentication": "A Fineas account access token is required. This key alone does not grant data access."} if owner else {}),
     }
 
 
 @router.get("/v1/keys", summary="List the keys for an email (prefixes only)")
-def list_keys(email: str):
+def list_keys(request: Request, email: str = ""):
     """Returns prefixes and metadata. Secrets are unrecoverable by design."""
     email = (email or "").strip().lower()
+    if account_gate_enabled():
+        owner = _owner(request, email)
+        return {"email": owner["email"], "keys": key_store.list_for_user(owner["id"])}
     if not _EMAIL_RE.match(email):
         return JSONResponse(status_code=422, content={
             "error": "A valid email address is required.", "code": "invalid_email",
@@ -128,6 +150,10 @@ def revoke_key(key_prefix: str, request: Request):
     """Revoke by prefix. Requires the key itself, so only its holder can do it."""
     presented = (request.headers.get("x-api-key") or "").strip()
     record = key_store.lookup(presented) if presented else None
+    if account_gate_enabled():
+        owner = _owner(request)
+        if not record or (record.get("metadata") or {}).get("fineas_user_id") != owner["id"]:
+            raise HTTPException(403, "This key does not belong to your Fineas account.")
     if not record or record.get("key_prefix") != key_prefix:
         return JSONResponse(status_code=403, content={
             "error": "Send the key being revoked in the X-API-Key header.",
@@ -139,6 +165,13 @@ def revoke_key(key_prefix: str, request: Request):
 
 @router.get("/v1/usage", summary="Usage history for the presented key")
 def key_usage(request: Request, days: int = 30):
+    if account_gate_enabled():
+        caller = request.state.caller
+        return {"plan": caller.plan_name, "dailyLimit": caller.verdict["limit"],
+                "remaining": caller.verdict["remaining"],
+                "minuteLimit": caller.verdict["rpm_limit"],
+                "minuteRemaining": caller.verdict["rpm_remaining"],
+                "resetAt": caller.verdict["reset_epoch"]}
     presented = (request.headers.get("x-api-key") or "").strip()
     record = key_store.lookup(presented) if presented else None
     if not record:
@@ -157,13 +190,21 @@ def key_usage(request: Request, days: int = 30):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class CheckoutRequest(BaseModel):
-    email: str
+    email: str = ""
     plan: str = Field("pro", description="pro | business | enterprise")
 
 
 @router.post("/v1/billing/checkout", summary="Start a Stripe Checkout session")
-def checkout(body: CheckoutRequest):
+def checkout(body: CheckoutRequest, request: Request):
     email = (body.email or "").strip().lower()
+    if account_gate_enabled():
+        _owner(request, email)
+        # Existing Stripe upgrades target legacy keys, not account quotas.
+        # Do not sell an upgrade this rollout cannot provision.
+        return JSONResponse(status_code=503, content={
+            "error": "Account upgrades are not available yet.",
+            "code": "account_billing_unavailable",
+        })
     if not _EMAIL_RE.match(email):
         return JSONResponse(status_code=422, content={
             "error": "A valid email address is required.", "code": "invalid_email",

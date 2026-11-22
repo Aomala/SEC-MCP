@@ -37,7 +37,7 @@ The previous 22-tool surface lives in server_legacy.py (not served).
 from __future__ import annotations
 
 # MCP framework
-from fastmcp import FastMCP
+from sec_mcp.commerce.mcp import FineasFastMCP as FastMCP
 
 # one implementation module per tool (all logic lives there, not here)
 from sec_mcp.surface.actions import get_corporate_actions_impl

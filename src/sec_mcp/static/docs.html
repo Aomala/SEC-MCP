@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
+  <link rel="stylesheet" href="/static/auth-gate.css?v=1">
+  <script src="/static/auth-gate.js?v=1"></script>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Fineas API — Documentation</title>
@@ -89,7 +91,7 @@
   <div class="pricing" id="pricing-cards">
     <div class="price-card"><h3>Loading plans…</h3></div>
   </div>
-  <p style="opacity:.7;font-size:13px;margin-top:8px">
+  <p id="plan-note" style="opacity:.7;font-size:13px;margin-top:8px">
     Every tier includes the hosted MCP server. Redistribution and reseller
     rights are available on Enterprise only.
   </p>
@@ -122,10 +124,42 @@
         + '<ul>' + items.map(function (i) { return '<li>' + i + '</li>'; }).join('') + '</ul>'
         + cta + '</div>';
     }
-    fetch('/v1/plans')
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
+    window.FineasAccount.ready
+      .then(async function (config) {
+        if (document.readyState === 'loading') {
+          await new Promise(resolve => document.addEventListener('DOMContentLoaded', resolve, { once: true }));
+        }
+        if (config.enabled) {
+          document.getElementById('pricing-cards').innerHTML =
+            '<div class="price-card featured"><h3>Fineas account</h3><div class="price-amount">$0</div>' +
+            '<ul><li>Interactive financial research</li><li>Shared daily allowance</li><li>Bulk exports excluded</li></ul>' +
+            '<button class="price-btn price-btn-primary" data-act="account">Sign in to explore</button></div>';
+          document.getElementById('plan-note').textContent =
+            'Sign in with your Fineas account. Paid account upgrades are not available yet. Contact Fineas for separately licensed data access.';
+          document.getElementById('auth-description').textContent =
+            'This explorer uses your Fineas account session. API requests require its access token in the Authorization header. Keep tokens private; API keys alone do not unlock account access.';
+          document.getElementById('auth-example').textContent =
+            'Authorization: Bearer YOUR_FINEAS_ACCESS_TOKEN';
+          document.getElementById('try-description').textContent =
+            'Sign in with your Fineas account to test a request. Requests use your shared allowance.';
+          const row = document.createElement('tr');
+          ['Fineas account', (config.dailyLimit || 250) + ' calls/day · ' + (config.minuteLimit || 30) + '/min', 'Interactive access'].forEach(function (text) {
+            const cell = document.createElement('td'); cell.textContent = text; row.appendChild(cell);
+          });
+          document.getElementById('rate-limit-rows').replaceChildren(row);
+          return;
+        }
+        const response = await fetch('/v1/plans');
+        const d = await response.json();
         document.getElementById('pricing-cards').innerHTML = (d.plans || []).map(card).join('');
+        const rows = (d.plans || []).map(function (plan) {
+          const row = document.createElement('tr');
+          [plan.label, plan.dailyCalls + ' calls/day · ' + plan.requestsPerMinute + '/min', 'See plan details'].forEach(function (text) {
+            const cell = document.createElement('td'); cell.textContent = text; row.appendChild(cell);
+          });
+          return row;
+        });
+        document.getElementById('rate-limit-rows').replaceChildren(...rows);
       })
       .catch(function () {
         document.getElementById('pricing-cards').innerHTML =
@@ -133,9 +167,13 @@
           + '<p>See <a href="/v1/plans">/v1/plans</a>.</p></div>';
       });
 
-    document.getElementById('pricing-cards').addEventListener('click', function (ev) {
+    document.getElementById('pricing-cards').addEventListener('click', async function (ev) {
       var btn = ev.target.closest('[data-act]');
       if (!btn) return;
+      if (btn.getAttribute('data-act') === 'account') {
+        try { await window.FineasAccount.signIn(); } catch (_) { /* Dialog was closed. */ }
+        return;
+      }
       var email = prompt('Your email — the key and any subscription are tied to it:');
       if (!email) return;
       var act = btn.getAttribute('data-act');
@@ -168,8 +206,8 @@
 
   <!-- Authentication -->
   <h2>Authentication</h2>
-  <p class="section-desc">Include your API key in the <code>X-API-Key</code> header with every request.</p>
-  <div class="code-block">curl -H "X-API-Key: YOUR_KEY" \
+  <p class="section-desc" id="auth-description">Include your API key in the <code>X-API-Key</code> header with every request.</p>
+  <div class="code-block" id="auth-example">curl -H "X-API-Key: YOUR_KEY" \
   https://sec-mcp-production.up.railway.app/v1/financials/AAPL</div>
 
   <!-- Endpoints -->
@@ -290,7 +328,7 @@
 
   <!-- Try It -->
   <h2>Try It Live</h2>
-  <p class="section-desc">Test the API directly from your browser. No API key required during beta.</p>
+  <p class="section-desc" id="try-description">Test the API directly from your browser within your access allowance.</p>
   <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px">
     <div style="display:flex;gap:8px;margin-bottom:12px">
       <select id="try-endpoint" style="background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;flex-shrink:0">
@@ -305,12 +343,7 @@
     <pre id="try-result" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;overflow-x:auto;max-height:400px;overflow-y:auto;color:var(--text2);white-space:pre-wrap">Click Send to test the API...</pre>
   </div>
   <script>
-  const API = (function() {
-    const h = window.location.hostname;
-    if (h === 'localhost' || h === '127.0.0.1') return '';
-    if (h.includes('railway.app')) return '';
-    return 'https://sec-mcp-production.up.railway.app';
-  })();
+  const API = window.FineasAccount.apiBase;
   async function tryApi() {
     const ep = document.getElementById('try-endpoint').value;
     const val = document.getElementById('try-input').value.trim();
@@ -336,10 +369,8 @@
     <div class="endpoint-body" style="display:block">
       <table class="param-table">
         <thead><tr><th>Tier</th><th>Rate Limit</th><th>Data Sources</th></tr></thead>
-        <tbody>
-          <tr><td>Starter ($5/mo)</td><td>100 calls/day</td><td>SEC EDGAR XBRL</td></tr>
-          <tr><td>Pro ($100/yr)</td><td>Unlimited</td><td>SEC + Polygon + AI Insights</td></tr>
-          <tr><td>Lifetime ($10k)</td><td>Unlimited</td><td>Everything + Custom integrations</td></tr>
+        <tbody id="rate-limit-rows">
+          <tr><td colspan="3">Loading current limits…</td></tr>
         </tbody>
       </table>
     </div>

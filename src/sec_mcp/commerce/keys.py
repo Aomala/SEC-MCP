@@ -205,3 +205,22 @@ def invalidate() -> None:
     """Drop the lookup cache — call after any mutation for same-process immediacy."""
     with _lock:
         _cache.clear()
+
+
+def list_for_user(user_id: str) -> list[dict]:
+    """Account-bound keys only; legacy email-only ownership cannot be claimed."""
+    client = _client()
+    if not client:
+        return []
+    try:
+        res = (
+            client.table("api_keys")
+            .select("key_prefix, name, plan, status, created_at, last_used_at")
+            .eq("metadata->>fineas_user_id", user_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        return res.data or []
+    except Exception:
+        log.error("Account key list unavailable")
+        return []

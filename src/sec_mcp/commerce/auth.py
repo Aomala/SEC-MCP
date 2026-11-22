@@ -149,6 +149,14 @@ def require(scope: str):
     """
 
     def _dependency(request: Request) -> Caller:
+        # Account middleware already verified the user and consumed the shared
+        # atomic quota. Never resolve a legacy key or charge process-local
+        # counters a second time for these requests.
+        if getattr(request.state, "fineas_account_gate", False):
+            caller = request.state.caller
+            if not caller.may(scope):
+                raise ScopeDenied(scope, caller.plan_name)
+            return caller
         caller = resolve_caller(request)
 
         if not caller.may(scope):
@@ -233,6 +241,8 @@ def install_rate_headers(app) -> None:
                 response.headers[k] = v
             # Latency is recorded here, where we actually know it. Metering
             # must never be able to break a response that already succeeded.
+            if getattr(request.state, "fineas_account_gate", False):
+                return response
             with contextlib.suppress(Exception):
                 usage.record(
                     caller.key_id, _endpoint_label(request),
