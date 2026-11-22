@@ -1,6 +1,9 @@
 name: Monthly SEC EDGAR ingestion
 
 on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/monthly-edgar.yml']
   schedule:
     - cron: '17 5 1 * *'
   workflow_dispatch:
@@ -23,7 +26,24 @@ env:
   SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
 jobs:
+  configuration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check ingestion credentials
+        shell: bash
+        run: |
+          missing=0
+          for key in EDGAR_IDENTITY SUPABASE_URL SUPABASE_KEY; do
+            if [[ -z "${!key:-}" ]]; then
+              echo "::error::Missing repository secret $key"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
   index:
+    needs: configuration
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 300
     steps:
@@ -36,7 +56,6 @@ jobs:
         env:
           MONTH: ${{ inputs.month }}
         run: |
-          : "${EDGAR_IDENTITY:?missing EDGAR_IDENTITY}" "${SUPABASE_URL:?missing SUPABASE_URL}" "${SUPABASE_KEY:?missing SUPABASE_KEY}"
           if [[ -n "$MONTH" ]]; then
             python -m sec_mcp.ingest_monthly --month "$MONTH"
           else
