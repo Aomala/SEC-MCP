@@ -58,7 +58,8 @@ jobs:
           python-version: "3.11"
 
       - name: Install
-        run: pip install -e .
+        # [cache] = supabase-py; without it batch_cache sees no cache and exits 1.
+        run: pip install -e ".[cache]"
 
       - name: Warm cache
         env:

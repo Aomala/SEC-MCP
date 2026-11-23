@@ -35,6 +35,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Supabase cache. Optional for the app (supabase_cache.py no-ops without it),
+# REQUIRED for the batch sweep: batch_cache exits 1 when the cache is unavailable.
+# The Dockerfile pins it separately; .github/workflows/cache-warm.yml installs it.
+cache = [
+    "supabase>=2.0",
+]
 # Stripe checkout + webhook. Optional: commerce/billing.py imports it lazily and
 # every billing endpoint returns a clean 503 when it is absent.
 billing = [
