@@ -377,9 +377,19 @@ class SECClient:
         if entry:
             return str(entry["cik_str"]).zfill(10)
 
-        # Try removing common suffixes and re-checking
+        # Share-class separator: SEC's ticker file writes BRK-B / BF-B, while
+        # index lists and most market data write BRK.B (or BRK/B). Without this
+        # Berkshire Hathaway resolved to nothing at all.
+        for alt in (clean.replace(".", "-"), clean.replace("/", "-")):
+            if alt != clean:
+                entry = tickers_map.get(alt)
+                if entry:
+                    return str(entry["cik_str"]).zfill(10)
+
+        # Try removing common suffixes and re-checking. removesuffix, not
+        # rstrip: rstrip(".B") strips CHARACTERS ("BRK.B" -> "BRK").
         for suffix in ("-A", "-B", ".A", ".B", "/A", "/B"):
-            alt = clean.rstrip(suffix)
+            alt = clean.removesuffix(suffix)
             if alt != clean:
                 entry = tickers_map.get(alt)
                 if entry:

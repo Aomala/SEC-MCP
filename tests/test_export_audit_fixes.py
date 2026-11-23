@@ -602,3 +602,13 @@ def test_mcp_ttm_needs_four_consecutive_standalone_quarters():
     # A 6-month YTD row is never one of the four
     assert _ttm_quarters([q("2026-09-30"), q("2026-06-30", "ytd_fallback"), q("2026-03-31", "standalone"),
                           q("2025-12-31", "q4_synthesized")]) is None
+
+
+def test_share_class_tickers_resolve():
+    # SEC writes BRK-B; index lists write BRK.B. rstrip(".B") used to yield "BRK".
+    from sec_mcp.sec_client import SECClient
+    c = SECClient.__new__(SECClient)
+    c._get_tickers_map = lambda: {"BRK-B": {"cik_str": 1067983}, "BF-B": {"cik_str": 14693}}
+    assert c.resolve_cik("BRK.B") == "0001067983"
+    assert c.resolve_cik("brk/b") == "0001067983"
+    assert c.resolve_cik("BF.B") == "0000014693"
