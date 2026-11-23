@@ -380,3 +380,49 @@ def test_ga_expense_is_a_flow_like_sga():
     out = _decumulate_quarters_inmemory(rows)
     assert out[0]["metrics"]["ga_expense"] == 2_312.0      # filed 3-month figure
     assert out[1]["metrics"]["ga_expense"] == pytest.approx(2_276.0)  # 4,371 − 2,095
+
+
+class _FakeQuery:
+    """Just enough of supabase-py's builder chain for cached_age_days."""
+
+    def __init__(self, rows, seen):
+        self._rows, self._seen = rows, seen
+
+    def select(self, cols):
+        self._seen.append(cols)
+        return self
+
+    def eq(self, *_a):
+        return self
+
+    gte = limit = eq
+
+    def execute(self):
+        return type("R", (), {"data": self._rows})()
+
+
+def _fake_client(rows, seen):
+    return type("C", (), {"table": lambda self, _name: _FakeQuery(rows, seen)})()
+
+
+def test_batch_age_check_treats_outdated_rows_as_absent(monkeypatch):
+    # The sweep skips rows younger than --refresh-older-than; a row rebuilt
+    # yesterday by pre-fix code must not hide behind its age.
+    from datetime import datetime, timezone
+
+    from sec_mcp import supabase_cache as sc
+
+    now = datetime.now(timezone.utc).isoformat()
+    seen: list[str] = []
+    for dv, expect_fresh in ((None, False), (sc.DATA_VERSION - 1, False),
+                             ("junk", False), (sc.DATA_VERSION, True)):
+        monkeypatch.setattr(sc, "_get_client",
+                            lambda dv=dv: _fake_client([{"created_at": now, "dv": dv}], seen))
+        age = sc.cached_age_days("AAPL", "sec_income_history_v2", "quarter")
+        assert (age is not None) is expect_fresh, dv
+    assert "_dataVersion" in seen[-1]
+
+    # Unversioned types never read the blob and keep age-only semantics.
+    monkeypatch.setattr(sc, "_get_client", lambda: _fake_client([{"created_at": now}], seen))
+    assert sc.cached_age_days("AAPL", "geo_segments", "annual") is not None
+    assert seen[-1] == "created_at"

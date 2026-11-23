@@ -107,6 +107,14 @@ def is_available() -> bool:
     return _available is True
 
 
+def _version_of(value: Any) -> int:
+    """`_dataVersion` as an int; absent or malformed counts as 0 (pre-versioning)."""
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _cache_key(ticker: str, data_type: str, period: str = "annual",
                date_from: str = "", date_to: str = "") -> str:
     """Build a unique cache key."""
@@ -164,7 +172,7 @@ def get_entry(
         # reader cold on deploy), but `outdated` tells stale-while-revalidate
         # callers to rebuild it behind the response.
         outdated = (data_type in VERSIONED_DATA_TYPES and isinstance(data, dict)
-                    and (data.get("_dataVersion") or 0) < DATA_VERSION)
+                    and _version_of(data.get("_dataVersion")) < DATA_VERSION)
         log.debug("Supabase cache %s: %s", "stale hit" if stale else "hit", key)
         return {"data": data, "stale": stale, "outdated": outdated, "age_days": age_days}
     except Exception as exc:
@@ -242,6 +250,10 @@ def cached_age_days(
 ) -> float | None:
     """Days since a live (unexpired) entry was last written; None when absent.
 
+    A versioned blob written by older extraction code also reports None: the
+    batch sweep's age-only skip would otherwise leave a row rebuilt yesterday
+    by pre-fix code untouched for its whole refresh window.
+
     Rows written before created_at became upsert-refreshed report their
     original insert time — safe direction: at worst we refresh early.
     """
@@ -249,16 +261,21 @@ def cached_age_days(
     if not client:
         return None
     key = _cache_key(ticker, data_type, period, date_from, date_to)
+    versioned = data_type in VERSIONED_DATA_TYPES
     try:
         result = (
             client.table("financial_cache")
-            .select("created_at")
+            # Decision: read only the version scalar, not the blob — the sweep
+            # checks ~4 rows per ticker across 1,000 tickers.
+            .select("created_at, dv:data->_dataVersion" if versioned else "created_at")
             .eq("cache_key", key)
             .gte("expires_at", datetime.now(timezone.utc).isoformat())
             .limit(1)
             .execute()
         )
         if not result.data:
+            return None
+        if versioned and _version_of(result.data[0].get("dv")) < DATA_VERSION:
             return None
         created = result.data[0].get("created_at")
         if not created:

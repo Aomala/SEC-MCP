@@ -117,7 +117,8 @@ src/sec_mcp/
   reported vs derived. weightedAverageShsOut/Dil are real weighted counts.
 - **Cache versioning**: `supabase_cache.DATA_VERSION` stamps extraction blobs; older
   blobs stay servable (get_cached unchanged) but SWR readers see `outdated` and rebuild
-  in the background. Bump it whenever a cached value's MEANING changes.
+  in the background, and `cached_age_days` reports them absent so the batch sweep
+  re-extracts them regardless of age. Bump it whenever a cached value's MEANING changes.
 - **FPI currency**: metrics are fx-converted to USD; `reportedCurrency` describes
   the VALUES (USD when converted), the filing's native currency + rate live in
   `_meta.filingCurrency` / `_meta.fxRate`. Known limitation: conversion uses
