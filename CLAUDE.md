@@ -118,7 +118,14 @@ src/sec_mcp/
 - **Cache versioning**: `supabase_cache.DATA_VERSION` stamps extraction blobs; older
   blobs stay servable (get_cached unchanged) but SWR readers see `outdated` and rebuild
   in the background, and `cached_age_days` reports them absent so the batch sweep
-  re-extracts them regardless of age. Bump it whenever a cached value's MEANING changes.
+  re-extracts them regardless of age. Bump it whenever a cached value's MEANING changes;
+  a change confined to one artifact bumps only that type in `_TYPE_VERSIONS`
+  (`data_version(type)`), so the rest of the cache stays current.
+- **Comparative backfill** (`_backfill_from_comparatives`): G&A that a filer only breaks
+  out in its ASU 2023-07 segment note (AAPL: income statement shows SG&A combined) is
+  missing from pre-adoption filings; history fills it from a later filing's prior-year
+  comparative ONLY when that same filing reproduces the row's revenue (±0.5%). Q4 =
+  FY − 9M from comparatives. Provenance: `_meta.sources.ga_expense`.
 - **FPI currency**: metrics are fx-converted to USD; `reportedCurrency` describes
   the VALUES (USD when converted), the filing's native currency + rate live in
   `_meta.filingCurrency` / `_meta.fxRate`. Known limitation: conversion uses

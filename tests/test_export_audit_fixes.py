@@ -414,8 +414,8 @@ def test_batch_age_check_treats_outdated_rows_as_absent(monkeypatch):
 
     now = datetime.now(timezone.utc).isoformat()
     seen: list[str] = []
-    for dv, expect_fresh in ((None, False), (sc.DATA_VERSION - 1, False),
-                             ("junk", False), (sc.DATA_VERSION, True)):
+    cur = sc.data_version("sec_income_history_v2")
+    for dv, expect_fresh in ((None, False), (cur - 1, False), ("junk", False), (cur, True)):
         monkeypatch.setattr(sc, "_get_client",
                             lambda dv=dv: _fake_client([{"created_at": now, "dv": dv}], seen))
         age = sc.cached_age_days("AAPL", "sec_income_history_v2", "quarter")
@@ -426,3 +426,63 @@ def test_batch_age_check_treats_outdated_rows_as_absent(monkeypatch):
     monkeypatch.setattr(sc, "_get_client", lambda: _fake_client([{"created_at": now}], seen))
     assert sc.cached_age_days("AAPL", "geo_segments", "annual") is not None
     assert seen[-1] == "created_at"
+
+
+def _cf(**tags):
+    """companyfacts payload: tag -> [(start, end, val, accn, filed)]."""
+    return {"facts": {"us-gaap": {
+        tag: {"units": {"USD": [{"start": s, "end": e, "val": v, "accn": a, "filed": f}
+                                for s, e, v, a, f in rows]}}
+        for tag, rows in tags.items()}}}
+
+
+def _bf_row(end, rev, quality="standalone", ga=None):
+    return {"filing_info": {"report_date": end}, "quality": quality,
+            "metrics": {"revenue": rev, "ga_expense": ga}, "metrics_sourced": {}}
+
+
+def test_ga_backfilled_from_later_comparatives_only_on_the_same_basis(monkeypatch):
+    # AAPL: G&A is broken out only in the ASU 2023-07 segment note, so its
+    # FY25 10-Qs carry none — the FY26 10-Qs restate each FY25 quarter.
+    import sec_mcp.financials as fin
+
+    facts = _cf(
+        RevenueFromContractWithCustomerExcludingAssessedTax=[
+            ("2024-12-29", "2025-03-29", 95_359, "Q2-26", "2026-05-01"),   # same basis
+            ("2025-03-30", "2025-06-28", 90_000, "Q3-26", "2026-07-31"),   # recast (row says 94,036)
+            ("2024-09-29", "2025-09-27", 416_161, "K-26", "2026-11-03"),
+            ("2024-09-29", "2025-06-28", 313_695, "Q3-26", "2026-07-31"),
+        ],
+        GeneralAndAdministrativeExpense=[
+            ("2024-12-29", "2025-03-29", 1_997, "Q2-26", "2026-05-01"),
+            ("2025-03-30", "2025-06-28", 1_881, "Q3-26", "2026-07-31"),
+            ("2024-09-29", "2025-09-27", 8_077, "K-26", "2026-11-03"),
+            ("2024-09-29", "2025-06-28", 5_952, "Q3-26", "2026-07-31"),
+        ])
+    client = type("C", (), {"get_company_facts": lambda self, tk: facts})()
+    monkeypatch.setattr(fin, "get_sec_client", lambda: client)
+
+    rows = [_bf_row("2025-09-27", 102_466, "q4_synthesized"),
+            _bf_row("2025-06-28", 94_036, "standalone_decumulated"),
+            _bf_row("2025-03-29", 95_359, "standalone_decumulated"),
+            _bf_row("2025-03-29", 95_359, "ytd_fallback"),
+            _bf_row("2025-03-29", 95_359, ga=2_000)]
+    out = fin._backfill_from_comparatives("AAPL", rows, quarterly=True)
+    ga = [r["metrics"]["ga_expense"] for r in out]
+    assert ga[0] == 8_077 - 5_952          # Q4 = FY − 9M, revenue arithmetic agrees
+    assert ga[1] is None                   # comparative revenue recast → refused
+    assert ga[2] == 1_997
+    assert ga[3] is None                   # YTD row never takes a 3-month value
+    assert ga[4] == 2_000                  # the row's own tag always wins
+    assert "Q2-26" in out[2]["metrics_sourced"]["ga_expense"]
+    assert rows[2]["metrics"]["ga_expense"] is None  # input rows not mutated
+
+    annual = fin._backfill_from_comparatives(
+        "AAPL", [_bf_row("2025-09-27", 416_161, None)], quarterly=False)
+    assert annual[0]["metrics"]["ga_expense"] == 8_077
+
+
+def test_history_version_bump_leaves_other_artifacts_current():
+    from sec_mcp import supabase_cache as sc
+    assert sc.data_version("sec_income_history_v2") > sc.data_version("financials")
+    assert sc.data_version("ttm_metrics") == sc.DATA_VERSION

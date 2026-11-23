@@ -49,6 +49,15 @@ DATA_VERSION = 3
 VERSIONED_DATA_TYPES = frozenset({
     "financials", "sec_income_history_v2", "ttm_metrics", "quarter_metrics",
 })
+# Per-type overrides, so a change confined to one artifact doesn't send every
+# other row back through extraction. History 4 = G&A backfilled from later
+# filings' prior-year comparatives (financials/TTM unchanged at 3).
+_TYPE_VERSIONS = {"sec_income_history_v2": 4}
+
+
+def data_version(data_type: str) -> int:
+    """The current `_dataVersion` for a versioned data type."""
+    return _TYPE_VERSIONS.get(data_type, DATA_VERSION)
 
 CACHE_TTLS = {
     "financials": 1209600,      # 14 days — a filed document is immutable but the
@@ -172,7 +181,7 @@ def get_entry(
         # reader cold on deploy), but `outdated` tells stale-while-revalidate
         # callers to rebuild it behind the response.
         outdated = (data_type in VERSIONED_DATA_TYPES and isinstance(data, dict)
-                    and _version_of(data.get("_dataVersion")) < DATA_VERSION)
+                    and _version_of(data.get("_dataVersion")) < data_version(data_type))
         log.debug("Supabase cache %s: %s", "stale hit" if stale else "hit", key)
         return {"data": data, "stale": stale, "outdated": outdated, "age_days": age_days}
     except Exception as exc:
@@ -215,7 +224,7 @@ def set_cached(
 
     key = _cache_key(ticker, data_type, period, date_from, date_to)
     if data_type in VERSIONED_DATA_TYPES and isinstance(data, dict):
-        data = {**data, "_dataVersion": DATA_VERSION}
+        data = {**data, "_dataVersion": data_version(data_type)}
     if ttl is None:
         ttl = CACHE_TTLS.get(data_type, _SECTION_TTL if data_type.startswith("section_") else 3600)
     expires = datetime.now(timezone.utc) + timedelta(seconds=ttl)
@@ -275,7 +284,7 @@ def cached_age_days(
         )
         if not result.data:
             return None
-        if versioned and _version_of(result.data[0].get("dv")) < DATA_VERSION:
+        if versioned and _version_of(result.data[0].get("dv")) < data_version(data_type):
             return None
         created = result.data[0].get("created_at")
         if not created:

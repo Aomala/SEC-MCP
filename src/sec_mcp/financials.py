@@ -4498,7 +4498,126 @@ def _synthesize_q4(ticker: str, results: list[dict]) -> list[dict]:
     return results
 
 
-HISTORY_VERSION = 3  # 3: ga_expense decumulated (v2 served AAPL's YTD G&A as quarters)
+# Lines a filer began breaking out only with a new disclosure: ASU 2023-07's
+# segment-expense note is the one place AAPL reports G&A on its own (its
+# income statement and MD&A carry SG&A combined). The filings before adoption
+# hold nothing, but every later filing restates the prior year as a
+# comparative — AAPL's FY26 10-Qs give each FY25 quarter, its FY25 10-K gives
+# FY24 and FY23.
+_COMPARATIVE_BACKFILL = {"ga_expense": ("GeneralAndAdministrativeExpense",)}
+_BACKFILL_REVENUE_TAGS = (
+    "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues",
+    "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet",
+)
+_BACKFILL_SPANS = {"quarter": (80, 100), "nine": (255, 290), "year": (350, 380)}
+
+
+def _usd_duration_facts(facts: dict, tags: tuple[str, ...]) -> list[dict]:
+    """us-gaap USD duration facts for `tags` from a companyfacts payload."""
+    gaap = (facts.get("facts") or {}).get("us-gaap") or {}
+    out = []
+    for tag in tags:
+        for f in ((gaap.get(tag) or {}).get("units") or {}).get("USD") or ():
+            start = pd.to_datetime(f.get("start") or "", errors="coerce")
+            end = pd.to_datetime(f.get("end") or "", errors="coerce")
+            if pd.notna(start) and pd.notna(end) and f.get("val") is not None and f.get("accn"):
+                out.append({**f, "_start": start, "_end": end, "_dur": (end - start).days})
+    return out
+
+
+def _span_facts(facts: list[dict], span: str, end: pd.Timestamp | None,
+                start: pd.Timestamp | None = None) -> list[dict]:
+    """Facts covering `span` whose end/start sit within 4 days of those given
+    (None = unconstrained), newest filing first."""
+    lo, hi = _BACKFILL_SPANS[span]
+    hit = [f for f in facts if lo <= f["_dur"] <= hi
+           and (end is None or abs((f["_end"] - end).days) <= 4)
+           and (start is None or abs((f["_start"] - start).days) <= 4)]
+    return sorted(hit, key=lambda f: f.get("filed") or "", reverse=True)
+
+
+def _revenue_in(revenue: list[dict], fact: dict) -> list[float]:
+    """Revenue values the same filing reports for the same period as `fact`."""
+    return [float(r["val"]) for r in revenue if r["accn"] == fact["accn"]
+            and abs((r["_end"] - fact["_end"]).days) <= 4
+            and abs((r["_start"] - fact["_start"]).days) <= 4]
+
+
+def _backfill_from_comparatives(ticker: str, results: list[dict], *, quarterly: bool) -> list[dict]:
+    """Fill `_COMPARATIVE_BACKFILL` lines a row's own filing never tagged.
+
+    A later filing's comparative is only taken when the SAME filing reproduces
+    the row's revenue for the same period (within 0.5%) — the proof that the
+    comparative sits on the row's basis and wasn't recast (spin-off,
+    discontinued ops). Q4 has no 3-month fact anywhere, so it is FY − 9M from
+    comparatives, and the identical arithmetic on revenue must reproduce the
+    row's Q4 revenue. Provenance lands in `_meta.sources`.
+    """
+    todo = []
+    for i, row in enumerate(results):
+        m = row.get("metrics") or {}
+        missing = [k for k in _COMPARATIVE_BACKFILL if m.get(k) is None]
+        if not missing or row.get("fx_rate") or m.get("revenue") is None:
+            continue
+        quality = row.get("quality") or ""
+        if quarterly and not (quality.startswith("standalone") or quality == "q4_synthesized"):
+            continue  # ytd_fallback rows hold YTD values; a 3-month fill would mix spans
+        todo.append((i, missing))
+    if not todo:
+        return results
+    try:
+        facts = get_sec_client().get_company_facts(ticker) or {}
+    except Exception as exc:
+        log.debug("comparative backfill: companyfacts failed for %s: %s", ticker, exc)
+        return results
+    revenue = _usd_duration_facts(facts, _BACKFILL_REVENUE_TAGS)
+    if not revenue:
+        return results
+
+    def close(a: float, b: float) -> bool:
+        return bool(b) and abs(a - b) / abs(b) <= 0.005
+
+    out = list(results)
+    for i, missing in todo:
+        row = out[i]
+        end, rev = _report_date(row), row["metrics"]["revenue"]
+        if pd.isna(end):
+            continue
+        q4 = quarterly and row.get("quality") == "q4_synthesized"
+        filled: dict[str, tuple[float, str]] = {}
+        for k in missing:
+            line = _usd_duration_facts(facts, _COMPARATIVE_BACKFILL[k])
+            if q4:
+                for fy in _span_facts(line, "year", end):
+                    fy_revs = _revenue_in(revenue, fy)
+                    # The nine months share the fiscal year's start; their end
+                    # (13 or 14 weeks before FY end) is left to the revenue proof.
+                    for nine in _span_facts(line, "nine", None, start=fy["_start"]):
+                        if any(close(a - b, rev) for a in fy_revs for b in _revenue_in(revenue, nine)):
+                            v = float(fy["val"]) - float(nine["val"])
+                            if v >= 0:
+                                filled[k] = (v, f"{fy['accn']} FY − {nine['accn']} 9M")
+                            break
+                    if k in filled:
+                        break
+            else:
+                for f in _span_facts(line, "quarter" if quarterly else "year", end):
+                    if any(close(v, rev) for v in _revenue_in(revenue, f)):
+                        if float(f["val"]) >= 0:
+                            filled[k] = (float(f["val"]), f["accn"])
+                        break
+        if not filled:
+            continue
+        out[i] = {**row,
+                  "metrics": {**row["metrics"], **{k: v for k, (v, _) in filled.items()}},
+                  "metrics_sourced": {**(row.get("metrics_sourced") or {}),
+                                      **{k: f"prior-year comparative ({src})"
+                                         for k, (_, src) in filled.items()}}}
+    return out
+
+
+HISTORY_VERSION = 4  # 4: G&A backfilled from later comparatives (ASU 2023-07 segment note)
+#                      3: ga_expense decumulated (v2 served AAPL's YTD G&A as quarters)
 
 
 def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 8) -> dict:
@@ -4552,6 +4671,7 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
         # arithmetic — a Q4 or decumulated quarter that straddles a split
         # otherwise mixes pre- and post-split EPS.
         results = _split_adjust(results)
+        is_foreign = False
         if is_q:
             is_foreign = has_release_format(tk) or any(f.form_type in ("6-K", "6-K/A") for f in selected)
             if is_foreign:
@@ -4572,6 +4692,8 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
                 results.sort(key=lambda r: r["filing_info"]["report_date"], reverse=True)
             else:
                 results = _synthesize_q4(tk, _decumulate_quarters_inmemory(results))
+        if not (is_q and is_foreign):
+            results = _backfill_from_comparatives(tk, results, quarterly=is_q)
         results = results[:want]
 
         income, balance, cashflow = [], [], []
