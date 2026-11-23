@@ -683,8 +683,9 @@ SHARE_BASED_COMPENSATION: list[ConceptEntry] = [
     ConceptEntry("AllocatedShareBasedCompensationExpense",
                  "Allocated Share-Based Compensation"),
     ConceptEntry("ShareBasedCompensationExpense", "Share-Based Compensation Expense"),
-    ConceptEntry("EmployeeServiceShareBasedCompensationNonvestedAwardsTotalCompensationCostNotYetRecognized",
-                 "SBC Cost Not Yet Recognized"),
+    # EmployeeServiceShareBasedCompensationNonvestedAwardsTotalCompensationCostNotYetRecognized
+    # removed: it is a BALANCE of unrecognized cost at a date, not the period's
+    # expense — serving it (and decumulating two balances) mislabels a stock as a flow.
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1016,8 +1017,10 @@ FINANCING_CASH_FLOW: list[ConceptEntry] = [
 ]
 
 DIVIDENDS_PAID: list[ConceptEntry] = [
-    ConceptEntry("PaymentsOfDividends", "Dividends Paid"),
+    # Common first: this fills commonDividendsPaid, and PaymentsOfDividends also
+    # carries preferred and NCI distributions when a filer tags both.
     ConceptEntry("PaymentsOfDividendsCommonStock", "Dividends Paid (Common)"),
+    ConceptEntry("PaymentsOfDividends", "Dividends Paid"),
     ConceptEntry("PaymentsOfOrdinaryDividends", "Ordinary Dividends Paid"),
     # IFRS
     ConceptEntry("DividendsPaidClassifiedAsFinancingActivities", "IFRS Dividends Paid"),

@@ -2877,7 +2877,7 @@ def extract_financials(
     if cache_acc:
         # Extraction-output version: v2 adds weighted shares, metrics_3m and
         # basis_check (Nov 2026 audit) — a 7-day-old v1 entry must not mask them.
-        cache_acc += "#x3"  # x3: debt current maturities, gross interest, revenue ≥ contract
+        cache_acc += "#x4"  # x3: debt maturities, gross interest, revenue ≥ contract; x4: SBC flow-only, common dividends
     is_interim = (filing_meta or {}).get("form_type") in ("6-K", "6-K/A")
     if cache_acc and is_interim:
         cache_acc += "#interim-v1"

@@ -612,3 +612,11 @@ def test_share_class_tickers_resolve():
     assert c.resolve_cik("BRK.B") == "0001067983"
     assert c.resolve_cik("brk/b") == "0001067983"
     assert c.resolve_cik("BF.B") == "0000014693"
+
+
+def test_flow_lines_never_take_a_balance_or_a_superset():
+    from sec_mcp.xbrl_mappings import DIVIDENDS_PAID, SHARE_BASED_COMPENSATION
+    sbc = [e.xbrl_concept for e in SHARE_BASED_COMPENSATION]
+    assert not any("NotYetRecognized" in c for c in sbc)          # a balance, not the expense
+    div = [e.xbrl_concept for e in DIVIDENDS_PAID]
+    assert div.index("PaymentsOfDividendsCommonStock") < div.index("PaymentsOfDividends")
