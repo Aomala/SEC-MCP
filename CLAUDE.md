@@ -121,6 +121,13 @@ src/sec_mcp/
   re-extracts them regardless of age. Bump it whenever a cached value's MEANING changes;
   a change confined to one artifact bumps only that type in `_TYPE_VERSIONS`
   (`data_version(type)`), so the rest of the cache stays current.
+- **fiscalYear labels** (`_harmonize_fiscal_years`): DEI DocumentFiscalYearFocus is filer-typed and
+  wrong often enough to matter (CRM's Jan-2026 10-K says 2025; CRWD flipped conventions). History rows
+  are relabelled from their period end + the company's convention = majority (DEI fy − FYE year) over
+  its 12 newest periodic filings (HD/LOW name years by their START, NVDA/CRM by their END).
+- **Debt** (`_count_current_maturities_once`): longTermDebt = noncurrent only, shortTermDebt =
+  borrowings + current maturities (DebtCurrent when tagged) — FMP's convention; never count the
+  current portion twice. interestExpense is GROSS (never the net nonoperating line), served positive.
 - **Comparative backfill** (`_backfill_from_comparatives`): G&A that a filer only breaks
   out in its ASU 2023-07 segment note (AAPL: income statement shows SG&A combined) is
   missing from pre-adoption filings; history fills it from a later filing's prior-year

@@ -45,14 +45,16 @@ _available: bool | None = None
 # 2 = Nov 2026 data audit (weighted shares, filed 3-month EPS, basis guards,
 # split adjustment, OI-based EBITDA, equity-repair gating, TTM tax/current).
 # 3 = G&A decumulated like every other flow (v2 history served YTD G&A).
-DATA_VERSION = 3
+# 4 = debt current maturities counted once (totalDebt/netDebt/EV), gross interest
+#     expense instead of net interest, revenue never below contract revenue.
+DATA_VERSION = 4
 VERSIONED_DATA_TYPES = frozenset({
     "financials", "sec_income_history_v2", "ttm_metrics", "quarter_metrics",
 })
 # Per-type overrides, so a change confined to one artifact doesn't send every
 # other row back through extraction. History 4 = G&A backfilled from later
 # filings' prior-year comparatives (financials/TTM unchanged at 3).
-_TYPE_VERSIONS = {"sec_income_history_v2": 4}
+_TYPE_VERSIONS = {"sec_income_history_v2": 5}  # 5 = also fiscalYear from the company convention
 
 
 def data_version(data_type: str) -> int:

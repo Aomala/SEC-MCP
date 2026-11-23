@@ -2735,7 +2735,10 @@ def get_ticker_metrics(ticker: str, period: str = "annual") -> dict:
         as_of = None
         fiscal_year = data.get("fiscal_year")
         period_type = data.get("period_type")
-        period_end = (data.get("filing_info") or {}).get("period_end")
+        # filing_info carries report_date (the period end); "period_end" never
+        # existed, so annual responses always served periodEnd null.
+        period_end = ((data.get("filing_info") or {}).get("period_end")
+                      or (data.get("filing_info") or {}).get("report_date"))
 
         ttm_block = None
         if resolved in ("ttm", "quarterly"):

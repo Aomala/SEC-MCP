@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 import time
 
+import pandas as pd
+
 # optional cross-check + segment-series providers
 from sec_mcp import fmp_client, polygon_client
 from sec_mcp.config import get_config
@@ -118,7 +120,10 @@ def _build_periods(ticker: str, period: str, periods_back: int) -> list[dict]:
     """Fetch N periods of fundamentals, newest first, with provenance."""
     # TTM needs 4 standalone quarters regardless of periods_back
     fetch_kind = "quarter" if period in ("quarterly", "ttm") else "annual"
-    n = max(periods_back, 4) if period == "ttm" else periods_back
+    # TTM needs the PRIOR year's Q4 too, and Q4 is synthesized from the 10-K
+    # only when that year's Q1-Q3 are in hand: with 4 quarters requested (5
+    # 10-Qs fetched) the window after a Q3 filing was Q1-Q3 + LAST year's Q3.
+    n = max(periods_back, 8) if period == "ttm" else periods_back
     hist = get_fmp_shaped_history(ticker, period=fetch_kind, limit=n)
     income, balance, cashflow = hist["income"], hist["balance"], hist["cashflow"]
     if not income:
@@ -149,11 +154,32 @@ def _build_periods(ticker: str, period: str, periods_back: int) -> list[dict]:
     return periods
 
 
+_TTM_QUALITIES = ("standalone", "standalone_decumulated", "q4_synthesized")
+
+
+def _ttm_quarters(periods: list[dict]) -> list[dict] | None:
+    """The newest 4 CONSECUTIVE standalone quarters spanning ~one year, or None.
+
+    Same guards as core/ttm.py: YTD-fallback rows hold 6- or 9-month flows,
+    and a missing quarter would silently sum four quarters across ~15 months.
+    """
+    qs = [p for p in periods if (p.get("quality") or "") in _TTM_QUALITIES][:4]
+    if len(qs) < 4:
+        return None
+    ends = [pd.to_datetime(q.get("endDate"), errors="coerce") for q in qs]
+    if any(pd.isna(e) for e in ends):
+        return None
+    gaps = [(a - b).days for a, b in zip(ends, ends[1:], strict=False)]
+    if not all(75 <= g <= 120 for g in gaps) or not 240 <= (ends[0] - ends[3]).days <= 300:
+        return None
+    return qs
+
+
 def _ttm_from_quarters(periods: list[dict]) -> dict:
     """Collapse the latest 4 standalone quarters into one TTM period."""
-    qs = periods[:4]                                       # newest-first already
-    if len(qs) < 4:
-        raise ToolError(NOT_FOUND, "Fewer than 4 quarters available — cannot compute TTM.",
+    qs = _ttm_quarters(periods)                            # newest-first already
+    if qs is None:
+        raise ToolError(NOT_FOUND, "Fewer than 4 consecutive standalone quarters — cannot compute TTM.",
                         "Use period='annual' or period='quarterly' for this company.")
     ttm_metrics: dict = {}
     for name in _KNOWN_METRICS:

@@ -51,6 +51,7 @@ from sec_mcp.xbrl_mappings import (
     DIMENSION_COLUMNS,
     LEVEL_COLUMNS,
     MAX_ACCEPTABLE_LEVEL,
+    REVENUE_STANDARD,
     ConceptEntry,
     IndustryClass,
     detect_industry_class,
@@ -665,6 +666,85 @@ def _filter_by_period_type(
     except Exception as exc:
         log.debug("Sort by %s failed: %s", end_col, exc)
     return result.drop(columns=["_ptype", "_dur_days"], errors="ignore")
+
+
+def _revenue_at_least_contract(metrics: dict, sourced: dict, confidence: dict, lookup) -> None:
+    """Total revenue can never be below contract revenue (ASC 606 revenue is a component).
+
+    BLK's FY2024 10-K tagged `Revenues` at $12.8B beside $20.4B of
+    RevenueFromContractWithCustomerExcludingAssessedTax — its own FY2025 10-K
+    restates the year at $20.4B — and NI < $12.8B kept the NI > revenue
+    auto-correct from firing. `lookup(tag)` returns the same-period value.
+    """
+    rev = metrics.get("revenue")
+    if (rev is None or rev <= 0
+            # Revenue resolves through per-industry lists; in every one of them the
+            # `Revenues` concept carries the "Total Revenue" label.
+            or _concept_for_source(REVENUE_STANDARD, sourced.get("revenue")) != "Revenues"):
+        return
+    contract = lookup("RevenueFromContractWithCustomerExcludingAssessedTax")
+    if contract is None or contract <= rev * 1.005:
+        return
+    log.info("Revenues %.0f < contract revenue %.0f — using contract revenue", rev, contract)
+    metrics["revenue"] = contract
+    sourced["revenue"] = "Revenue from Contracts (Revenues tag below it)"
+    confidence["revenue"] = 0.85
+    if (sourced.get("gross_profit") == "Computed: Revenue - Cost of Revenue"
+            and metrics.get("cost_of_revenue") is not None):
+        metrics["gross_profit"] = contract - metrics["cost_of_revenue"]
+
+
+# Long-term-debt tags that INCLUDE the current portion -> that portion's own tag.
+_LTD_INCLUDES_CURRENT = {
+    "LongTermDebt": "LongTermDebtCurrent",
+    "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities":
+        "LongTermDebtAndCapitalLeaseObligationsCurrent",
+}
+# Short-term-debt tags that already include current maturities.
+_STD_INCLUDES_CURRENT = {"DebtCurrent"}
+
+
+def _count_current_maturities_once(metrics: dict, sourced: dict, lookup) -> None:
+    """Make long-term debt noncurrent-only and short-term debt carry current maturities once.
+
+    `LongTermDebt` (and ...IncludingCurrentMaturities) INCLUDE the current
+    portion and `DebtCurrent` does too, so long + short counted it twice:
+    CSCO total debt $33.0B vs $29.5B filed; INTC, JNJ, LIN, BMY, GILD
+    likewise. FMP's convention — ours now — is longTermDebt = noncurrent and
+    shortTermDebt = borrowings + current maturities (AAPL: CP + current notes).
+    The total is unchanged whenever it was right. IFRS filers never tag the
+    us-gaap current-maturity concepts, so for them this is a no-op.
+    """
+    if metrics.get("long_term_debt") is None and metrics.get("short_term_debt") is None:
+        return
+    ltd_concept = _concept_for_source(CONCEPT_MAP["long_term_debt"], sourced.get("long_term_debt"))
+    std_concept = _concept_for_source(CONCEPT_MAP["short_term_debt"], sourced.get("short_term_debt"))
+    cur = None
+    for tag in dict.fromkeys(filter(None, (_LTD_INCLUDES_CURRENT.get(ltd_concept), "LongTermDebtCurrent"))):
+        cur = lookup(tag)
+        if cur is not None:
+            break
+    if cur is None or cur <= 0:
+        return
+    ltd = metrics.get("long_term_debt")
+    if ltd is not None and ltd_concept in _LTD_INCLUDES_CURRENT and cur < ltd:
+        metrics["long_term_debt"] = ltd - cur
+        sourced["long_term_debt"] = f"{sourced.get('long_term_debt')} − current maturities"
+    if std_concept in _STD_INCLUDES_CURRENT:
+        return
+    # DebtCurrent is DEFINED as short-term debt + current maturities; when the
+    # filer tags it, it is the total. JNJ tags ShortTermBorrowings $8.495B and
+    # DebtCurrent $8.500B for the same "Loans and notes payable" line — adding
+    # the $2.0B of current notes to the former would count them twice again.
+    debt_current = lookup("DebtCurrent")
+    if debt_current is not None and debt_current >= cur:
+        metrics["short_term_debt"] = debt_current
+        sourced["short_term_debt"] = "Current Debt"
+        return
+    std = metrics.get("short_term_debt")
+    metrics["short_term_debt"] = (std or 0) + cur
+    sourced["short_term_debt"] = (f"{sourced.get('short_term_debt')} + current maturities"
+                                  if std is not None else "Current Maturities of Long-Term Debt")
 
 
 def _concept_for_source(concepts: list[ConceptEntry], source: str | None) -> str | None:
@@ -2797,7 +2877,7 @@ def extract_financials(
     if cache_acc:
         # Extraction-output version: v2 adds weighted shares, metrics_3m and
         # basis_check (Nov 2026 audit) — a 7-day-old v1 entry must not mask them.
-        cache_acc += "#x2"
+        cache_acc += "#x3"  # x3: debt current maturities, gross interest, revenue ≥ contract
     is_interim = (filing_meta or {}).get("form_type") in ("6-K", "6-K/A")
     if cache_acc and is_interim:
         cache_acc += "#interim-v1"
@@ -3104,6 +3184,10 @@ def extract_financials(
             sourced["total_liabilities"] = "Computed: Assets − Equity − NCI"
             confidence["total_liabilities"] = 0.80
 
+    # Current maturities counted exactly once (CSCO, INTC, JNJ, LIN, BMY, GILD).
+    _count_current_maturities_once(metrics, sourced, lambda tag: _lookup_fact(
+        facts_df, tag, period_index, match_mode="exact", target_fp=target_fp, target_fy=target_fy))
+
     # Net debt
     ltd = metrics.get("long_term_debt")
     std = metrics.get("short_term_debt")
@@ -3215,6 +3299,11 @@ def extract_financials(
             metrics["revenue"] = best_rev
             sourced["revenue"] = best_src
             confidence["revenue"] = 0.80
+
+    # Total revenue can never be below contract revenue (BLK FY2024).
+    _revenue_at_least_contract(metrics, sourced, confidence, lambda tag: _lookup_fact(
+        facts_df, tag, period_index, match_mode="exact", duration_pref=dur_pref,
+        target_fp=target_fp, target_fy=target_fy))
 
     # ── SG&A from components when no total is tagged ──
     # AMAT reports "Marketing and selling" and "General and administrative"
@@ -4017,7 +4106,8 @@ def sec_to_fmp_statements(result: dict) -> dict:
         "ebitda": m.get("ebitda"), "ebit": m.get("operating_income"),
         "operatingIncome": m.get("operating_income"),
         "totalOtherIncomeExpensesNet": m.get("other_income_expense"),
-        "interestExpense": m.get("interest_expense"),
+        # A cost: FMP serves it positive; some filers tag it negated (DIS FY2026).
+        "interestExpense": abs(m["interest_expense"]) if m.get("interest_expense") is not None else None,
         "incomeBeforeTax": m.get("income_before_tax"),
         "incomeTaxExpense": m.get("income_tax_expense"),
         "netIncome": m.get("net_income"), "bottomLineNetIncome": m.get("net_income"),
@@ -4616,7 +4706,69 @@ def _backfill_from_comparatives(ticker: str, results: list[dict], *, quarterly: 
     return out
 
 
-HISTORY_VERSION = 4  # 4: G&A backfilled from later comparatives (ASU 2023-07 segment note)
+def _fiscal_year_convention(ticker: str) -> tuple[str | None, int | None]:
+    """(fiscal-year-end 'MMDD', offset): how THIS company names its fiscal years.
+
+    DEI DocumentFiscalYearFocus is typed by the filer and wrong often enough
+    to matter: CRM tagged both its Jan-2025 and Jan-2026 10-Ks "2025"; CRWD's
+    Jan-2025 10-K said 2024 and its Jan-2026 one 2026; ORCL's newest 10-Q is a
+    year low. Passing it through gave CRM two annual rows labelled 2025 and
+    CRWD's annual rows a year behind its quarters. A company's real convention
+    — the fiscal year named for the calendar year it ENDS in (NVDA, WMT, CRM)
+    or BEGINS in (HD, LOW, ROST) — is the majority offset between DEI fy and
+    the fiscal-year-end year across its 12 newest periodic filings (ties go to
+    the newest). Verified on 19 Jan/Feb/May/Aug/Sep/Oct/Nov year-ends.
+    """
+    client = get_sec_client()
+    try:
+        ye = client.get_company_info(ticker).fiscal_year_end
+        facts = client.get_company_facts(ticker) or {}
+        filings = []
+        for form in ("10-K", "10-Q"):
+            filings += client.get_periodic_filings_smart(ticker, form_type=form, limit=8) or []
+    except Exception as exc:
+        log.debug("fiscal-year convention unavailable for %s: %s", ticker, exc)
+        return None, None
+    if not ye:
+        return None, None
+    fy_by_acc: dict[str, int] = {}
+    for tax, concept in (("dei", "EntityCommonStockSharesOutstanding"), ("us-gaap", "Assets"),
+                         ("us-gaap", "NetIncomeLoss")):
+        for arr in ((((facts.get("facts") or {}).get(tax) or {}).get(concept) or {}).get("units") or {}).values():
+            for x in arr:
+                if x.get("accn") and x.get("fy") is not None:
+                    fy_by_acc.setdefault(x["accn"], int(x["fy"]))
+    offsets: list[int] = []
+    for f in sorted(filings, key=lambda f: getattr(f, "report_date", "") or "", reverse=True)[:12]:
+        end = pd.to_datetime(getattr(f, "report_date", "") or "", errors="coerce")
+        fy = fy_by_acc.get(f.accession_number)
+        fq = fiscal_quarter(end.date(), ye) if pd.notna(end) else None
+        if fq and fy is not None:
+            offsets.append(fy - fq[0])
+    if not offsets:
+        return ye, None
+    from collections import Counter
+    return ye, Counter(offsets).most_common(1)[0][0]
+
+
+def _harmonize_fiscal_years(ticker: str, results: list[dict]) -> list[dict]:
+    """Relabel every row's fiscal_year from its period end + the company's convention."""
+    ye, offset = _fiscal_year_convention(ticker)
+    if not ye or offset is None:
+        return results
+    out = []
+    for r in results:
+        end = _report_date(r)
+        fq = fiscal_quarter(end.date(), ye) if pd.notna(end) else None
+        if fq and r.get("fiscal_year") != fq[0] + offset:
+            r = {**r, "fiscal_year": fq[0] + offset}
+        out.append(r)
+    return out
+
+
+HISTORY_VERSION = 5  # 5: fiscalYear from the company's convention, not raw DEI; debt
+#                      current maturities counted once; gross interest expense
+#                      4: G&A backfilled from later comparatives (ASU 2023-07 segment note)
 #                      3: ga_expense decumulated (v2 served AAPL's YTD G&A as quarters)
 
 
@@ -4694,6 +4846,7 @@ def get_fmp_shaped_history(ticker: str, *, period: str = "annual", limit: int = 
                 results = _synthesize_q4(tk, _decumulate_quarters_inmemory(results))
         if not (is_q and is_foreign):
             results = _backfill_from_comparatives(tk, results, quarterly=is_q)
+        results = _harmonize_fiscal_years(tk, results)
         results = results[:want]
 
         income, balance, cashflow = [], [], []

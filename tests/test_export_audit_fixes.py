@@ -495,3 +495,110 @@ def test_polygon_key_never_reaches_the_logs():
     out = redact(msg)
     assert "SECRET123" not in out and "apiKey=REDACTED&limit=1" in out
     assert redact("no key here") == "no key here"
+
+
+# ─── Nov 23 label/structure review ───────────────────────────────────────────
+
+class TestCurrentMaturitiesCountedOnce:
+    @staticmethod
+    def run(ltd, ltd_src, std, std_src, cur, debt_current=None):
+        m = {"long_term_debt": ltd, "short_term_debt": std}
+        s = {"long_term_debt": ltd_src, "short_term_debt": std_src}
+        tags = {"LongTermDebtCurrent": cur, "DebtCurrent": debt_current}
+        financials._count_current_maturities_once(m, s, tags.get)
+        return m, s
+
+    def test_jnj_debt_current_is_the_short_term_total(self):
+        # JNJ: ShortTermBorrowings 8.495 and DebtCurrent 8.500 are the same line
+        m, s = self.run(41.438e9, "Long-Term Debt", 8.495e9, "Short-Term Borrowings", 2.0e9, 8.5e9)
+        assert m["long_term_debt"] + m["short_term_debt"] == pytest.approx(47.938e9)
+        assert s["short_term_debt"] == "Current Debt"
+
+    def test_csco_double_count_removed(self):
+        # LongTermDebt (incl. current) + DebtCurrent (incl. current) counted it twice
+        m, s = self.run(22.87e9, "Long-Term Debt", 10.16e9, "Current Debt", 3.5e9)
+        assert m["long_term_debt"] == pytest.approx(19.37e9)
+        assert m["short_term_debt"] == pytest.approx(10.16e9)
+        assert "current maturities" in s["long_term_debt"]
+
+    def test_aapl_total_unchanged_labels_fmp_shaped(self):
+        # LongTermDebt 96.7 incl. 10.9 current; commercial paper 10.0
+        m, _ = self.run(96.7e9, "Long-Term Debt", 10.0e9, "Commercial Paper", 10.9e9)
+        assert m["long_term_debt"] == pytest.approx(85.8e9)
+        assert m["short_term_debt"] == pytest.approx(20.9e9)
+        assert m["long_term_debt"] + m["short_term_debt"] == pytest.approx(106.7e9)
+
+    def test_noncurrent_tag_plus_borrowings_no_longer_drops_current(self):
+        m, _ = self.run(50e9, "Long-Term Debt (Noncurrent)", 1e9, "Short-Term Borrowings", 2e9)
+        assert (m["long_term_debt"], m["short_term_debt"]) == (50e9, pytest.approx(3e9))
+
+    def test_noncurrent_tag_plus_debt_current_untouched(self):
+        m, _ = self.run(50e9, "Long-Term Debt (Noncurrent)", 4e9, "Current Debt", 2e9)
+        assert (m["long_term_debt"], m["short_term_debt"]) == (50e9, 4e9)
+
+
+def test_revenue_never_below_contract_revenue():
+    # BLK FY2024: Revenues $12.8B tagged beside $20.4B contract revenue
+    m, s, c = {"revenue": 12.794e9}, {"revenue": "Total Revenue"}, {}
+    financials._revenue_at_least_contract(m, s, c, lambda tag: 20.407e9)
+    assert m["revenue"] == 20.407e9 and "Contracts" in s["revenue"]
+    m2, s2 = {"revenue": 20.40e9}, {"revenue": "Total Revenue"}
+    financials._revenue_at_least_contract(m2, s2, {}, lambda tag: 20.407e9)   # within 0.5%
+    assert m2["revenue"] == 20.40e9
+
+
+def test_interest_expense_is_gross_and_positive():
+    from sec_mcp.xbrl_mappings import INTEREST_EXPENSE
+    tags = [e.xbrl_concept for e in INTEREST_EXPENSE]
+    assert "InterestExpenseNonoperating" in tags
+    assert "InterestIncomeExpenseNonoperatingNet" not in tags      # net interest is not expense
+    row = sec_to_fmp_statements({"metrics": {"interest_expense": -1.906e9}, "filing_info": {}})["income"]
+    assert row["interestExpense"] == 1.906e9
+
+
+def _fy_client(year_end, filings):
+    """filings: [(accession, report_date, dei_fy, form)]"""
+    facts = {"facts": {"dei": {"EntityCommonStockSharesOutstanding": {"units": {"shares": [
+        {"accn": a, "fy": fy, "val": 1} for a, _, fy, _ in filings]}}}}}
+    return SimpleNamespace(
+        get_company_info=lambda t: SimpleNamespace(fiscal_year_end=year_end),
+        get_company_facts=lambda t: facts,
+        get_periodic_filings_smart=lambda t, form_type, limit: [
+            SimpleNamespace(accession_number=a, report_date=d) for a, d, _, f in filings if f == form_type])
+
+
+def test_fiscal_year_follows_company_convention_not_one_bad_dei(monkeypatch):
+    # CRM names fiscal years by the calendar year they END in, but its
+    # Jan-2026 10-K's DEI said 2025 (same as the Jan-2025 10-K).
+    filings = [("q2-27", "2026-07-31", 2027, "10-Q"), ("q1-27", "2026-04-30", 2027, "10-Q"),
+               ("k-26", "2026-01-31", 2025, "10-K"), ("q3-26", "2025-10-31", 2026, "10-Q"),
+               ("q2-26", "2025-07-31", 2026, "10-Q"), ("k-25", "2025-01-31", 2025, "10-K")]
+    monkeypatch.setattr(financials, "get_sec_client", lambda: _fy_client("0131", filings))
+    rows = [{"filing_info": {"report_date": "2026-01-31"}, "fiscal_year": 2025},
+            {"filing_info": {"report_date": "2025-01-31"}, "fiscal_year": 2025},
+            {"filing_info": {"report_date": "2025-04-30"}, "fiscal_year": 2025}]
+    out = financials._harmonize_fiscal_years("CRM", rows)
+    assert [r["fiscal_year"] for r in out] == [2026, 2025, 2026]
+    assert rows[0]["fiscal_year"] == 2025                     # input not mutated
+
+
+def test_fiscal_year_convention_named_for_start_year(monkeypatch):
+    # HD/LOW: the year ending ~Feb 1, 2026 is "fiscal 2025"
+    filings = [("q3", "2025-11-02", 2025, "10-Q"), ("q2", "2025-08-03", 2025, "10-Q"),
+               ("k", "2025-02-02", 2024, "10-K"), ("q1", "2025-05-04", 2025, "10-Q")]
+    monkeypatch.setattr(financials, "get_sec_client", lambda: _fy_client("0201", filings))
+    out = financials._harmonize_fiscal_years("HD", [{"filing_info": {"report_date": "2026-02-01"}, "fiscal_year": None}])
+    assert out[0]["fiscal_year"] == 2025
+
+
+def test_mcp_ttm_needs_four_consecutive_standalone_quarters():
+    from sec_mcp.surface.fundamentals import _ttm_quarters
+    def q(end, quality="standalone_decumulated"):
+        return {"endDate": end, "quality": quality, "metrics": {}}
+    # The old window after a Q3 filing: Q1-Q3 + LAST year's Q3 (Q4 never synthesized)
+    assert _ttm_quarters([q("2026-09-30"), q("2026-06-30"), q("2026-03-31", "standalone"), q("2025-09-30")]) is None
+    ok = [q("2026-09-30"), q("2026-06-30"), q("2026-03-31", "standalone"), q("2025-12-31", "q4_synthesized")]
+    assert _ttm_quarters(ok) == ok
+    # A 6-month YTD row is never one of the four
+    assert _ttm_quarters([q("2026-09-30"), q("2026-06-30", "ytd_fallback"), q("2026-03-31", "standalone"),
+                          q("2025-12-31", "q4_synthesized")]) is None

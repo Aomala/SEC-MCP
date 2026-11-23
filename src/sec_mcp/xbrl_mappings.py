@@ -650,10 +650,16 @@ INCOME_BEFORE_TAX: list[ConceptEntry] = [
 
 INTEREST_EXPENSE: list[ConceptEntry] = [
     ConceptEntry("InterestExpense", "Interest Expense"),
+    # 2024 taxonomy: most non-financial filers moved gross interest expense
+    # here. Without it the list fell through to the NET line below, serving
+    # net interest INCOME as "interest expense" (DDOG +$171M vs $11M gross,
+    # CPRT +$182M) or a net figure (CSX $45M vs $844M gross).
+    ConceptEntry("InterestExpenseNonoperating", "Interest Expense (Nonoperating)"),
     ConceptEntry("InterestExpenseDebt", "Interest Expense on Debt"),
+    ConceptEntry("InterestAndDebtExpense", "Interest and Debt Expense"),
     ConceptEntry("InterestExpenseBorrowings", "Interest Expense on Borrowings"),
-    ConceptEntry("InterestIncomeExpenseNonoperatingNet",
-                 "Net Nonoperating Interest"),
+    # InterestIncomeExpenseNonoperatingNet removed: it is interest income
+    # NET of expense, not interest expense — blank beats mislabelled.
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════
