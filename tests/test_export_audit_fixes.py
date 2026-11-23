@@ -486,3 +486,12 @@ def test_history_version_bump_leaves_other_artifacts_current():
     from sec_mcp import supabase_cache as sc
     assert sc.data_version("sec_income_history_v2") > sc.data_version("financials")
     assert sc.data_version("ttm_metrics") == sc.DATA_VERSION
+
+
+def test_polygon_key_never_reaches_the_logs():
+    from sec_mcp.polygon_client import redact
+    msg = ("429 Client Error: Too Many Requests for url: "
+           "https://api.polygon.io/v3/reference/tickers/ABNB?apiKey=SECRET123&limit=1")
+    out = redact(msg)
+    assert "SECRET123" not in out and "apiKey=REDACTED&limit=1" in out
+    assert redact("no key here") == "no key here"

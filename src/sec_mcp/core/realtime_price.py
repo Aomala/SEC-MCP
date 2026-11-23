@@ -78,7 +78,8 @@ def _from_polygon(ticker: str) -> dict | None:
             "market_cap": None,
         }
     except Exception as exc:
-        log.debug("polygon snapshot failed for %s: %s", ticker, exc)
+        from sec_mcp.polygon_client import redact
+        log.debug("polygon snapshot failed for %s: %s", ticker, redact(exc))
         return None
 
 

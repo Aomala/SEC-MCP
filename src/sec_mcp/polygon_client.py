@@ -43,6 +43,18 @@ def _api_key() -> str:
     return get_config().polygon_api_key
 
 
+_KEY_IN_URL = re.compile(r"(apiKey=)[^&\s'\"]+")
+
+
+def redact(text: object) -> str:
+    """Strip the Polygon key from a URL or exception message before logging.
+
+    requests' HTTPError text embeds the full request URL, query string and
+    all — a 429 logged at WARNING wrote the live key into the server logs.
+    """
+    return _KEY_IN_URL.sub(r"\1REDACTED", str(text))
+
+
 def _get(path: str, params: dict | None = None) -> Any:
     """Make a cached GET request to Polygon API."""
     key = _api_key()
@@ -66,7 +78,7 @@ def _get(path: str, params: dict | None = None) -> Any:
         _CACHE[cache_key] = (time.time(), data)
         return data
     except Exception as exc:
-        log.warning("Polygon API request failed: %s — %s", path, exc)
+        log.warning("Polygon API request failed: %s — %s", path, redact(exc))
         return None
 
 
